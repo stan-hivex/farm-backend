@@ -1,0 +1,40 @@
+import { Controller, Get, Post, Body, Query, UseGuards, Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional, Length } from 'class-validator';
+import { WalletsService } from './wallets.service';
+import { JwtGuard } from '../common/guards/jwt.guard';
+import { KycGuard } from '../common/guards/kyc.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+
+class SendFundsDto {
+  @IsNotEmpty() @IsString() recipient_identifier!: string;
+  @IsNumber() @IsPositive() amount!: number;
+  @IsNotEmpty() @IsString() @Length(4, 6) pin!: string;
+  @IsOptional() @IsString() description?: string;
+}
+
+@ApiTags('Wallet')
+@ApiBearerAuth('JWT')
+@UseGuards(JwtGuard)
+@Controller({ path: 'wallet', version: '1' })
+export class WalletsController {
+  constructor(private readonly svc: WalletsService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Get my wallet balance' })
+  getWallet(@CurrentUser() u: any) { return this.svc.getMyWallet(u.id); }
+
+  @Post('send')
+  @UseGuards(JwtGuard, KycGuard)
+  @ApiOperation({ summary: 'Send FARM tokens (PIN required)' })
+  send(@CurrentUser() u: any, @Body() dto: SendFundsDto, @Req() req: Request) {
+    return this.svc.sendFunds(u.id, dto, req.ip || '');
+  }
+
+  @Get('transactions')
+  @ApiOperation({ summary: 'List my transactions' })
+  transactions(@CurrentUser() u: any, @Query() q: any) {
+    return this.svc.getTransactions(u.id, q);
+  }
+}

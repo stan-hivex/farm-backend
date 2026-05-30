@@ -1,0 +1,48 @@
+import { Controller, Get, Post, Put, Patch, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { IsIn, IsOptional, IsString, IsBoolean } from 'class-validator';
+import { AdminService } from './admin.service';
+import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { UserRole } from '../common/enums';
+
+class UserStatusDto { @IsOptional() @IsBoolean() is_active?: boolean; @IsOptional() @IsBoolean() is_suspended?: boolean; }
+class ResolveDto { @IsIn(['buyer','seller']) winner!: 'buyer'|'seller'; @IsString() note!: string; }
+class MerchantDecisionDto { @IsIn(['approved','rejected']) status!: 'approved'|'rejected'; @IsOptional() @IsString() rejection_reason?: string; }
+class SettingDto { @IsString() value!: string; }
+
+@ApiTags('Admin')
+@ApiBearerAuth('JWT')
+@UseGuards(JwtGuard, RolesGuard)
+@Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+@Controller({ path: 'admin', version: '1' })
+export class AdminController {
+  constructor(private readonly svc: AdminService) {}
+
+  @Get('dashboard')               stats() { return this.svc.getDashboardStats(); }
+  @Get('users')                   users(@Query() q: any) { return this.svc.listUsers(q); }
+  @Get('users/:id')               user(@Param('id') id: string) { return this.svc.getUserDetail(id); }
+  @Patch('users/:id/status')      userStatus(@Param('id') id: string, @Body() dto: UserStatusDto, @CurrentUser() u: any) { return this.svc.updateUserStatus(id, dto, u.id); }
+  @Get('escrow')                  escrows(@Query() q: any) { return this.svc.listAllEscrows(q); }
+  @Post('escrow/:id/resolve')     resolve(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.resolveDispute(id, u.id, dto); }
+  @Get('merchants')               merchants(@Query() q: any) { return this.svc.listMerchants(q); }
+  @Post('merchants/:id/decision') decision(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: MerchantDecisionDto) { return this.svc.approveMerchant(id, u.id, dto); }
+  @Get('payouts')                 payouts(@Query() q: any) { return this.svc.listPayouts(q); }
+  @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.processPayout(id, u.id, 'completed'); }
+  @Get('settings')                settings() { return this.svc.getSettings(); }
+  @Put('settings/:key')           updateSetting(@Param('key') key: string, @Body() dto: SettingDto, @CurrentUser() u: any) { return this.svc.updateSetting(key, dto.value, u.id); }
+  @Get('audit-logs')              auditLogs(@Query() q: any) { return this.svc.getAuditLogs(q); }
+  @Post('investments')            createProject(@CurrentUser() u: any, @Body() dto: any) { return this.svc.createProject(u.id, dto); }
+  @Put('investments/:id')         updateProject(@Param('id') id: string, @Body() dto: any) { return this.svc.updateProject(id, dto); }
+
+  // ── Audit Dashboard ──────────────────────────────────────────────────────────
+  @Get('audit/dashboard')         auditDashboard() { return this.svc.getAuditDashboard(); }
+  @Get('audit/security-events')   securityEvents(@Query() q: any) { return this.svc.getSecurityEvents(q); }
+  @Get('audit/security-stats')    securityStats() { return this.svc.getSecurityStats(); }
+  @Get('audit/users/:id/activity') userActivity(@Param('id') id: string, @Query() q: any) { return this.svc.getUserActivityLog(id, q); }
+  @Get('audit/users/:id/sessions') userSessions(@Param('id') id: string, @Query() q: any) { return this.svc.getUserSessions(id, q); }
+  @Get('audit/admin-logs')        adminLogs(@Query() q: any) { return this.svc.getAdminAuditLog(q); }
+  @Get('audit/compliance')        complianceReport(@Query() q: any) { return this.svc.getComplianceReport(q); }
+}

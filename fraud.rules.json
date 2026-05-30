@@ -1,0 +1,26 @@
+[
+  {
+    "id": "rule_ip_prefix_block",
+    "description": "Block known bad IP prefixes (IANA reserved ranges)",
+    "ip_prefixes": ["203.0.113.", "198.51.100.", "192.0.2."],
+    "action": "block",
+    "reason": "ip_range_block",
+    "priority": 90
+  },
+  {
+    "id": "rule_device_risk",
+    "description": "Challenge high device risk scores",
+    "device_risk_threshold": 70,
+    "action": "challenge",
+    "reason": "device_high_risk",
+    "priority": 80
+  },
+  {
+    "id": "rule_large_amount",
+    "description": "Require manual review for very large deposits",
+    "min_amount": 10000,
+    "action": "challenge",
+    "reason": "manual_review_required",
+    "priority": 50
+  }
+]

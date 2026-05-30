@@ -1,0 +1,456 @@
+import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../database/prisma.service';
+import axios from 'axios';
+import { generateTxReference } from '../common/utils/reference.util';
+import * as fs from 'fs';
+import * as path from 'path';
+
+@Injectable()
+export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
+  constructor(private prisma: PrismaService, private cfg: ConfigService) {}
+
+  async initiateDeposit(userId: string, dto: { amount_fiat: number; currency: string }, ctx?: { deviceRisk?: number; ip?: string; country?: string }) {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId }, select: { email: true, phone: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const reference = generateTxReference();
+    const amountKobo = Math.round(dto.amount_fiat * 100);
+
+    const response = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: user.email || `${user.phone}@farm.app`,
+        amount: amountKobo,
+        currency: dto.currency,
+        reference,
+        metadata: { user_id: userId },
+      },
+      { headers: { Authorization: `Bearer ${this.cfg.get('PAYSTACK_SECRET_KEY')}` } },
+    );
+
+    const rate = await this.getExchangeRate(dto.currency, 'FARM');
+    const amount_farm = dto.amount_fiat / rate;
+
+    // Basic anti-fraud checks before persisting
+    const fraud = await this.assessFraudRisk(userId, {
+      amount_fiat: dto.amount_fiat,
+      currency: dto.currency,
+      ip: ctx?.ip || '',
+      deviceRisk: ctx?.deviceRisk,
+      country: ctx?.country,
+    });
+    if (fraud.block) {
+      // record an audit and a security event
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'deposit_blocked',
+          entity_type: 'transaction',
+          entity_id: null,
+          new_values: { reason: fraud.reason },
+        },
+      });
+      await this.prisma.security_events.create({
+        data: {
+          user_id: userId,
+          event_type: 'fraud_score_high',
+          description: `Blocked deposit attempt: ${fraud.reason}`,
+          severity: 'high',
+        },
+      });
+      throw new BadRequestException('Deposit blocked by fraud protection');
+    }
+
+    // Ensure the user's active wallet is recorded so webhooks can credit the correct wallet
+    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
+
+    const tx = await this.prisma.transactions.create({
+      data: {
+        transaction_reference: reference,
+        receiver_wallet_id: wallet?.id,
+        transaction_type: 'deposit',
+        status: 'pending',
+        amount: amount_farm,
+        fee: 0,
+        net_amount: amount_farm,
+        currency: 'FARM',
+        description: `Pending deposit via Paystack (${dto.currency} ${dto.amount_fiat})`,
+        metadata: {
+          provider: 'paystack',
+          amount_fiat: dto.amount_fiat,
+          currency_fiat: dto.currency,
+          exchange_rate: rate,
+          user_id: userId,
+          device_risk: ctx?.deviceRisk ?? null,
+          ip: ctx?.ip ?? null,
+        },
+      },
+    });
+
+    // Audit: transaction created
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: userId,
+        action: 'deposit_initiated',
+        entity_type: 'transaction',
+        entity_id: tx.id,
+        new_values: { reference, amount_fiat: dto.amount_fiat, amount_farm },
+      },
+    });
+
+    return {
+      data: {
+        payment_url: response.data.data.authorization_url,
+        reference,
+        amount_farm: amount_farm.toFixed(4),
+      },
+      message: 'Deposit initiated',
+    };
+  }
+
+  async handlePaystackWebhook(payload: any) {
+    await this.prisma.webhook_logs.create({
+      data: { provider: 'paystack', event_name: payload.event, payload, status: 'received' },
+    });
+
+    if (payload.event === 'charge.success') {
+      await this.creditWalletFromDeposit(payload.data.reference);
+    }
+  }
+
+  async handleIvorypayWebhook(payload: any) {
+    await this.prisma.webhook_logs.create({
+      data: { provider: 'ivorypay', event_name: payload.event ?? 'unknown', payload, status: 'received' },
+    });
+
+    // Ivorypay sends payment.success or transaction.completed
+    if (['payment.success', 'transaction.completed'].includes(payload.event)) {
+      const reference = payload.data?.reference ?? payload.reference;
+      if (reference) await this.creditWalletFromDeposit(reference);
+    }
+  }
+
+  private async creditWalletFromDeposit(reference: string) {
+    const pendingTx = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
+    if (!pendingTx || pendingTx.status === 'completed') return;
+
+    const meta = pendingTx.metadata as any;
+    const userId = meta?.user_id;
+    if (!userId) return;
+
+    // Verify provider status where possible (Paystack)
+    try {
+      const provider = (meta?.provider as string) || 'unknown';
+      if (provider === 'paystack') {
+        const verify = await axios.get(
+          `https://api.paystack.co/transaction/verify/${reference}`,
+          { headers: { Authorization: `Bearer ${this.cfg.get('PAYSTACK_SECRET_KEY')}` } },
+        );
+        const status = verify.data?.data?.status;
+        const amountFromProvider = (verify.data?.data?.amount ?? 0) / 100;
+        // Ensure amounts match roughly (fiat amount in metadata vs provider)
+        const expectedFiat = Number(meta?.amount_fiat ?? 0);
+        if (status !== 'success' || Math.abs(amountFromProvider - expectedFiat) > 1) {
+          await this.prisma.audit_logs.create({
+            data: {
+              user_id: userId,
+              action: 'deposit_verification_failed',
+              entity_type: 'transaction',
+              entity_id: pendingTx.id,
+              new_values: { provider, status, amountFromProvider },
+            },
+          });
+          this.logger.warn(`Deposit verification failed for ${reference}`);
+          return;
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to verify provider for ${reference}: ${err?.message}`);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.wallets.findFirst({ where: { user_id: userId } });
+      if (!wallet) return;
+      const balanceBefore = Number(wallet.balance || 0);
+      const newBalance = balanceBefore + Number(pendingTx.amount);
+      await tx.wallets.update({
+        where: { id: wallet.id },
+        data: { balance: newBalance },
+      });
+      await tx.ledger_entries.create({
+        data: {
+          transaction_id: pendingTx.id,
+          wallet_id: wallet.id,
+          entry_type: 'credit',
+          amount: Number(pendingTx.amount),
+          balance_before: balanceBefore,
+          balance_after: newBalance,
+          description: `Fiat deposit — ref: ${reference}`,
+        },
+      });
+      await tx.transactions.update({
+        where: { id: pendingTx.id },
+        data: { status: 'completed', receiver_wallet_id: wallet.id, processed_at: new Date() },
+      });
+      // Audit: deposit completed
+      await tx.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'deposit_completed',
+          entity_type: 'transaction',
+          entity_id: pendingTx.id,
+          new_values: { reference, amount: Number(pendingTx.amount), balance_before: balanceBefore, balance_after: newBalance },
+        },
+      });
+    });
+    this.logger.log(`Deposit completed: ${reference}`);
+  }
+
+  async requestWithdrawal(userId: string, dto: {
+    amount_farm: number; currency_fiat: string; method: string; destination: string;
+  }, ctx?: { deviceRisk?: number; ip?: string }) {
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId, is_active: true },
+    });
+    if (!wallet) throw new NotFoundException('Wallet not found');
+    const available = Number(wallet.balance) - Number(wallet.locked_balance);
+    if (available < dto.amount_farm)
+      throw new BadRequestException(`Insufficient balance. Available: ${available.toFixed(2)} FARM`);
+
+    const rate = await this.getExchangeRate('FARM', dto.currency_fiat);
+    const amount_fiat = dto.amount_farm * rate;
+
+    // Fraud check for withdrawals as well (based on fiat equivalent)
+    const fraud = await this.assessFraudRisk(userId, {
+      amount_fiat,
+      currency: dto.currency_fiat,
+      ip: ctx?.ip || '',
+      deviceRisk: ctx?.deviceRisk,
+    });
+    if (fraud.block) {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'withdrawal_blocked',
+          entity_type: 'transaction',
+          entity_id: null,
+          new_values: { reason: fraud.reason },
+        },
+      });
+      await this.prisma.security_events.create({
+        data: {
+          user_id: userId,
+          event_type: 'fraud_score_high',
+          description: `Blocked withdrawal attempt: ${fraud.reason}`,
+          severity: 'high',
+        },
+      });
+      throw new BadRequestException('Withdrawal blocked by fraud protection');
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.wallets.update({
+        where: { id: wallet.id },
+        data: { locked_balance: { increment: dto.amount_farm } },
+      });
+      const tr = await tx.transactions.create({
+        data: {
+          transaction_reference: generateTxReference(),
+          sender_wallet_id: wallet.id,
+          transaction_type: 'withdrawal',
+          status: 'pending',
+          amount: dto.amount_farm,
+          fee: 0,
+          net_amount: dto.amount_farm,
+          currency: 'FARM',
+          description: `Withdrawal: ${dto.amount_farm} FARM → ${dto.currency_fiat} ${amount_fiat.toFixed(2)}`,
+          metadata: {
+            method: dto.method,
+            destination: dto.destination,
+            currency_fiat: dto.currency_fiat,
+            amount_fiat,
+            exchange_rate: rate,
+          },
+        },
+      });
+
+      // Create a ledger entry to reflect held funds
+      const balanceBefore = Number(wallet.balance || 0);
+      await tx.ledger_entries.create({
+        data: {
+          transaction_id: tr.id,
+          wallet_id: wallet.id,
+          entry_type: 'hold',
+          amount: Number(dto.amount_farm),
+          balance_before: balanceBefore,
+          balance_after: balanceBefore - Number(dto.amount_farm),
+          description: `Withdrawal hold — ref: ${tr.transaction_reference}`,
+        },
+      });
+
+      // Audit: withdrawal requested
+      await tx.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'withdrawal_requested',
+          entity_type: 'transaction',
+          entity_id: tr.id,
+          new_values: { amount: dto.amount_farm, destination: dto.destination },
+        },
+      });
+
+      return tr;
+    });
+
+    return {
+      data: result,
+      message: 'Withdrawal request submitted. Processing within 1-3 business days.',
+    };
+  }
+
+  async getExchangeRate(from: string, to: string): Promise<number> {
+    const rate = await this.prisma.exchange_rates.findFirst({
+      where: { base_currency: from, target_currency: to },
+      orderBy: { fetched_at: 'desc' },
+    });
+    return rate ? Number(rate.rate) : 130;
+  }
+
+  // Simple fraud assessment: velocity and amount thresholds.
+  private async assessFraudRisk(userId: string, ctx: { amount_fiat: number; currency: string; ip?: string; deviceRisk?: number; country?: string }) {
+    // Load configurable thresholds from system_settings
+    const keys = ['fraud.amount_threshold', 'fraud.velocity_limit', 'fraud.max_daily_amount'];
+    const settings = await this.prisma.system_settings.findMany({ where: { setting_key: { in: keys } } });
+    const getSetting = (k: string) => {
+      const s = settings.find((x: any) => x.setting_key === k);
+      if (!s || s.setting_value == null) return null;
+      // Try parse JSON then number
+      try { return JSON.parse(s.setting_value); } catch { /* ignore */ }
+      const n = Number(s.setting_value);
+      return Number.isFinite(n) ? n : s.setting_value;
+    };
+
+    const amountThreshold = Number(getSetting('fraud.amount_threshold') ?? 5000);
+    const velocityLimit = Number(getSetting('fraud.velocity_limit') ?? 5);
+    const maxDailyAmount = Number(getSetting('fraud.max_daily_amount') ?? 20000);
+
+    // Count recent deposits by this user in the last 1 hour
+    const oneHourAgo = new Date(Date.now() - 1000 * 60 * 60);
+    const recent = await this.prisma.transactions.count({
+      where: {
+        transaction_type: 'deposit',
+        created_at: { gte: oneHourAgo },
+        AND: [{ metadata: { path: ['user_id'], equals: userId } as any }],
+      },
+    });
+
+    // Sum of today's deposits for max daily check
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const todays = await this.prisma.transactions.aggregate({
+      _sum: { amount: true },
+      where: {
+        transaction_type: 'deposit',
+        created_at: { gte: startOfDay },
+        AND: [{ metadata: { path: ['user_id'], equals: userId } as any }],
+      },
+    });
+    const todaysSum = Number((todays._sum as any)?.amount ?? 0);
+
+    // Apply system settings checks first
+    if (ctx.amount_fiat > amountThreshold) {
+      return { block: true, reason: 'amount_exceeds_threshold', threshold: amountThreshold };
+    }
+    if (recent >= velocityLimit) {
+      return { block: true, reason: 'high_velocity', limit: velocityLimit };
+    }
+    if (todaysSum + ctx.amount_fiat > maxDailyAmount) {
+      return { block: true, reason: 'daily_limit_exceeded', maxDailyAmount };
+    }
+
+    // Load rule file if present and evaluate rules in priority order
+    try {
+      const rulesPath = path.join(process.cwd(), 'fraud.rules.json');
+      if (fs.existsSync(rulesPath)) {
+        const raw = fs.readFileSync(rulesPath, 'utf8');
+        const rules = JSON.parse(raw) as any[];
+        // sort by priority desc
+        rules.sort((a: any, b: any) => (b.priority || 0) - (a.priority || 0));
+        for (const r of rules) {
+          // skip rules that don't apply by amount range
+          if (r.min_amount && ctx.amount_fiat < r.min_amount) continue;
+          if (r.max_amount && ctx.amount_fiat > r.max_amount) continue;
+
+          // country check - requires ctx.country in metadata in future
+          if (r.countries && Array.isArray(r.countries)) {
+            const country = (ctx as any).country;
+            if (!country) continue;
+            if (r.countries.indexOf(country) === -1) continue;
+          }
+
+          // ip prefix matching
+          if (r.ip_prefixes && Array.isArray(r.ip_prefixes) && ctx.ip) {
+            let matched = false;
+            for (const pfx of r.ip_prefixes) {
+              if (ctx.ip.startsWith(pfx)) {
+                matched = true; break;
+              }
+            }
+            if (!matched) continue;
+          }
+
+          // device risk
+          if (r.device_risk_threshold) {
+            const dv = Number((ctx as any).deviceRisk || 0);
+            if (dv < Number(r.device_risk_threshold)) continue;
+          }
+
+          // matched
+          if (r.action === 'block') return { block: true, reason: r.reason || r.id, rule: r.id };
+          if (r.action === 'challenge') return { block: false, challenge: true, reason: r.reason || r.id, rule: r.id };
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to evaluate fraud.rules: ${err?.message}`);
+    }
+
+    return { block: false };
+  }
+
+  async getDepositHistory(userId: string) {
+    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
+    const items = await this.prisma.transactions.findMany({
+      where: { transaction_type: 'deposit', receiver_wallet_id: wallet?.id },
+      orderBy: { created_at: 'desc' },
+    });
+    return { data: items.map((t) => ({ ...t, amount: Number(t.amount) })) };
+  }
+
+  async getWithdrawalHistory(userId: string) {
+  const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
+  const items = await this.prisma.transactions.findMany({
+    where: { transaction_type: 'withdrawal', sender_wallet_id: wallet?.id },
+    orderBy: { created_at: 'desc' },
+  });
+  return {
+    data: items.map((t) => {
+      const meta = t.metadata as any ?? {};
+      const status = (t.status ?? 'UNKNOWN').toUpperCase();
+      return {
+        ...t,
+        amount: Number(t.amount),
+        // Hoist metadata fields to top level so the Flutter widget can read them
+        method: meta.method ?? 'BANK',
+        status: t.status === 'completed' ? 'SUCCESS' : status,
+      };
+    }),
+  };
+}
+}

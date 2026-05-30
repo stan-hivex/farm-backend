@@ -1,0 +1,272 @@
+import {
+  Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger,
+} from '@nestjs/common';
+import { PrismaService } from '../database/prisma.service';
+import { AuthService } from '../auth/auth.service';
+import { generateEscrowReference, generateTxReference } from '../common/utils/reference.util';
+import { paginationParams, paginate } from '../common/utils/pagination.util';
+
+@Injectable()
+export class EscrowService {
+  private readonly logger = new Logger(EscrowService.name);
+
+  constructor(private prisma: PrismaService, private authService: AuthService) {}
+
+  async create(buyerId: string, dto: {
+    seller_identifier: string; amount: number; title: string;
+    description?: string; auto_release_days?: number; pin: string;
+  }) {
+    if (dto.amount <= 0) throw new BadRequestException('Amount must be positive');
+    await this.authService.verifyPin(buyerId, dto.pin);
+
+    const buyer = await this.prisma.users.findUnique({
+      where: { id: buyerId },
+      include: { wallets: { take: 1 } },
+    });
+    if (!buyer?.wallets[0]) throw new NotFoundException('Buyer wallet not found');
+
+    const seller = await this.prisma.users.findFirst({
+      where: {
+        OR: [{ username: dto.seller_identifier }, { phone: dto.seller_identifier }],
+        is_deleted: false,
+      },
+      include: { wallets: { take: 1 } },
+    });
+    if (!seller?.wallets[0]) throw new NotFoundException('Seller not found');
+    if (seller.id === buyerId) throw new BadRequestException('Cannot create escrow with yourself');
+
+    const feeCfg = await this.prisma.fee_configurations.findFirst({
+      where: { transaction_type: 'escrow_lock', is_active: true },
+    });
+    const fee = feeCfg
+      ? dto.amount * (Number(feeCfg.percentage_fee) / 100) + Number(feeCfg.flat_fee)
+      : 0;
+    const totalRequired = dto.amount + fee;
+    const available = Number(buyer.wallets[0].balance) - Number(buyer.wallets[0].locked_balance);
+    if (available < totalRequired)
+      throw new BadRequestException(`Insufficient balance. Need ${totalRequired} FARM`);
+
+    const auto_release_at = new Date(
+      Date.now() + (dto.auto_release_days || 7) * 86400_000,
+    );
+
+    const contract = await this.prisma.$transaction(async (tx) => {
+      const c = await tx.escrow_contracts.create({
+        data: {
+          reference_code: generateEscrowReference(),
+          buyer_id: buyerId,
+          seller_id: seller.id,
+          buyer_wallet_id: buyer.wallets[0].id,
+          seller_wallet_id: seller.wallets[0].id,
+          amount: dto.amount,
+          fee,
+          title: dto.title,
+          description: dto.description,
+          auto_release_at,
+          status: 'pending',
+        },
+      });
+      await tx.wallets.update({
+        where: { id: buyer.wallets[0].id },
+        data: { locked_balance: { increment: totalRequired } },
+      });
+      await tx.escrow_contracts.update({
+        where: { id: c.id },
+        data: { status: 'active', funded_at: new Date() },
+      });
+      await tx.transactions.create({
+        data: {
+          transaction_reference: generateTxReference(),
+          sender_wallet_id: buyer.wallets[0].id,
+          transaction_type: 'escrow_lock',
+          status: 'completed',
+          amount: dto.amount,
+          fee,
+          net_amount: dto.amount,
+          description: `Escrow lock: ${dto.title}`,
+          processed_at: new Date(),
+        },
+      });
+      return c;
+    });
+
+    return {
+      data: { ...contract, amount: Number(contract.amount), fee: Number(contract.fee) },
+      message: 'Escrow created and funded',
+    };
+  }
+
+  async release(escrowId: string, buyerId: string) {
+    const escrow = await this.getEscrowOrFail(escrowId);
+    if (escrow.buyer_id !== buyerId) throw new ForbiddenException('Only the buyer can release');
+    if (escrow.status !== 'active')
+      throw new BadRequestException(`Cannot release escrow with status: ${escrow.status}`);
+    await this.executeRelease(escrow);
+    return { message: 'Escrow released to seller' };
+  }
+
+  async dispute(escrowId: string, userId: string, dto: { reason: string }) {
+    const escrow = await this.getEscrowOrFail(escrowId);
+    if (escrow.buyer_id !== userId && escrow.seller_id !== userId)
+      throw new ForbiddenException('Not a party to this escrow');
+    if (escrow.status !== 'active')
+      throw new BadRequestException('Can only dispute an active escrow');
+    await this.prisma.escrow_contracts.update({
+      where: { id: escrowId },
+      data: {
+        status: 'disputed',
+        disputed_at: new Date(),
+        evidence: { reason: dto.reason, disputed_by: userId },
+      },
+    });
+    await this.prisma.escrow_messages.create({
+      data: { escrow_id: escrowId, sender_id: userId, message: `DISPUTE RAISED: ${dto.reason}` },
+    });
+    return { message: 'Dispute raised. Admin will review within 24 hours.' };
+  }
+
+  async cancel(escrowId: string, userId: string) {
+    const escrow = await this.getEscrowOrFail(escrowId);
+    if (escrow.buyer_id !== userId) throw new ForbiddenException('Only buyer can cancel');
+    if (escrow.status === 'active')
+      throw new BadRequestException('Cannot cancel a funded escrow. Raise a dispute instead.');
+    if (escrow.status !== 'pending')
+      throw new BadRequestException(`Cannot cancel escrow with status: ${escrow.status}`);
+    await this.prisma.escrow_contracts.update({
+      where: { id: escrowId }, data: { status: 'cancelled' },
+    });
+    return { message: 'Escrow cancelled' };
+  }
+
+  async addMessage(escrowId: string, senderId: string, message: string) {
+    const escrow = await this.getEscrowOrFail(escrowId);
+    if (escrow.buyer_id !== senderId && escrow.seller_id !== senderId)
+      throw new ForbiddenException('Not a party to this escrow');
+    const msg = await this.prisma.escrow_messages.create({
+      data: { escrow_id: escrowId, sender_id: senderId, message },
+    });
+    return { data: msg };
+  }
+
+  async list(userId: string, query: any) {
+    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const where: any = { OR: [{ buyer_id: userId }, { seller_id: userId }] };
+    if (query.status) where.status = query.status;
+    const [items, total] = await Promise.all([
+      this.prisma.escrow_contracts.findMany({
+        where, skip, take, orderBy: { created_at: 'desc' },
+        include: { escrow_messages: { orderBy: { created_at: 'asc' } } },
+      }),
+      this.prisma.escrow_contracts.count({ where }),
+    ]);
+    return {
+      data: items.map((e) => ({ ...e, amount: Number(e.amount), fee: Number(e.fee) })),
+      meta: paginate(total, page, limit),
+    };
+  }
+
+  async getOne(escrowId: string, userId: string) {
+    const escrow = await this.prisma.escrow_contracts.findUnique({
+      where: { id: escrowId },
+      include: {
+        escrow_messages: { orderBy: { created_at: 'asc' } },
+        users_escrow_contracts_buyer_idTousers: { select: { username: true, first_name: true } },
+        users_escrow_contracts_seller_idTousers: { select: { username: true, first_name: true } },
+      },
+    });
+    if (!escrow) throw new NotFoundException('Escrow not found');
+    if (escrow.buyer_id !== userId && escrow.seller_id !== userId)
+      throw new ForbiddenException('Access denied');
+    return { data: { ...escrow, amount: Number(escrow.amount), fee: Number(escrow.fee) } };
+  }
+
+  async processAutoReleases() {
+    const expired = await this.prisma.escrow_contracts.findMany({
+      where: { status: 'active', auto_release_at: { lte: new Date() } },
+    });
+    let released = 0;
+    for (const escrow of expired) {
+      try { await this.executeRelease(escrow); released++; }
+      catch (e) { this.logger.error(`Auto-release failed for ${escrow.id}: ${e}`); }
+    }
+    if (released) this.logger.log(`Auto-released ${released} escrow(s)`);
+    return released;
+  }
+
+  async executeRelease(escrow: any) {
+    const total = Number(escrow.amount) + Number(escrow.fee);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.wallets.update({
+        where: { id: escrow.buyer_wallet_id },
+        data: { locked_balance: { decrement: total }, balance: { decrement: total } },
+      });
+      await tx.wallets.update({
+        where: { id: escrow.seller_wallet_id },
+        data: { balance: { increment: Number(escrow.amount) } },
+      });
+      const txn = await tx.transactions.create({
+        data: {
+          transaction_reference: generateTxReference(),
+          sender_wallet_id: escrow.buyer_wallet_id,
+          receiver_wallet_id: escrow.seller_wallet_id,
+          transaction_type: 'escrow_release',
+          status: 'completed',
+          amount: Number(escrow.amount),
+          fee: Number(escrow.fee),
+          net_amount: Number(escrow.amount),
+          description: `Escrow release: ${escrow.title}`,
+          processed_at: new Date(),
+        },
+      });
+      await tx.ledger_entries.createMany({
+        data: [
+          {
+            transaction_id: txn.id, wallet_id: escrow.buyer_wallet_id,
+            entry_type: 'debit', amount: total,
+            description: `Escrow release ${escrow.reference_code}`,
+          },
+          {
+            transaction_id: txn.id, wallet_id: escrow.seller_wallet_id,
+            entry_type: 'credit', amount: Number(escrow.amount),
+            description: `Escrow release ${escrow.reference_code}`,
+          },
+        ],
+      });
+      await tx.escrow_contracts.update({
+        where: { id: escrow.id }, data: { status: 'completed', released_at: new Date() },
+      });
+    });
+  }
+
+  async executeRefund(escrow: any) {
+    const total = Number(escrow.amount) + Number(escrow.fee);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.wallets.update({
+        where: { id: escrow.buyer_wallet_id },
+        data: { locked_balance: { decrement: total } },
+      });
+      await tx.transactions.create({
+        data: {
+          transaction_reference: generateTxReference(),
+          receiver_wallet_id: escrow.buyer_wallet_id,
+          transaction_type: 'escrow_refund',
+          status: 'completed',
+          amount: Number(escrow.amount),
+          fee: 0,
+          net_amount: Number(escrow.amount),
+          description: `Escrow refund: ${escrow.title}`,
+          processed_at: new Date(),
+        },
+      });
+      await tx.escrow_contracts.update({
+        where: { id: escrow.id }, data: { status: 'refunded', resolved_at: new Date() },
+      });
+    });
+  }
+
+  private async getEscrowOrFail(id: string) {
+    const e = await this.prisma.escrow_contracts.findUnique({ where: { id } });
+    if (!e) throw new NotFoundException('Escrow contract not found');
+    return e;
+  }
+}
