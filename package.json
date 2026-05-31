@@ -6,12 +6,12 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "npx nest build",
+    "build": "tsc -p tsconfig.build.json",
     "format": "prettier --write \"src/**/*.ts\"",
-    "start": "npx nest start",
-    "start:dev": "npx nest start --watch",
-    "start:debug": "npx nest start --debug --watch",
-    "start:prod": "node dist/main.js",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/src/main.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -27,6 +27,7 @@
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1055.0",
     "@nestjs/bull": "^11.0.4",
+    "@nestjs/cli": "^11.0.21",
     "@nestjs/common": "^11.1.24",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.24",
@@ -65,7 +66,6 @@
     "winston": "^3.19.0"
   },
   "devDependencies": {
-    "@nestjs/cli": "^11.0.21",
     "@nestjs/schematics": "^11.1.0",
     "@nestjs/testing": "^11.1.24",
     "@types/bcrypt": "^5.0.2",
@@ -108,5 +108,8 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+    },
+  "engines": {
+  "node": "20.x"
   }
 }

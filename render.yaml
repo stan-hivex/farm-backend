@@ -5,7 +5,8 @@ services:
     plan: starter
 
     buildCommand: |
-      npm install
+      npm ci
+      npm install -g @nestjs/cli
       npx prisma generate
       npm run build
 
