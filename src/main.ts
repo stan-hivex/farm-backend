@@ -18,7 +18,10 @@ import { loadAwsSecrets } from './common/utils/aws-secrets-manager.util';
 
 async function bootstrap() {
   console.log('🚀 Starting FARM backend...');
-
+console.log('ENV CHECK:', {
+  db: process.env.DATABASE_URL,
+  redis: process.env.REDIS_URL,
+});
   /**
    * SAFE AWS LOAD (NEVER BLOCK STARTUP)
    */
