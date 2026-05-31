@@ -49,11 +49,7 @@ import { WebhookModule } from './webhook/webhook.module';
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
-        redis: {
-          host: cfg.get<string>('REDIS_HOST', 'localhost'),
-          port: cfg.get<number>('REDIS_PORT', 6379),
-          password: cfg.get<string>('REDIS_PASSWORD') || undefined,
-        },
+        redis: cfg.get<string>('REDIS_URL'),
         defaultJobOptions: { removeOnComplete: 100, removeOnFail: 500, attempts: 3 },
       }),
     }),
@@ -84,11 +80,8 @@ import { WebhookModule } from './webhook/webhook.module';
     {
       provide: 'REDIS_CLIENT',
       useFactory: (cfg: ConfigService) =>
-        new Redis({
-          host: cfg.get<string>('REDIS_HOST', 'localhost'),
-          port: cfg.get<number>('REDIS_PORT', 6379),
-          password: cfg.get<string>('REDIS_PASSWORD') || undefined,
-        }),
+        new Redis(cfg.get<string>('REDIS_URL')),
+
       inject: [ConfigService],
     },
     IdempotencyMiddleware,

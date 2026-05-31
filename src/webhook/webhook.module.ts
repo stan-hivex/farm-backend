@@ -28,11 +28,7 @@ import Redis from 'ioredis';
     {
       provide: 'REDIS_CLIENT',
       useFactory: (cfg: ConfigService) =>
-        new Redis({
-          host: cfg.get<string>('REDIS_HOST', 'localhost'),
-          port: cfg.get<number>('REDIS_PORT', 6379),
-          password: cfg.get<string>('REDIS_PASSWORD') || undefined,
-        }),
+       new Redis(cfg.get<string>('REDIS_URL')),
       inject: [ConfigService],
     },
   ],
