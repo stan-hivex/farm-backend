@@ -1,34 +1,73 @@
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from '@aws-sdk/client-secrets-manager';
 
+/**
+ * SAFE AWS SECRETS LOADER
+ * - NEVER crashes app
+ * - Skips gracefully if credentials/region are missing
+ * - Works locally + production (Render safe)
+ */
 export async function loadAwsSecrets(): Promise<void> {
-  const secretId = process.env.AWS_SECRETS_MANAGER_SECRET_ID;
-  if (!secretId) {
-    return;
-  }
-
-  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
-  if (!region) {
-    throw new Error('AWS region is required when using AWS Secrets Manager');
-  }
-
-  const client = new SecretsManagerClient({ region });
-  const command = new GetSecretValueCommand({ SecretId: secretId });
-  const response = await client.send(command);
-
-  if (!response.SecretString) {
-    throw new Error(`AWS Secrets Manager secret ${secretId} has no string payload`);
-  }
-
-  let secrets: Record<string, string>;
   try {
-    secrets = JSON.parse(response.SecretString) as Record<string, string>;
-  } catch (error) {
-    throw new Error('AWS Secrets Manager secret JSON payload is malformed');
-  }
+    const secretId = process.env.AWS_SECRETS_MANAGER_SECRET_ID;
 
-  Object.entries(secrets).forEach(([key, value]) => {
-    if (value !== undefined && value !== null) {
-      process.env[key] = value;
+    // If not configured → just skip silently
+    if (!secretId) {
+      console.log('ℹ️ AWS Secrets Manager not configured, skipping...');
+      return;
     }
-  });
+
+    const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+
+    // If region missing → skip safely (DON'T crash Render)
+    if (!region) {
+      console.warn('⚠️ AWS region missing, skipping secrets load');
+      return;
+    }
+
+    const client = new SecretsManagerClient({ region });
+
+    const command = new GetSecretValueCommand({
+      SecretId: secretId,
+    });
+
+    let response;
+
+    try {
+      response = await client.send(command);
+    } catch (err: any) {
+      console.warn('⚠️ AWS Secrets fetch failed (continuing safely):', err?.message || err);
+      return;
+    }
+
+    if (!response?.SecretString) {
+      console.warn('⚠️ AWS secret has no SecretString, skipping');
+      return;
+    }
+
+    let secrets: Record<string, string>;
+
+    try {
+      secrets = JSON.parse(response.SecretString);
+    } catch (err) {
+      console.warn('⚠️ AWS secret JSON is invalid, skipping');
+      return;
+    }
+
+    for (const [key, value] of Object.entries(secrets)) {
+      if (value !== undefined && value !== null) {
+        process.env[key] = value;
+      }
+    }
+
+    console.log('✅ AWS Secrets loaded successfully');
+  } catch (err: any) {
+    // FINAL SAFETY NET (NEVER crash app)
+    console.warn(
+      '⚠️ AWS Secrets Manager completely skipped (safe mode):',
+      err?.message || err,
+    );
+  }
 }
