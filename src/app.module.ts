@@ -7,6 +7,14 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bull';
 import Redis from 'ioredis';
 import { DatabaseModule } from './database/database.module';
+
+function getRequiredString(cfg: ConfigService, key: string): string {
+  const value = cfg.get<string>(key);
+  if (!value) {
+    throw new Error(`${key} is required but was not found in configuration`);
+  }
+  return value;
+}
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { WalletsModule } from './wallets/wallets.module';
@@ -49,7 +57,7 @@ import { WebhookModule } from './webhook/webhook.module';
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
-        redis: cfg.get<string>('REDIS_URL'),
+        redis: getRequiredString(cfg, 'REDIS_URL'),
         defaultJobOptions: { removeOnComplete: 100, removeOnFail: 500, attempts: 3 },
       }),
     }),
@@ -80,7 +88,7 @@ import { WebhookModule } from './webhook/webhook.module';
     {
       provide: 'REDIS_CLIENT',
       useFactory: (cfg: ConfigService) =>
-        new Redis(cfg.get<string>('REDIS_URL')),
+        new Redis(getRequiredString(cfg, 'REDIS_URL')),
 
       inject: [ConfigService],
     },

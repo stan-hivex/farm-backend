@@ -12,6 +12,14 @@ import { QUEUES } from '../common/constants';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
+function getRequiredString(cfg: ConfigService, key: string): string {
+  const value = cfg.get<string>(key);
+  if (!value) {
+    throw new Error(`${key} is required but was not found in configuration`);
+  }
+  return value;
+}
+
 @Module({
   imports: [
     forwardRef(() => DepositModule),
@@ -28,7 +36,7 @@ import Redis from 'ioredis';
     {
       provide: 'REDIS_CLIENT',
       useFactory: (cfg: ConfigService) =>
-       new Redis(cfg.get<string>('REDIS_URL')),
+       new Redis(getRequiredString(cfg, 'REDIS_URL')),
       inject: [ConfigService],
     },
   ],
