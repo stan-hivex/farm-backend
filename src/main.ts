@@ -40,9 +40,15 @@ async function findOpenPort(startPort: number, maxRetries = 10): Promise<number>
 }
 
 async function bootstrap() {
-  if (process.env.USE_AWS_SECRETS_MANAGER === 'true' || process.env.AWS_SECRETS_MANAGER_SECRET_ID) {
+  const useAws = process.env.USE_AWS_SECRETS_MANAGER === 'true';
+
+if (useAws) {
+  try {
     await loadAwsSecrets();
+  } catch (err) {
+    console.warn('AWS Secrets Manager failed, continuing without it:', err);
   }
+}
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
