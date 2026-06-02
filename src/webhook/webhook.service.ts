@@ -218,49 +218,76 @@ export class WebhookService {
 
   private async finalizeDeposit(reference: string) {
     const deposit = await this.prisma.deposit.findFirst({
-  where: { reference },
-});
+      where: { reference },
+    });
 
-if (!deposit || deposit.status !== 'PENDING') return false;
+    if (!deposit || deposit.status !== 'PENDING') return false;
 
-const wallet = await this.prisma.wallets.findFirst({
-  where: { user_id: deposit.userId, is_active: true },
-});
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: deposit.userId, is_active: true },
+    });
 
-if (!wallet) return false;
+    if (!wallet) return false;
 
-const prev = Number(wallet.balance ?? 0);
+    const prev = Number(wallet.balance ?? 0);
 
-await this.prisma.$transaction(async (tx) => {
-  await tx.deposit.update({
-    where: { id: deposit.id },
-    data: { status: 'SUCCESS' },
-  });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.deposit.update({
+        where: { id: deposit.id },
+        data: { status: 'SUCCESS' },
+      });
 
-  await tx.wallets.update({
-    where: { id: wallet.id },
-    data: { balance: { increment: deposit.amount } },
-  });
+      await tx.wallets.update({
+        where: { id: wallet.id },
+        data: { balance: { increment: deposit.amount } },
+      });
 
-  await tx.ledger_entries.create({
-    data: {
-      wallet_id: wallet.id,
-      entry_type: 'credit',
-      amount: deposit.amount,
-      balance_before: prev,
-      balance_after: prev + deposit.amount,
-      description: `Deposit completed — ref: ${reference}`,
-    },
-  });
-});
+      await tx.ledger_entries.create({
+        data: {
+          wallet_id: wallet.id,
+          entry_type: 'credit',
+          amount: deposit.amount,
+          balance_before: prev,
+          balance_after: prev + deposit.amount,
+          description: `Deposit completed — ref: ${reference}`,
+        },
+      });
 
-this.websocket.emitBalanceUpdate(deposit.userId, prev + deposit.amount);
-this.websocket.emitTransactionUpdate(deposit.userId, {
-  reference,
-  status: 'SUCCESS',
-});
+      const transaction = await tx.transactions.findUnique({
+        where: { transaction_reference: reference },
+      });
+      if (transaction) {
+        await tx.transactions.update({
+          where: { id: transaction.id },
+          data: { status: 'completed', processed_at: new Date() },
+        });
+      }
+    });
 
-return true;
+    this.websocket.emitBalanceUpdate(deposit.userId, prev + deposit.amount);
+    this.websocket.emitTransactionUpdate(deposit.userId, {
+      reference,
+      status: 'SUCCESS',
+    });
+
+    return true;
+  }
+
+  private async finalizeWithdrawal(reference: string, success: boolean, reason?: string) {
+    if (success) {
+      const result = await this.withdrawService.approveWithdrawal(reference);
+      if (result) {
+        await this.emitWithdrawalUpdate(reference, 'SUCCESS');
+      }
+      return result;
+    }
+
+    const result = await this.withdrawService.rejectWithdrawal(reference, reason || 'Provider reported failure');
+    if (result) {
+      await this.emitWithdrawalUpdate(reference, 'FAILED');
+    }
+    return result;
+  }
 
   private async failTransactionWithdrawal(transaction: any, reason?: string) {
     if (transaction.status === 'failed') {
