@@ -56,10 +56,8 @@ export class WebhookService {
 
     if (event === 'charge.success') {
       await this.finalizeDeposit(reference);
-    } else if (['transfer.success', 'payout.success', 'transfer.completed'].includes(event)) {
-      await this.finalizeWithdrawal(reference, true);
-    } else if (['transfer.failed', 'payout.failed', 'charge.failed'].includes(event)) {
-      await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+    } else if (['transfer.success', 'payout.success', 'transfer.completed', 'transfer.failed', 'payout.failed', 'charge.failed'].includes(event)) {
+      await this.withdrawService.approveWithdrawal(reference);
     }
 
     if (eventId) await this.markProcessed('paystack', eventId);
@@ -103,10 +101,8 @@ export class WebhookService {
 
     if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
       await this.finalizeDeposit(reference);
-    } else if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
-      await this.finalizeWithdrawal(reference, true);
-    } else if (['payment.failed', 'transaction.failed', 'withdrawal.failed', 'failed'].includes(event)) {
-      await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+    } else if (['withdrawal.success', 'transfer.success', 'payout.success', 'payment.failed', 'transaction.failed', 'withdrawal.failed', 'failed'].includes(event)) {
+      await this.withdrawService.approveWithdrawal(reference);
     }
 
     if (eventId) await this.markProcessed('ivorypay', eventId);
@@ -216,78 +212,52 @@ export class WebhookService {
     return false;
   }
 
-  private async finalizeDeposit(reference: string) {
-    const deposit = await this.prisma.deposit.findFirst({
-      where: { reference },
+ private async finalizeDeposit(reference: string) {
+  const deposit = await this.prisma.deposit.findFirst({
+    where: { reference },
+  });
+
+  if (!deposit || deposit.status !== 'PENDING') return false;
+
+  const wallet = await this.prisma.wallets.findFirst({
+    where: { user_id: deposit.userId, is_active: true },
+  });
+
+  if (!wallet) return false;
+
+  const prev = Number(wallet.balance ?? 0);
+
+  await this.prisma.$transaction(async (tx) => {
+    await tx.deposit.update({
+      where: { id: deposit.id },
+      data: { status: 'SUCCESS' },
     });
 
-    if (!deposit || deposit.status !== 'PENDING') return false;
-
-    const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: deposit.userId, is_active: true },
+    await tx.wallets.update({
+      where: { id: wallet.id },
+      data: { balance: { increment: deposit.amount } },
     });
 
-    if (!wallet) return false;
-
-    const prev = Number(wallet.balance ?? 0);
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.deposit.update({
-        where: { id: deposit.id },
-        data: { status: 'SUCCESS' },
-      });
-
-      await tx.wallets.update({
-        where: { id: wallet.id },
-        data: { balance: { increment: deposit.amount } },
-      });
-
-      await tx.ledger_entries.create({
-        data: {
-          wallet_id: wallet.id,
-          entry_type: 'credit',
-          amount: deposit.amount,
-          balance_before: prev,
-          balance_after: prev + deposit.amount,
-          description: `Deposit completed — ref: ${reference}`,
-        },
-      });
-
-      const transaction = await tx.transactions.findUnique({
-        where: { transaction_reference: reference },
-      });
-      if (transaction) {
-        await tx.transactions.update({
-          where: { id: transaction.id },
-          data: { status: 'completed', processed_at: new Date() },
-        });
-      }
+    await tx.ledger_entries.create({
+      data: {
+        wallet_id: wallet.id,
+        entry_type: 'credit',
+        amount: deposit.amount,
+        balance_before: prev,
+        balance_after: prev + deposit.amount,
+        description: `Deposit completed — ref: ${reference}`,
+      },
     });
+  });
 
-    this.websocket.emitBalanceUpdate(deposit.userId, prev + deposit.amount);
-    this.websocket.emitTransactionUpdate(deposit.userId, {
-      reference,
-      status: 'SUCCESS',
-    });
+  this.websocket.emitBalanceUpdate(deposit.userId, prev + deposit.amount);
+  this.websocket.emitTransactionUpdate(deposit.userId, {
+    reference,
+    status: 'SUCCESS',
+  });
 
-    return true;
-  }
-
-  private async finalizeWithdrawal(reference: string, success: boolean, reason?: string) {
-    if (success) {
-      const result = await this.withdrawService.approveWithdrawal(reference);
-      if (result) {
-        await this.emitWithdrawalUpdate(reference, 'SUCCESS');
-      }
-      return result;
-    }
-
-    const result = await this.withdrawService.rejectWithdrawal(reference, reason || 'Provider reported failure');
-    if (result) {
-      await this.emitWithdrawalUpdate(reference, 'FAILED');
-    }
-    return result;
-  }
+  return true;
+}
 
   private async failTransactionWithdrawal(transaction: any, reason?: string) {
     if (transaction.status === 'failed') {
@@ -345,6 +315,13 @@ export class WebhookService {
       reference,
       status,
     });
+  }
+
+  private async finalizeWithdrawal(reference: string, success: boolean, reason?: string) {
+    if (success) {
+      return this.withdrawService.approveWithdrawal(reference);
+    }
+    return this.withdrawService.rejectWithdrawal(reference, reason || 'failed');
   }
 
   private normalizeAmount(amount: any): number {
