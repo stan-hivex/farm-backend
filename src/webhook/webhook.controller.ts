@@ -29,15 +29,10 @@ export class WebhookController {
     },
   })
   @Post('paystack')
-  async paystack(@Body() body: any) {
-    const jobId = this.getWebhookJobId('paystack', body);
-    await this.webhookQueue.add(
-      'paystack',
-      { provider: 'paystack', payload: body, verified: true },
-      { jobId, removeOnComplete: true, attempts: 3, backoff: { type: 'exponential', delay: 3000 } },
-    );
-    return { received: true };
-  }
+async paystack(@Body() body: any) {
+  await this.webhookService.handlePaystackWebhook(body, true);
+  return { received: true };
+}
 
   @UseGuards(WebhookSignatureGuard)
   @Throttle({
@@ -47,13 +42,8 @@ export class WebhookController {
     },
   })
   @Post('ivorypay')
-  async ivorypay(@Body() body: any) {
-    const jobId = this.getWebhookJobId('ivorypay', body);
-    await this.webhookQueue.add(
-      'ivorypay',
-      { provider: 'ivorypay', payload: body, verified: true },
-      { jobId, removeOnComplete: true, attempts: 3, backoff: { type: 'exponential', delay: 3000 } },
-    );
-    return { received: true };
-  }
+async ivorypay(@Body() body: any) {
+  await this.webhookService.handleIvorypayWebhook(body, true);
+  return { received: true };
+}
 }

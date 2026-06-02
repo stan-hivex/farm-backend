@@ -2,7 +2,6 @@ import { forwardRef, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { WebhookController } from './webhook.controller';
 import { WebhookService } from './webhook.service';
-import { WebhookProcessor } from './webhook.processor';
 import { DepositModule } from '../deposit/deposit.module';
 import { WithdrawModule } from '../withdraw/withdraw.module';
 import { WebsocketModule } from '../websocket/websocket.module';
@@ -25,14 +24,12 @@ function getRequiredString(cfg: ConfigService, key: string): string {
     forwardRef(() => DepositModule),
     WithdrawModule,
     WebsocketModule,
-    BullModule.registerQueue({ name: QUEUES.WEBHOOKS }),
   ],
   controllers: [WebhookController],
   providers: [
     WebhookService,
     PrismaService,
     WebhookSignatureGuard,
-    WebhookProcessor,
     {
       provide: 'REDIS_CLIENT',
       useFactory: (cfg: ConfigService) =>

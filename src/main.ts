@@ -153,4 +153,8 @@ console.log('ENV CHECK:', {
   console.log(`✅ Server running on http://0.0.0.0:${port}`);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  console.error('BOOTSTRAP FAILED');
+  console.error(err);
+  process.exit(1);
+});
