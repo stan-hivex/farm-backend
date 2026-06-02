@@ -1,9 +1,7 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
-import { DepositService } from '../deposit/deposit.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
-import type { Redis } from 'ioredis';
 
 @Injectable()
 export class WebhookService {
@@ -11,66 +9,54 @@ export class WebhookService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly depositService: DepositService,
     private readonly websocket: WebsocketGateway,
     private readonly cfg: ConfigService,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
-  // =========================
-  // PAYSTACK WEBHOOK
-  // =========================
+  // ===============================
+  // PAYSTACK WEBHOOK ENTRY
+  // ===============================
   async handlePaystackWebhook(payload: any) {
-    const event = payload?.event;
+    const event = payload.event;
     const reference = payload?.data?.reference;
 
     if (!reference) {
-      this.logger.warn('Paystack webhook missing reference');
+      this.logger.warn('Missing reference in Paystack webhook');
       return { received: true };
     }
 
     if (event === 'charge.success') {
-      return this.finalizeDeposit(reference);
+      await this.finalizeDeposit(reference);
     }
 
     return { received: true };
   }
 
-  // =========================
-  // IVORYPAY WEBHOOK
-  // =========================
+  // ===============================
+  // IVORYPAY WEBHOOK ENTRY
+  // ===============================
   async handleIvorypayWebhook(payload: any) {
-    const event = payload?.event || payload?.status;
-    const reference = payload?.reference || payload?.data?.reference;
+    const event = payload.event || payload.status;
+    const reference = payload?.data?.reference || payload?.reference;
 
-    if (!reference) {
-      this.logger.warn('Ivorypay webhook missing reference');
-      return { received: true };
-    }
+    if (!reference) return { received: true };
 
     if (['payment.success', 'success', 'transaction.completed'].includes(event)) {
-      return this.finalizeDeposit(reference);
+      await this.finalizeDeposit(reference);
     }
 
     return { received: true };
   }
 
-  // =========================
+  // ===============================
   // CORE DEPOSIT FINALIZER
-  // =========================
+  // ===============================
   private async finalizeDeposit(reference: string) {
     const deposit = await this.prisma.deposit.findFirst({
       where: { reference },
     });
 
-    if (!deposit) {
-      this.logger.warn(`Deposit not found for ref ${reference}`);
-      return false;
-    }
-
-    if (deposit.status === 'SUCCESS') {
-      return false;
-    }
+    if (!deposit || deposit.status !== 'PENDING') return false;
 
     const wallet = await this.prisma.wallets.findFirst({
       where: {
@@ -79,22 +65,19 @@ export class WebhookService {
       },
     });
 
-    if (!wallet) {
-      this.logger.warn(`Wallet not found for user ${deposit.userId}`);
-      return false;
-    }
+    if (!wallet) return false;
 
     const prevBalance = Number(wallet.balance ?? 0);
     const amount = Number(deposit.amount);
 
     await this.prisma.$transaction(async (tx) => {
-      // 1. Update deposit
+      // 1. Mark deposit SUCCESS
       await tx.deposit.update({
         where: { id: deposit.id },
         data: { status: 'SUCCESS' },
       });
 
-      // 2. Update wallet
+      // 2. Update wallet balance
       await tx.wallets.update({
         where: { id: wallet.id },
         data: {
@@ -110,12 +93,14 @@ export class WebhookService {
           amount,
           balance_before: prevBalance,
           balance_after: prevBalance + amount,
-          description: `Deposit completed: ${reference}`,
+          description: `Deposit successful — ref ${reference}`,
         },
       });
     });
 
-    // 4. Emit realtime updates
+    // ===============================
+    // REALTIME UPDATES
+    // ===============================
     this.websocket.emitBalanceUpdate(
       deposit.userId,
       prevBalance + amount,
