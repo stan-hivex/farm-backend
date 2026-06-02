@@ -17,7 +17,15 @@ export class DepositService {
     private readonly cfg: ConfigService,
   ) {}
 
+  private validatePaymentMethod(method: string) {
+    const allowed = ['CRYPTO', 'CARD', 'MOBILE_MONEY'];
+    if (!allowed.includes(method)) {
+      throw new BadRequestException('Unsupported payment method');
+    }
+  }
+
   async createDeposit(userId: string, dto: any) {
+    this.validatePaymentMethod(dto.paymentMethod);
     const fee = dto.amount * 0.02;
     const total = dto.amount + fee;
 
@@ -40,34 +48,44 @@ export class DepositService {
       },
     });
 
-    if (dto.paymentMethod === 'CRYPTO') {
-      const payment = await this.ivorypay.createPayment({
-        amount: total,
-        currency: 'KES',
-        reference,
-        email: dto.email || 'customer@example.com',
-      });
+    const method = dto.paymentMethod;
 
-      return {
-        success: true,
-        deposit,
-        paymentLink: payment.payment_link,
-      };
-    }
+switch (method) {
+  case 'CRYPTO': {
+    const payment = await this.ivorypay.createPayment({
+      amount: total,
+      currency: 'KES',
+      reference,
+      email: dto.email || 'customer@example.com',
+    });
 
-    if (dto.paymentMethod === 'CARD' || dto.paymentMethod === 'MOBILE_MONEY') {
-      const payment = await this.paystack.initializePayment({
-        email: dto.email || 'customer@email.com',
-        amount: total,
-        reference,
-      });
+    return {
+      success: true,
+      provider: 'IVORYPAY',
+      deposit,
+      paymentLink: payment.payment_link,
+    };
+  }
 
-      return {
-        success: true,
-        deposit,
-        authorization_url: payment.authorization_url,
-      };
-    }
+  case 'CARD':
+  case 'MOBILE_MONEY': {
+    const payment = await this.paystack.initializePayment({
+      email: dto.email || 'customer@email.com',
+      amount: total,
+      reference,
+    });
+
+    return {
+      success: true,
+      provider: 'PAYSTACK',
+      deposit,
+      authorization_url: payment.authorization_url,
+    };
+  }
+
+  default:
+    throw new BadRequestException('Invalid payment method');
+}
 
     return {
       success: true,

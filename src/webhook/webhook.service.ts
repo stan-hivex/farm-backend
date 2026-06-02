@@ -41,6 +41,12 @@ export class WebhookService {
       return { received: true };
     }
 
+    // Strict routing: Paystack webhooks should not be routed for crypto payment_method
+    if (payload.payment_method === 'crypto') {
+      await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Paystack webhook routed to wrong provider (crypto)');
+      return { received: true };
+    }
+
     if (this.detectPotentialFraud('paystack', payload)) {
       await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Suspected fraud on Paystack payload');
       return { received: true };
@@ -85,6 +91,12 @@ export class WebhookService {
 
     if (!this.verifyProviderPayload('ivorypay', payload)) {
       await this.rejectWebhook('ivorypay', event ?? 'unknown', payload, 'Invalid Ivorypay payload');
+      return { received: true };
+    }
+
+    // Strict routing: Ivorypay webhooks must be for crypto channel
+    if (payload.channel !== 'crypto') {
+      await this.rejectWebhook('ivorypay', event ?? 'unknown', payload, 'Ivorypay webhook routed to wrong provider (non-crypto)');
       return { received: true };
     }
 
