@@ -24,12 +24,16 @@ function getRequiredString(cfg: ConfigService, key: string): string {
     forwardRef(() => DepositModule),
     WithdrawModule,
     WebsocketModule,
+    BullModule.registerQueue({
+      name: QUEUES.WEBHOOKS,
+    }),
   ],
   controllers: [WebhookController],
   providers: [
     WebhookService,
     PrismaService,
     WebhookSignatureGuard,
+
     {
       provide: 'REDIS_CLIENT',
       useFactory: (cfg: ConfigService) =>
