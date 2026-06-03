@@ -1,7 +1,9 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
+import { ScheduleModule } from '@nestjs/schedule';
 import { WebhookController } from './webhook.controller';
 import { WebhookService } from './webhook.service';
+import { WebhookProcessor } from './webhook.processor';
 import { DepositModule } from '../deposit/deposit.module';
 import { WithdrawModule } from '../withdraw/withdraw.module';
 import { WebsocketModule } from '../websocket/websocket.module';
@@ -28,6 +30,7 @@ function getOptionalString(cfg: ConfigService, key: string): string | undefined 
     forwardRef(() => DepositModule),
     WithdrawModule,
     WebsocketModule,
+    ScheduleModule.forRoot(),
     BullModule.registerQueue({
       name: QUEUES.WEBHOOKS,
     }),
@@ -35,6 +38,7 @@ function getOptionalString(cfg: ConfigService, key: string): string | undefined 
   controllers: [WebhookController],
   providers: [
     WebhookService,
+    WebhookProcessor,
     PrismaService,
     WebhookSignatureGuard,
 

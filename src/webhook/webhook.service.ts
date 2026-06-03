@@ -61,17 +61,32 @@ export class WebhookService {
       return { received: true };
     }
 
-    if (['charge.success', 'payment.success'].includes(event)) {
-      await this.finalizeDeposit(reference);
-    } else if (['transfer.success', 'payout.success', 'transfer.completed'].includes(event)) {
-      await this.finalizeWithdrawal(reference, true);
-    } else if (['transfer.failed', 'payout.failed', 'charge.failed'].includes(event)) {
-      await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+    // Always enqueue webhook events for asynchronous processing.
+    const queueEntry = {
+      provider: 'paystack',
+      event,
+      reference,
+      payload,
+      receivedAt: Date.now(),
+    };
+
+    if (this.redis) {
+      try {
+        await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
+      } catch (e) {
+        this.logger.error('Failed to enqueue Paystack webhook', e as any);
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+        await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
+      }
+      if (eventId) await this.markProcessed('paystack', eventId);
+      return { received: true };
     }
 
+    // If Redis is unavailable, do not process the webhook synchronously — alert operators.
+    await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'redis_unavailable' } });
+    await this.fallbackAlert('paystack', 'Redis unavailable for webhook queueing', payload);
     if (eventId) await this.markProcessed('paystack', eventId);
-
-    await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed' } });
     return { received: true };
   }
 
@@ -114,17 +129,31 @@ export class WebhookService {
       return { received: true };
     }
 
-    if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
-      await this.finalizeDeposit(reference);
-    } else if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
-      await this.finalizeWithdrawal(reference, true);
-    } else if (['payment.failed', 'transaction.failed', 'withdrawal.failed', 'failed'].includes(event)) {
-      await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+    // Enqueue Ivorypay events for asynchronous processing.
+    const queueEntry = {
+      provider: 'ivorypay',
+      event,
+      reference,
+      payload,
+      receivedAt: Date.now(),
+    };
+
+    if (this.redis) {
+      try {
+        await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
+      } catch (e) {
+        this.logger.error('Failed to enqueue Ivorypay webhook', e as any);
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+        await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
+      }
+      if (eventId) await this.markProcessed('ivorypay', eventId);
+      return { received: true };
     }
 
+    await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'redis_unavailable' } });
+    await this.fallbackAlert('ivorypay', 'Redis unavailable for webhook queueing', payload);
     if (eventId) await this.markProcessed('ivorypay', eventId);
-
-    await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed' } });
     return { received: true };
   }
 
@@ -610,5 +639,61 @@ export class WebhookService {
     const n = Number(amount ?? 0);
     if (!isFinite(n)) return 0;
     return Math.round(n * 100) / 100;
+  }
+
+  /**
+   * Process a Paystack webhook from the queue.
+   * This is called by the WebhookProcessor after the event has been queued to Redis.
+   * CRITICAL: This method should ONLY be called by the async processor, never directly from HTTP handlers.
+   */
+  async handlePaystackWebhookProcessing(payload: any) {
+    const event = payload.event;
+    const reference = payload.data?.reference;
+
+    if (!reference) {
+      this.logger.warn('Paystack webhook processing: missing reference');
+      return;
+    }
+
+    try {
+      if (event === 'charge.success') {
+        await this.finalizeDeposit(reference);
+      } else if (['transfer.success', 'payout.success', 'transfer.completed'].includes(event)) {
+        await this.finalizeWithdrawal(reference, true);
+      } else if (['transfer.failed', 'payout.failed', 'charge.failed'].includes(event)) {
+        await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+      }
+    } catch (error) {
+      this.logger.error(`Error processing Paystack webhook: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Process an Ivorypay webhook from the queue.
+   * This is called by the WebhookProcessor after the event has been queued to Redis.
+   * CRITICAL: This method should ONLY be called by the async processor, never directly from HTTP handlers.
+   */
+  async handleIvorypayWebhookProcessing(payload: any) {
+    const event = payload.event ?? payload.status;
+    const reference = payload.data?.reference ?? payload.reference;
+
+    if (!reference) {
+      this.logger.warn('Ivorypay webhook processing: missing reference');
+      return;
+    }
+
+    try {
+      if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
+        await this.finalizeDeposit(reference);
+      } else if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
+        await this.finalizeWithdrawal(reference, true);
+      } else if (['payment.failed', 'transaction.failed', 'withdrawal.failed', 'failed'].includes(event)) {
+        await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+      }
+    } catch (error) {
+      this.logger.error(`Error processing Ivorypay webhook: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
   }
 }
