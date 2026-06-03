@@ -17,7 +17,7 @@ export class WebhookService {
     private readonly withdrawService: WithdrawService,
     private readonly websocket: WebsocketGateway,
     private readonly cfg: ConfigService,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
   ) {}
 
   async handlePaystackWebhook(payload: any, verified = false) {
@@ -61,7 +61,7 @@ export class WebhookService {
       return { received: true };
     }
 
-    if (event === 'charge.success') {
+    if (['charge.success', 'payment.success'].includes(event)) {
       await this.finalizeDeposit(reference);
     } else if (['transfer.success', 'payout.success', 'transfer.completed'].includes(event)) {
       await this.finalizeWithdrawal(reference, true);
@@ -190,6 +190,7 @@ export class WebhookService {
 
   private async isReplay(provider: string, eventId: string) {
     try {
+      if (!this.redis) return false;
       const key = `${this.cfg.get<string>('WEBHOOK_DEDUP_PREFIX', 'webhook:processed:')}${provider}:${eventId}`;
       const v = await this.redis.get(key);
       return !!v;
@@ -201,6 +202,7 @@ export class WebhookService {
 
   private async markProcessed(provider: string, eventId: string) {
     try {
+      if (!this.redis) return;
       const key = `${this.cfg.get<string>('WEBHOOK_DEDUP_PREFIX', 'webhook:processed:')}${provider}:${eventId}`;
       const ttl = Number(this.cfg.get<number>('WEBHOOK_DEDUP_TTL_MS', 0));
       if (ttl > 0) {
@@ -230,13 +232,37 @@ export class WebhookService {
   }
 
   private async finalizeDeposit(reference: string) {
-    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    let deposit = await this.prisma.deposit.findFirst({ where: { reference } });
     const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+
+    if (!deposit && transaction?.amount) {
+      const metadata = transaction.metadata as any;
+      const userId = metadata?.user_id;
+      const paymentMethod = metadata?.provider?.toString()?.toLowerCase() === 'ivorypay' ? 'CRYPTO' : 'CARD';
+      if (!userId) {
+        this.logger.warn(`Deposit missing for reference ${reference} but transaction metadata.user_id is unavailable`);
+      } else {
+        this.logger.warn(`Deposit missing for reference ${reference}, reconstructing from transaction`);
+        deposit = await this.prisma.deposit.create({
+          data: {
+            reference,
+            amount: Number(transaction.amount),
+            fee: 0,
+            total: Number(transaction.amount),
+            currency: transaction.currency || 'FARM',
+            paymentMethod,
+            status: 'PENDING',
+            userId,
+          },
+        });
+      }
+    }
 
     const depositPending = !!deposit && deposit.status === 'PENDING';
     const depositComplete = !!deposit && deposit.status === 'SUCCESS';
-    const txPending = !!transaction && transaction.transaction_type === 'deposit' && transaction.status !== 'completed';
-    const txComplete = !!transaction && transaction.transaction_type === 'deposit' && transaction.status === 'completed';
+    const isDeposit = !!transaction && transaction.transaction_type?.toLowerCase() === 'deposit';
+    const txPending = isDeposit && transaction.status !== 'completed';
+    const txComplete = isDeposit && transaction.status === 'completed';
 
     if (depositComplete && txComplete) {
       return true;
@@ -261,6 +287,10 @@ export class WebhookService {
 
     if (txPending) {
       return this.creditPendingTransactionDeposit(reference);
+    }
+
+    if (transaction && transaction.status !== 'completed') {
+      await this.creditPendingTransactionDeposit(reference);
     }
 
     return depositComplete || txComplete;
@@ -309,7 +339,8 @@ export class WebhookService {
         },
       });
 
-      if (transaction && transaction.transaction_type === 'deposit' && transaction.status !== 'completed') {
+      const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
+      if (transaction && isDeposit && transaction.status !== 'completed') {
         await tx.transactions.update({
           where: { id: transaction.id },
           data: {
@@ -337,7 +368,8 @@ export class WebhookService {
     if (!transaction) {
       transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
     }
-    if (!transaction || transaction.transaction_type !== 'deposit') {
+    const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
+    if (!transaction || !isDeposit) {
       return false;
     }
     if (transaction.status === 'completed') {
@@ -367,7 +399,8 @@ export class WebhookService {
 
   private async creditPendingTransactionDeposit(reference: string) {
     const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
-    if (!transaction || transaction.transaction_type !== 'deposit') return false;
+    const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
+    if (!transaction || !isDeposit) return false;
     if (transaction.status === 'completed') return true;
 
     const result = await this.prisma.$transaction(async (tx) => {

@@ -15,6 +15,10 @@ function getRequiredString(cfg: ConfigService, key: string): string {
   }
   return value;
 }
+
+function getOptionalString(cfg: ConfigService, key: string): string | undefined {
+  return cfg.get<string>(key) ?? undefined;
+}
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { WalletsModule } from './wallets/wallets.module';
@@ -57,7 +61,7 @@ import { WebhookModule } from './webhook/webhook.module';
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
-        redis: getRequiredString(cfg, 'REDIS_URL'),
+        redis: getOptionalString(cfg, 'REDIS_URL'),
         defaultJobOptions: { removeOnComplete: 100, removeOnFail: 500, attempts: 3 },
       }),
     }),
@@ -87,9 +91,10 @@ import { WebhookModule } from './webhook/webhook.module';
   providers: [
     {
       provide: 'REDIS_CLIENT',
-      useFactory: (cfg: ConfigService) =>
-        new Redis(getRequiredString(cfg, 'REDIS_URL')),
-
+      useFactory: (cfg: ConfigService) => {
+        const url = getOptionalString(cfg, 'REDIS_URL');
+        return url ? new Redis(url) : null;
+      },
       inject: [ConfigService],
     },
     IdempotencyMiddleware,

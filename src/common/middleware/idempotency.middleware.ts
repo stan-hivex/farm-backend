@@ -22,7 +22,7 @@ const RESPONSE_SUFFIX = ':response';
 @Injectable()
 export class IdempotencyMiddleware implements NestMiddleware {
   constructor(
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
     private readonly cfg: ConfigService,
   ) {}
 
@@ -46,6 +46,8 @@ export class IdempotencyMiddleware implements NestMiddleware {
     if (req.method !== 'POST') return next();
     const isFinancialPath = IDEMPOTENT_PATHS.some((p) => req.path.startsWith(p.replace('/api/v1', '')));
     if (!isFinancialPath) return next();
+
+    if (!this.redis) return next();
 
     const key = req.headers['idempotency-key'] as string;
     if (!key) return next();
@@ -80,12 +82,14 @@ export class IdempotencyMiddleware implements NestMiddleware {
       const originalJson = res.json.bind(res);
       res.json = (body: any) => {
         const payload = JSON.stringify({ status: res.statusCode, body });
-        void this.redis
-          .multi()
-          .set(cacheKey, payload, 'PX', ttl)
-          .del(lockKey)
-          .exec()
-          .catch(() => null);
+        if (this.redis) {
+          void this.redis
+            .multi()
+            .set(cacheKey, payload, 'PX', ttl)
+            .del(lockKey)
+            .exec()
+            .catch(() => null);
+        }
         return originalJson(body);
       };
 

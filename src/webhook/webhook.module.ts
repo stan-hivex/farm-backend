@@ -19,6 +19,10 @@ function getRequiredString(cfg: ConfigService, key: string): string {
   return value;
 }
 
+function getOptionalString(cfg: ConfigService, key: string): string | undefined {
+  return cfg.get<string>(key) ?? undefined;
+}
+
 @Module({
   imports: [
     forwardRef(() => DepositModule),
@@ -36,8 +40,10 @@ function getRequiredString(cfg: ConfigService, key: string): string {
 
     {
       provide: 'REDIS_CLIENT',
-      useFactory: (cfg: ConfigService) =>
-       new Redis(getRequiredString(cfg, 'REDIS_URL')),
+      useFactory: (cfg: ConfigService) => {
+        const url = getOptionalString(cfg, 'REDIS_URL');
+        return url ? new Redis(url) : null;
+      },
       inject: [ConfigService],
     },
   ],
