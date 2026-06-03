@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, IsNumber, IsPositive } from 'class-validator';
 import type { Request } from 'express';
 import { PaymentsService } from './payments.service';
+import { WebhookService } from '../webhook/webhook.service';
 import { verifyDeviceToken } from '../common/utils/device-token.util';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
@@ -76,16 +77,5 @@ export class PaymentsController {
     return this.svc.getWithdrawalHistory(u.id);
   }
 
-  // Webhook handlers are no longer exposed on PaymentsController.
-  paystackWebhook(@Req() req: Request) {
-    return this.svc.handlePaystackWebhook((req as any).rawBody
-      ? JSON.parse((req as any).rawBody)
-      : req.body);
-  }
-
-  ivorypayWebhook(@Req() req: Request) {
-    return this.svc.handleIvorypayWebhook((req as any).rawBody
-      ? JSON.parse((req as any).rawBody)
-      : req.body);
-  }
+  // Note: Webhook HTTP endpoints live under src/webhook/webhook.controller.ts
 }

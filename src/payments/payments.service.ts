@@ -319,8 +319,8 @@ export class PaymentsService {
           if (r.action === 'challenge') return { block: false, challenge: true, reason: r.reason || r.id, rule: r.id };
         }
       }
-    } catch (err) {
-      this.logger.warn(`Failed to evaluate fraud.rules: ${err?.message}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed to evaluate fraud.rules: ${err?.message ?? String(err)}`);
     }
 
     return { block: false };
