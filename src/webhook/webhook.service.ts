@@ -1,10 +1,13 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { DepositService } from '../deposit/deposit.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { QUEUES } from '../common/constants';
+import type { Queue } from 'bull';
 import type { Redis } from 'ioredis';
 
 @Injectable()
@@ -17,6 +20,7 @@ export class WebhookService {
     private readonly withdrawService: WithdrawService,
     private readonly websocket: WebsocketGateway,
     private readonly cfg: ConfigService,
+    @InjectQueue(QUEUES.WEBHOOKS) private readonly webhookQueue: Queue,
     @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
   ) {}
 
@@ -70,22 +74,26 @@ export class WebhookService {
       receivedAt: Date.now(),
     };
 
-    if (this.redis) {
-      try {
-        await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
-      } catch (e) {
-        this.logger.error('Failed to enqueue Paystack webhook', e as any);
+    try {
+      await this.webhookQueue.add(queueEntry);
+      await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
+    } catch (e) {
+      if (this.redis) {
+        try {
+          await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
+        } catch (fallbackError) {
+          this.logger.error('Failed to enqueue Paystack webhook via fallback Redis list', fallbackError as any);
+          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+          await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
+        }
+      } else {
+        this.logger.error('Failed to enqueue Paystack webhook to Bull queue', e as any);
         await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
         await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
       }
-      if (eventId) await this.markProcessed('paystack', eventId);
-      return { received: true };
     }
 
-    // If Redis is unavailable, do not process the webhook synchronously — alert operators.
-    await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'redis_unavailable' } });
-    await this.fallbackAlert('paystack', 'Redis unavailable for webhook queueing', payload);
     if (eventId) await this.markProcessed('paystack', eventId);
     return { received: true };
   }
@@ -138,21 +146,26 @@ export class WebhookService {
       receivedAt: Date.now(),
     };
 
-    if (this.redis) {
-      try {
-        await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
-      } catch (e) {
-        this.logger.error('Failed to enqueue Ivorypay webhook', e as any);
+    try {
+      await this.webhookQueue.add(queueEntry);
+      await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
+    } catch (e) {
+      if (this.redis) {
+        try {
+          await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
+        } catch (fallbackError) {
+          this.logger.error('Failed to enqueue Ivorypay webhook via fallback Redis list', fallbackError as any);
+          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+          await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
+        }
+      } else {
+        this.logger.error('Failed to enqueue Ivorypay webhook to Bull queue', e as any);
         await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
         await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
       }
-      if (eventId) await this.markProcessed('ivorypay', eventId);
-      return { received: true };
     }
 
-    await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'redis_unavailable' } });
-    await this.fallbackAlert('ivorypay', 'Redis unavailable for webhook queueing', payload);
     if (eventId) await this.markProcessed('ivorypay', eventId);
     return { received: true };
   }

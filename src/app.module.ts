@@ -5,8 +5,8 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bull';
-import Redis from 'ioredis';
 import { DatabaseModule } from './database/database.module';
+import { RedisModule } from './common/redis.module';
 
 function getRequiredString(cfg: ConfigService, key: string): string {
   const value = cfg.get<string>(key);
@@ -82,6 +82,7 @@ import { WebhookModule } from './webhook/webhook.module';
     AnalyticsModule,
     HealthModule,
     WebsocketModule,
+    RedisModule,
     SettingsModule,
     DepositModule,
     PaystackModule,
@@ -89,14 +90,6 @@ import { WebhookModule } from './webhook/webhook.module';
     WebhookModule,
   ],
   providers: [
-    {
-      provide: 'REDIS_CLIENT',
-      useFactory: (cfg: ConfigService) => {
-        const url = getOptionalString(cfg, 'REDIS_URL');
-        return url ? new Redis(url) : null;
-      },
-      inject: [ConfigService],
-    },
     IdempotencyMiddleware,
     {
       provide: APP_GUARD,

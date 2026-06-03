@@ -1,20 +1,14 @@
-import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import type { Queue } from 'bull';
-import { InjectQueue } from '@nestjs/bull';
 import { WebhookService } from './webhook.service';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
-import { QUEUES } from '../common/constants';
 
 @Controller({
   path: 'webhooks',
   version: '1',
 })
 export class WebhookController {
-  constructor(
-    private readonly webhookService: WebhookService,
-    @InjectQueue(QUEUES.WEBHOOKS) private readonly webhookQueue: Queue,
-  ) {}
+  constructor(private readonly webhookService: WebhookService) {}
 
   private getWebhookJobId(provider: string, payload: any) {
     const eventId = payload.id ?? payload.data?.id ?? payload.data?.reference ?? payload.reference;
