@@ -12,6 +12,6 @@ export class PaystackController {
   @UseGuards(WebhookSignatureGuard)
   @Post('webhook')
   async webhook(@Body() body: any) {
-    return this.webhookService.handlePaystackWebhook(body);
+    return this.webhookService.handlePaystackWebhook(body, true);
   }
 }

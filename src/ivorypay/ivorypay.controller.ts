@@ -12,6 +12,6 @@ export class IvorypayController {
   @UseGuards(WebhookSignatureGuard)
   @Post('webhook')
   async webhook(@Body() body: any) {
-    return this.webhookService.handleIvorypayWebhook(body);
+    return this.webhookService.handleIvorypayWebhook(body, true);
   }
 }
