@@ -76,22 +76,13 @@ export class PaymentsController {
     return this.svc.getWithdrawalHistory(u.id);
   }
 
-  // Webhook endpoints — Public (no JWT) but guarded by HMAC signature verification
-  @Public()
-  @Post('webhooks/paystack')
-  @UseGuards(WebhookSignatureGuard)
-  @ApiOperation({ summary: 'Paystack webhook — HMAC-SHA512 verified' })
+  // Webhook handlers are no longer exposed on PaymentsController.
   paystackWebhook(@Req() req: Request) {
-    // Use raw body to ensure the payload hasn't been re-serialised
     return this.svc.handlePaystackWebhook((req as any).rawBody
       ? JSON.parse((req as any).rawBody)
       : req.body);
   }
 
-  @Public()
-  @Post('webhooks/ivorypay')
-  @UseGuards(WebhookSignatureGuard)
-  @ApiOperation({ summary: 'Ivorypay webhook — HMAC-SHA256 verified' })
   ivorypayWebhook(@Req() req: Request) {
     return this.svc.handleIvorypayWebhook((req as any).rawBody
       ? JSON.parse((req as any).rawBody)

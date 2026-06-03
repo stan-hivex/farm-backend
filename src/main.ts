@@ -72,8 +72,23 @@ console.log('ENV CHECK:', {
   /**
    * BODY
    */
-  app.use(json({ limit: '10mb' }));
-  app.use(urlencoded({ extended: true, limit: '10mb' }));
+  app.use(
+  json({
+    limit: '10mb',
+    verify: (req: any, res, buf) => {
+      req.rawBody = buf.toString();
+    },
+  }),
+);
+app.use(
+  urlencoded({
+    extended: true,
+    limit: '10mb',
+    verify: (req: any, res, buf) => {
+      req.rawBody = buf.toString();
+    },
+  }),
+);
 
   /**
    * PREFIX + VERSIONING
