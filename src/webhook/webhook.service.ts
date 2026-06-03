@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { DepositService } from '../deposit/deposit.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
+import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import type { Redis } from 'ioredis';
 
@@ -229,33 +230,113 @@ export class WebhookService {
   }
 
   private async finalizeDeposit(reference: string) {
-    const depositHandled = await this.depositService.markDepositSuccessful(reference);
-    if (depositHandled) return true;
-    return this.creditPendingTransactionDeposit(reference);
+    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+
+    const depositPending = !!deposit && deposit.status === 'PENDING';
+    const depositComplete = !!deposit && deposit.status === 'SUCCESS';
+    const txPending = !!transaction && transaction.transaction_type === 'deposit' && transaction.status !== 'completed';
+    const txComplete = !!transaction && transaction.transaction_type === 'deposit' && transaction.status === 'completed';
+
+    if (depositComplete && txComplete) {
+      return true;
+    }
+
+    if (depositPending) {
+      const depositHandled = await this.depositService.markDepositSuccessful(reference);
+      if (!depositHandled) return false;
+      if (txPending) {
+        await this.completePendingTransaction(reference, transaction); // keep transaction in sync after deposit completion
+      }
+      return true;
+    }
+
+    if (depositComplete && txPending) {
+      await this.completePendingTransaction(reference, transaction);
+      return true;
+    }
+
+    if (txPending) {
+      return this.creditPendingTransactionDeposit(reference);
+    }
+
+    return depositComplete || txComplete;
+  }
+
+  private async completePendingTransaction(reference: string, transaction?: any) {
+    if (!transaction) {
+      transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    }
+    if (!transaction || transaction.transaction_type !== 'deposit' || transaction.status === 'completed') {
+      return false;
+    }
+
+    const updates: any = {
+      status: 'completed',
+      processed_at: new Date(),
+    };
+
+    if (!transaction.receiver_wallet_id) {
+      const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+      if (deposit) {
+        const wallet = await this.prisma.wallets.findFirst({ where: { user_id: deposit.userId, is_active: true } });
+        if (wallet) updates.receiver_wallet_id = wallet.id;
+      }
+    }
+
+    await this.prisma.transactions.update({
+      where: { id: transaction.id },
+      data: updates,
+    });
+
+    return true;
   }
 
   private async creditPendingTransactionDeposit(reference: string) {
     const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
     if (!transaction || transaction.transaction_type !== 'deposit') return false;
+    if (transaction.status === 'completed') return true;
 
-    const walletId = transaction.receiver_wallet_id;
-    if (!walletId) return false;
-
-    // perform atomic check-and-complete inside a transaction to avoid double crediting
     const result = await this.prisma.$transaction(async (tx) => {
-      const wallet = await tx.wallets.findUnique({ where: { id: walletId } });
+      let wallet: any = null;
+      if (transaction.receiver_wallet_id) {
+        wallet = await tx.wallets.findUnique({ where: { id: transaction.receiver_wallet_id } });
+      }
+
+      const meta = transaction.metadata as any;
+      const userId = meta?.user_id;
+      if (!wallet && userId) {
+        wallet = await tx.wallets.findFirst({ where: { user_id: userId, is_active: true } });
+      }
+
+      if (!wallet && userId) {
+        wallet = await tx.wallets.create({
+          data: {
+            user_id: userId,
+            wallet_name: 'Main Wallet',
+            wallet_type: 'user',
+            wallet_address: uuidv4(),
+            currency: transaction.currency || 'FARM',
+          },
+        });
+      }
+
       if (!wallet) return { ok: false };
 
       const prev = this.normalizeAmount(Number(wallet.balance ?? 0));
+      const amt = this.normalizeAmount(Number(transaction.amount));
 
       const updated = await tx.transactions.updateMany({
         where: { id: transaction.id, status: { not: 'completed' } },
-        data: { status: 'completed', processed_at: new Date() },
+        data: {
+          status: 'completed',
+          receiver_wallet_id: wallet.id,
+          processed_at: new Date(),
+        },
       });
 
       if (updated.count === 0) return { ok: false };
 
-      const amt = this.normalizeAmount(Number(transaction.amount));
       await tx.wallets.update({ where: { id: wallet.id }, data: { balance: { increment: amt } } });
 
       await tx.ledger_entries.create({
@@ -270,15 +351,16 @@ export class WebhookService {
         },
       });
 
-      return { ok: true, wallet, previousBalance: prev };
+      return { ok: true, wallet, previousBalance: prev, amount: amt };
     });
 
     if (!result || !result.ok) return false;
 
     const wallet = (result as any).wallet;
     const previousBalance = (result as any).previousBalance;
+    const amount = (result as any).amount;
 
-    this.websocket.emitBalanceUpdate(wallet.user_id ?? '', previousBalance + this.normalizeAmount(Number(transaction.amount)));
+    this.websocket.emitBalanceUpdate(wallet.user_id ?? '', previousBalance + amount);
     this.websocket.emitTransactionUpdate(wallet.user_id ?? '', { reference, status: 'SUCCESS' });
 
     return true;
