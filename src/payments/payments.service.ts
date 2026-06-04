@@ -345,8 +345,17 @@ export class PaymentsService {
   }
 
   async getExchangeRate(from: string, to: string): Promise<number> {
+    const fromCode = from.toUpperCase();
+    const toCode = to.toUpperCase();
+    if (
+      (fromCode === 'FARM' && toCode === 'KES') ||
+      (fromCode === 'KES' && toCode === 'FARM')
+    ) {
+      return 1;
+    }
+
     const rate = await this.prisma.exchange_rates.findFirst({
-      where: { base_currency: from, target_currency: to },
+      where: { base_currency: fromCode, target_currency: toCode },
       orderBy: { fetched_at: 'desc' },
     });
     return rate ? Number(rate.rate) : 1;
