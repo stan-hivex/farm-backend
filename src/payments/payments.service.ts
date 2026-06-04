@@ -284,22 +284,21 @@ export class PaymentsService {
       throw new BadRequestException('Withdrawal blocked by fraud protection');
     }
 
+    // Process withdrawal instantly: decrement balance and finalize transaction
     const result = await this.prisma.$transaction(async (tx) => {
-      await tx.wallets.update({
-        where: { id: wallet.id },
-        data: { locked_balance: { increment: dto.amount_farm } },
-      });
+      // Atomically ensure available funds and create transaction
       const tr = await tx.transactions.create({
         data: {
           transaction_reference: generateTxReference(),
           sender_wallet_id: wallet.id,
           transaction_type: 'withdrawal',
-          status: 'pending',
+          status: 'completed',
           amount: dto.amount_farm,
           fee: 0,
           net_amount: dto.amount_farm,
           currency: 'FARM',
           description: `Withdrawal: ${dto.amount_farm} FARM → ${dto.currency_fiat} ${amount_fiat.toFixed(2)}`,
+          processed_at: new Date(),
           metadata: {
             method: dto.method,
             destination: dto.destination,
@@ -310,25 +309,35 @@ export class PaymentsService {
         },
       });
 
-      // Create a ledger entry to reflect held funds
-      const balanceBefore = Number(wallet.balance || 0);
+      // Adjust wallet balances: decrement available balance and reduce any locked balance
+      const previousBalance = Number(wallet.balance ?? 0);
+      const previousLocked = Number(wallet.locked_balance ?? 0);
+      await tx.wallets.update({
+        where: { id: wallet.id },
+        data: {
+          balance: { decrement: Number(dto.amount_farm) },
+          locked_balance: { decrement: Math.min(previousLocked, Number(dto.amount_farm)) },
+        },
+      });
+
+      // Ledger entry for the settled withdrawal
       await tx.ledger_entries.create({
         data: {
           transaction_id: tr.id,
           wallet_id: wallet.id,
-          entry_type: 'hold',
+          entry_type: 'debit',
           amount: Number(dto.amount_farm),
-          balance_before: balanceBefore,
-          balance_after: balanceBefore - Number(dto.amount_farm),
-          description: `Withdrawal hold — ref: ${tr.transaction_reference}`,
+          balance_before: previousBalance,
+          balance_after: previousBalance - Number(dto.amount_farm),
+          description: `Withdrawal settled — ref: ${tr.transaction_reference}`,
         },
       });
 
-      // Audit: withdrawal requested
+      // Audit: withdrawal processed
       await tx.audit_logs.create({
         data: {
           user_id: userId,
-          action: 'withdrawal_requested',
+          action: 'withdrawal_processed',
           entity_type: 'transaction',
           entity_id: tr.id,
           new_values: { amount: dto.amount_farm, destination: dto.destination },
@@ -340,7 +349,7 @@ export class PaymentsService {
 
     return {
       data: result,
-      message: 'Withdrawal request submitted. Processing within 1-3 business days.',
+      message: 'Withdrawal completed instantly',
     };
   }
 
