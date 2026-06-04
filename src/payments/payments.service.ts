@@ -349,7 +349,7 @@ export class PaymentsService {
       where: { base_currency: from, target_currency: to },
       orderBy: { fetched_at: 'desc' },
     });
-    return rate ? Number(rate.rate) : 130;
+    return rate ? Number(rate.rate) : 1;
   }
 
   // Simple fraud assessment: velocity and amount thresholds.
