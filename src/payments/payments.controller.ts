@@ -13,7 +13,7 @@ import { Public } from '../common/decorators/public.decorator';
 class DepositDto {
   @IsNumber() @IsPositive() amount_fiat!: number;
   @IsNotEmpty() @IsString() currency!: string;
-  @IsOptional() @IsString() paymentMethod?: 'CARD' | 'MOBILE_MONEY';
+  @IsOptional() @IsString() paymentMethod?: 'CARD' | 'MOBILE_MONEY' | 'CRYPTO';
   @IsOptional() @IsString() phone?: string;
 }
 class WithdrawDto {
@@ -31,7 +31,7 @@ export class PaymentsController {
   @Post('deposit')
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard)
-  @ApiOperation({ summary: 'Initiate a fiat deposit via Paystack' })
+  @ApiOperation({ summary: 'Initiate a fiat deposit (CARD, MOBILE_MONEY, CRYPTO)' })
   deposit(@CurrentUser() u: any, @Body() dto: DepositDto, @Req() req: Request) {
     // Prefer a signed device token to prevent spoofing
     let deviceRisk = 0;

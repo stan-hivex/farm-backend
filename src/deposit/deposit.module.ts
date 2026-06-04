@@ -5,9 +5,9 @@ import { PrismaService } from '../database/prisma.service';
 import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { WebsocketModule } from '../websocket/websocket.module';
 import { PaystackModule } from '../paystack/paystack.module';
-import { StkPushModule } from '../stk/stk.module';
+
 @Module({
-  imports: [forwardRef(() => IvorypayModule), WebsocketModule, PaystackModule, StkPushModule],
+  imports: [forwardRef(() => IvorypayModule), WebsocketModule, forwardRef(() => PaystackModule)],
   controllers: [DepositController],
   providers: [DepositService, PrismaService],
   exports: [DepositService],

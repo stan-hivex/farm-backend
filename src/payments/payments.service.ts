@@ -1,7 +1,8 @@
 import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
-import { StkPushService } from '../stk/stk.service';
+import { PaystackService } from '../paystack/paystack.service';
+import { IvorypayService } from '../ivorypay/ivorypay.service';
 import axios from 'axios';
 import { generateTxReference } from '../common/utils/reference.util';
 import * as fs from 'fs';
@@ -11,7 +12,12 @@ import * as path from 'path';
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
-  constructor(private prisma: PrismaService, private cfg: ConfigService, private stkPush: StkPushService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cfg: ConfigService,
+    private ivorypay: IvorypayService,
+    private paystack: PaystackService,
+  ) {}
 
   async initiateDeposit(
     userId: string,
@@ -27,6 +33,8 @@ export class PaymentsService {
     const paymentMethod = (dto.paymentMethod || 'CARD').toUpperCase();
     const rate = await this.getExchangeRate(dto.currency, 'FARM');
     const amount_farm = dto.amount_fiat / rate;
+    const fee_fiat = dto.amount_fiat * 0.02;
+    const total_fiat = dto.amount_fiat + fee_fiat;
 
     const fraud = await this.assessFraudRisk(userId, {
       amount_fiat: dto.amount_fiat,
@@ -59,16 +67,10 @@ export class PaymentsService {
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
 
     if (paymentMethod === 'MOBILE_MONEY') {
-      if (!dto.phone) {
-        throw new BadRequestException('Phone number is required for mobile money deposits');
-      }
-
-      const stkResponse = await this.stkPush.initiatePush({
-        phone: dto.phone,
+      const response = await this.paystack.initializePayment({
+        email: user.email || `${user.phone}@farm.app`,
         amount: dto.amount_fiat,
         reference,
-        accountReference: reference,
-        description: `Pending STK push deposit via mobile money (${dto.currency} ${dto.amount_fiat})`,
       });
 
       const tx = await this.prisma.transactions.create({
@@ -81,21 +83,21 @@ export class PaymentsService {
           fee: 0,
           net_amount: amount_farm,
           currency: 'FARM',
-          description: `Pending STK push deposit (${dto.currency} ${dto.amount_fiat})`,
+          description: `Pending mobile money deposit via Paystack (${dto.currency} ${dto.amount_fiat})`,
           metadata: {
-            provider: 'stk_push',
+            provider: 'paystack',
             amount_fiat: dto.amount_fiat,
             currency_fiat: dto.currency,
             exchange_rate: rate,
             user_id: userId,
             device_risk: ctx?.deviceRisk ?? null,
             ip: ctx?.ip ?? null,
-            phone: dto.phone,
+            payment_method: 'MOBILE_MONEY',
           },
         },
       });
 
-      this.logger.log(`initiateDeposit: created STK push transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+      this.logger.log(`initiateDeposit: created Paystack mobile-money transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
 
       await this.prisma.audit_logs.create({
         data: {
@@ -122,12 +124,29 @@ export class PaymentsService {
 
       return {
         data: {
-          provider: 'STK_PUSH',
+          provider: 'PAYSTACK',
           reference,
-          amount_farm: amount_farm.toFixed(4),
-          stk_response: stkResponse,
+          authorization_url: response.authorization_url,
         },
-        message: 'Mobile money STK push initiated',
+        message: 'Mobile money deposit initiated via Paystack checkout',
+      };
+    }
+
+    if (paymentMethod === 'CRYPTO') {
+      const payment = await this.ivorypay.createPayment({
+        amount: Math.round(total_fiat * 100) / 100,
+        currency: dto.currency,
+        reference,
+        email: user.email || `${user.phone}@farm.app`,
+      });
+
+      return {
+        data: {
+          provider: 'IVORYPAY',
+          reference,
+          payment_link: payment.payment_link || payment.data?.payment_link || null,
+        },
+        message: 'Crypto payment initiated',
       };
     }
 

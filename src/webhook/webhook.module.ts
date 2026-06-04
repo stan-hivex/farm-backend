@@ -18,7 +18,7 @@ import { QUEUES } from '../common/constants';
     forwardRef(() => DepositModule),
     WithdrawModule,
     WebsocketModule,
-    PaymentsModule,
+    forwardRef(() => PaymentsModule),
     ScheduleModule.forRoot(),
     BullModule.registerQueue({
       name: QUEUES.WEBHOOKS,

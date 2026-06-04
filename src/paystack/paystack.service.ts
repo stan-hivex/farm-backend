@@ -52,4 +52,5 @@ export class PaystackService {
 
     return response.data.data;
   }
+
 }

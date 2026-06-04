@@ -1,4 +1,5 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
@@ -347,6 +348,28 @@ export class WebhookService {
 
     this.logger.log(`finalizeDeposit: end for ${reference} returning ${depositComplete || txComplete}`);
     return depositComplete || txComplete;
+  }
+
+  @Cron('*/5 * * * *')
+  async fixStuckDeposits() {
+    const cutoff = new Date(Date.now() - 15 * 60 * 1000);
+    const stuck = await this.prisma.transactions.findMany({
+      where: {
+        transaction_type: 'deposit',
+        status: 'pending',
+        created_at: { lt: cutoff },
+      },
+    });
+
+    this.logger.log(`fixStuckDeposits: found ${stuck.length} stuck deposit transaction(s)`);
+
+    for (const tx of stuck) {
+      try {
+        await this.finalizeDeposit(tx.transaction_reference);
+      } catch (err) {
+        this.logger.error(`fixStuckDeposits: failed to finalize ${tx.transaction_reference}`, err as any);
+      }
+    }
   }
 
   private async finalizePendingDepositWithTransaction(reference: string, deposit: any, transaction: any) {

@@ -5,7 +5,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { PaystackService } from '../paystack/paystack.service';
-import { StkPushService } from '../stk/stk.service';
 @Injectable()
 export class DepositService {
   private readonly logger = new Logger(DepositService.name);
@@ -15,7 +14,6 @@ export class DepositService {
     private ivorypay: IvorypayService,
     @Inject(forwardRef(() => PaystackService))
     private paystack: PaystackService,
-    private readonly stkPush: StkPushService,
     private websocket: WebsocketGateway,
     private readonly cfg: ConfigService,
   ) {}
@@ -88,24 +86,17 @@ switch (method) {
   }
 
   case 'MOBILE_MONEY': {
-    const phone = dto.phone || dto.msisdn || dto.mobile;
-    if (!phone) {
-      throw new BadRequestException('Phone number is required for mobile money deposits');
-    }
-
-    const stkResponse = await this.stkPush.initiatePush({
-      phone,
+    const payment = await this.paystack.initializePayment({
+      email: dto.email || 'customer@example.com',
       amount: total,
       reference,
-      accountReference: reference,
-      description: `Deposit via mobile money (${dto.currency} ${dto.amount})`,
     });
 
     return {
       success: true,
-      provider: 'STK_PUSH',
+      provider: 'PAYSTACK',
       deposit,
-      stk_response: stkResponse,
+      authorization_url: payment.authorization_url,
     };
   }
 
