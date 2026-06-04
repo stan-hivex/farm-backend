@@ -46,7 +46,13 @@ export class PaymentProcessorService {
       }
 
       const currency = transaction.currency ?? 'FARM';
-      const paymentMethod = metadata?.provider?.toString()?.toUpperCase() === 'IVORYPAY' ? 'CRYPTO' : 'CARD';
+      const provider = String(metadata?.provider ?? '').toUpperCase();
+      const paymentMethod =
+        provider === 'IVORYPAY'
+          ? 'CRYPTO'
+          : provider === 'STK_PUSH'
+          ? 'MOBILE_MONEY'
+          : 'CARD';
       const isDepositAlreadySuccessful = deposit?.status === 'SUCCESS';
       const shouldCreditWallet = !isDepositAlreadySuccessful;
 

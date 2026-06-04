@@ -1,18 +1,21 @@
-import { forwardRef, Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { v4 as uuidv4 } from 'uuid';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { PaystackService } from '../paystack/paystack.service';
+import { StkPushService } from '../stk/stk.service';
 @Injectable()
 export class DepositService {
+  private readonly logger = new Logger(DepositService.name);
   constructor(
     private prisma: PrismaService,
     @Inject(forwardRef(() => IvorypayService))
     private ivorypay: IvorypayService,
     @Inject(forwardRef(() => PaystackService))
     private paystack: PaystackService,
+    private readonly stkPush: StkPushService,
     private websocket: WebsocketGateway,
     private readonly cfg: ConfigService,
   ) {}
@@ -48,6 +51,8 @@ export class DepositService {
       },
     });
 
+    this.logger.log(`createDeposit: created deposit id=${deposit.id} reference=${reference} user=${userId} amount=${dto.amount}`);
+
     const method = dto.paymentMethod;
 
 switch (method) {
@@ -67,8 +72,7 @@ switch (method) {
     };
   }
 
-  case 'CARD':
-  case 'MOBILE_MONEY': {
+  case 'CARD': {
     const payment = await this.paystack.initializePayment({
       email: dto.email || 'customer@email.com',
       amount: total,
@@ -80,6 +84,28 @@ switch (method) {
       provider: 'PAYSTACK',
       deposit,
       authorization_url: payment.authorization_url,
+    };
+  }
+
+  case 'MOBILE_MONEY': {
+    const phone = dto.phone || dto.msisdn || dto.mobile;
+    if (!phone) {
+      throw new BadRequestException('Phone number is required for mobile money deposits');
+    }
+
+    const stkResponse = await this.stkPush.initiatePush({
+      phone,
+      amount: total,
+      reference,
+      accountReference: reference,
+      description: `Deposit via mobile money (${dto.currency} ${dto.amount})`,
+    });
+
+    return {
+      success: true,
+      provider: 'STK_PUSH',
+      deposit,
+      stk_response: stkResponse,
     };
   }
 
@@ -129,6 +155,8 @@ switch (method) {
     const deposit = await this.prisma.deposit.findFirst({
       where: { reference },
     });
+
+    this.logger.log(`markDepositSuccessful: lookup deposit reference=${reference} found=${!!deposit}`);
 
     if (!deposit || deposit.status !== 'PENDING') {
       return false;
@@ -184,6 +212,7 @@ switch (method) {
       return false;
     }
 
+    this.logger.log(`markDepositSuccessful: deposit ${deposit.id} marked SUCCESS, emitting balance ${updatedBalance} for user ${deposit.userId}`);
     this.websocket.emitBalanceUpdate(deposit.userId, updatedBalance);
     this.websocket.emitTransactionUpdate(deposit.userId, {
       reference,

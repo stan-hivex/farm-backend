@@ -274,8 +274,11 @@ export class WebhookService {
   }
 
   private async finalizeDeposit(reference: string) {
+    this.logger.log(`finalizeDeposit: start for reference=${reference}`);
     let deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    this.logger.log(`finalizeDeposit: deposit lookup returned ${deposit ? 'FOUND' : 'NOT_FOUND'}`);
     const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    this.logger.log(`finalizeDeposit: transaction lookup returned ${transaction ? `FOUND id=${transaction.id} status=${transaction.status}` : 'NOT_FOUND'}`);
 
     if (!deposit && transaction?.amount) {
       const metadata = transaction.metadata as any;
@@ -297,6 +300,7 @@ export class WebhookService {
             userId,
           },
         });
+        this.logger.log(`finalizeDeposit: reconstructed deposit id=${deposit.id} reference=${deposit.reference}`);
       }
     }
 
@@ -307,15 +311,19 @@ export class WebhookService {
     const txComplete = isDeposit && transaction.status === 'completed';
 
     if (depositComplete && txComplete) {
+      this.logger.log(`finalizeDeposit: already completed for ${reference}`);
       return true;
     }
 
     if (depositPending && txPending) {
+      this.logger.log(`finalizeDeposit: pending deposit and pending transaction for ${reference} - finalizing with transaction`);
       return this.finalizePendingDepositWithTransaction(reference, deposit, transaction);
     }
 
     if (depositPending) {
+      this.logger.log(`finalizeDeposit: deposit is pending for ${reference}, delegating to depositService.markDepositSuccessful`);
       const depositHandled = await this.depositService.markDepositSuccessful(reference);
+      this.logger.log(`finalizeDeposit: depositService.markDepositSuccessful returned ${depositHandled}`);
       if (!depositHandled) return false;
       if (txPending) {
         await this.completePendingTransaction(reference, transaction); // keep transaction in sync after deposit completion
@@ -328,13 +336,16 @@ export class WebhookService {
     }
 
     if (txPending) {
+      this.logger.log(`finalizeDeposit: transaction pending for ${reference}, crediting pending transaction deposit`);
       return this.creditPendingTransactionDeposit(reference);
     }
 
     if (transaction && transaction.status !== 'completed') {
+      this.logger.log(`finalizeDeposit: transaction exists and not completed for ${reference}, crediting`);
       await this.creditPendingTransactionDeposit(reference);
     }
 
+    this.logger.log(`finalizeDeposit: end for ${reference} returning ${depositComplete || txComplete}`);
     return depositComplete || txComplete;
   }
 

@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsNumber, IsPositive } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-validator';
 import type { Request } from 'express';
 import { PaymentsService } from './payments.service';
 import { WebhookService } from '../webhook/webhook.service';
@@ -13,6 +13,8 @@ import { Public } from '../common/decorators/public.decorator';
 class DepositDto {
   @IsNumber() @IsPositive() amount_fiat!: number;
   @IsNotEmpty() @IsString() currency!: string;
+  @IsOptional() @IsString() paymentMethod?: 'CARD' | 'MOBILE_MONEY';
+  @IsOptional() @IsString() phone?: string;
 }
 class WithdrawDto {
   @IsNumber() @IsPositive() amount_farm!: number;
