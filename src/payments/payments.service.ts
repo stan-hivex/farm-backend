@@ -153,19 +153,70 @@ export class PaymentsService {
 
     if (paymentMethod === 'CRYPTO') {
       const payment = await this.ivorypay.createPayment({
-        amount: Math.round(total_fiat * 100) / 100,
+        amount: dto.amount_fiat,
         currency: dto.currency,
         reference,
         email: user.email || `${user.phone}@farm.app`,
+        description: `Farm deposit - ${dto.amount_fiat} ${dto.currency} → ${amount_farm.toFixed(4)} FARM`,
+      });
+
+      const tx = await this.prisma.transactions.create({
+        data: {
+          transaction_reference: reference,
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'deposit',
+          status: 'pending',
+          amount: amount_farm,
+          fee: 0,
+          net_amount: amount_farm,
+          currency: 'FARM',
+          description: `Pending crypto deposit via Ivorypay (${dto.currency} ${dto.amount_fiat})`,
+          metadata: {
+            provider: 'ivorypay',
+            amount_fiat: dto.amount_fiat,
+            currency_fiat: dto.currency,
+            exchange_rate: rate,
+            user_id: userId,
+            device_risk: ctx?.deviceRisk ?? null,
+            ip: ctx?.ip ?? null,
+            payment_method: 'CRYPTO',
+          },
+        },
+      });
+
+      this.logger.log(`initiateDeposit: created Ivorypay crypto transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'deposit_initiated',
+          entity_type: 'transaction',
+          entity_id: tx.id,
+          new_values: { reference, amount_fiat: dto.amount_fiat, amount_farm },
+        },
+      });
+
+      await this.prisma.deposit.create({
+        data: {
+          userId,
+          amount: amount_farm,
+          fee: 0,
+          total: amount_farm,
+          currency: 'FARM',
+          paymentMethod: 'CRYPTO',
+          reference,
+          status: 'PENDING',
+        },
       });
 
       return {
         data: {
           provider: 'IVORYPAY',
           reference,
-          payment_link: payment.payment_link || payment.data?.payment_link || null,
+          payment_link: payment.data?.payment_link || payment.payment_link,
+          checkout_url: payment.data?.checkout_url || payment.checkout_url,
         },
-        message: 'Crypto payment initiated',
+        message: 'Crypto deposit initiated via Ivorypay',
       };
     }
 
@@ -249,7 +300,7 @@ export class PaymentsService {
   // finalization should be performed by the webhook processing flow.
 
   async requestWithdrawal(userId: string, dto: {
-    amount_farm: number; currency_fiat: string; method: string; destination: string;
+    amount_farm: number; currency_fiat: string; method: string; destination: string; wallet_address?: string; network?: string;
   }, ctx?: { deviceRisk?: number; ip?: string }) {
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
@@ -290,6 +341,104 @@ export class PaymentsService {
       throw new BadRequestException('Withdrawal blocked by fraud protection');
     }
 
+    // Special handling for CRYPTO withdrawals via Ivorypay
+    if (dto.method.toUpperCase() === 'CRYPTO') {
+      if (!dto.wallet_address) {
+        throw new BadRequestException('Crypto wallet address is required for crypto withdrawals');
+      }
+
+      const user = await this.prisma.users.findUnique({
+        where: { id: userId },
+        select: { email: true },
+      });
+
+      const reference = generateTxReference();
+
+      // Initiate Ivorypay withdrawal
+      const withdrawal = await this.ivorypay.createWithdrawal({
+        amount: amount_fiat,
+        currency: dto.currency_fiat,
+        reference,
+        email: user?.email || `user.${userId}@farm.app`,
+        wallet_address: dto.wallet_address,
+        network: dto.network,
+        description: `Farm withdrawal - ${dto.amount_farm} FARM → ${amount_fiat.toFixed(2)} ${dto.currency_fiat}`,
+      });
+
+      const result = await this.prisma.$transaction(async (tx) => {
+        // Lock funds
+        await tx.wallets.update({
+          where: { id: wallet.id },
+          data: { locked_balance: { increment: dto.amount_farm } },
+        });
+
+        // Create transaction
+        const tr = await tx.transactions.create({
+          data: {
+            transaction_reference: reference,
+            sender_wallet_id: wallet.id,
+            transaction_type: 'withdrawal',
+            status: 'pending',
+            amount: dto.amount_farm,
+            fee: 0,
+            net_amount: dto.amount_farm,
+            currency: 'FARM',
+            description: `Crypto withdrawal: ${dto.amount_farm} FARM → ${dto.currency_fiat} ${amount_fiat.toFixed(2)}`,
+            metadata: {
+              method: 'CRYPTO',
+              destination: dto.wallet_address,
+              network: dto.network,
+              currency_fiat: dto.currency_fiat,
+              amount_fiat,
+              exchange_rate: rate,
+              provider: 'ivorypay',
+              withdrawal_id: withdrawal.data?.id || withdrawal.id,
+            },
+          },
+        });
+
+        // Create ledger entry
+        const balanceBefore = Number(wallet.balance || 0);
+        await tx.ledger_entries.create({
+          data: {
+            transaction_id: tr.id,
+            wallet_id: wallet.id,
+            entry_type: 'hold',
+            amount: Number(dto.amount_farm),
+            balance_before: balanceBefore,
+            balance_after: balanceBefore - Number(dto.amount_farm),
+            description: `Crypto withdrawal hold — ref: ${reference}`,
+          },
+        });
+
+        // Audit: withdrawal requested
+        await tx.audit_logs.create({
+          data: {
+            user_id: userId,
+            action: 'withdrawal_requested',
+            entity_type: 'transaction',
+            entity_id: tr.id,
+            new_values: {
+              amount: dto.amount_farm,
+              destination: dto.wallet_address,
+              network: dto.network,
+              provider: 'ivorypay',
+            },
+          },
+        });
+
+        return tr;
+      });
+
+      this.logger.log(`requestWithdrawal: created crypto withdrawal reference=${reference} amount_farm=${dto.amount_farm} wallet=${dto.wallet_address}`);
+
+      return {
+        data: result,
+        message: 'Crypto withdrawal request submitted via Ivorypay. Processing within 1-3 business days.',
+      };
+    }
+
+    // Standard withdrawal handling for BANK_TRANSFER, MOBILE_MONEY, etc.
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.wallets.update({
         where: { id: wallet.id },

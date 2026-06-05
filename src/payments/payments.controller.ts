@@ -20,6 +20,8 @@ class WithdrawDto {
   @IsNotEmpty() @IsString() currency_fiat!: string;
   @IsNotEmpty() @IsString() method!: string;
   @IsNotEmpty() @IsString() destination!: string;
+  @IsOptional() @IsString() wallet_address?: string; // Crypto wallet address for CRYPTO method
+  @IsOptional() @IsString() network?: string; // Blockchain network (e.g., ETH, BTC, SOL) for CRYPTO method
 }
 
 @ApiTags('Payments')
