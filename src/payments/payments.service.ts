@@ -44,24 +44,31 @@ export class PaymentsService {
       country: ctx?.country,
     });
     if (fraud.block) {
+      // Record the reason and full fraud object for investigation
       await this.prisma.audit_logs.create({
         data: {
           user_id: userId,
           action: 'deposit_blocked',
           entity_type: 'transaction',
           entity_id: null,
-          new_values: { reason: fraud.reason },
+          new_values: { reason: fraud.reason, details: fraud },
         },
       });
       await this.prisma.security_events.create({
         data: {
           user_id: userId,
           event_type: 'fraud_score_high',
-          description: `Blocked deposit attempt: ${fraud.reason}`,
+          description: `Blocked deposit attempt: ${fraud.reason} | ${JSON.stringify(fraud)}`,
           severity: 'high',
         },
       });
-      throw new BadRequestException('Deposit blocked by fraud protection');
+
+      this.logger.warn(`Deposit blocked for user=${userId} reference=${reference} reason=${fraud.reason} details=${JSON.stringify(fraud)}`);
+
+      // Provide a more informative error to the caller while avoiding leaking
+      // sensitive internal data. Include the rule/reason id so support can act.
+      const reasonLabel = typeof fraud.reason === 'string' ? fraud.reason : 'unknown_reason';
+      throw new BadRequestException(`Deposit blocked by fraud protection: ${reasonLabel}`);
     }
 
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
