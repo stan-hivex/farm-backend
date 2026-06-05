@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Headers, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-validator';
 import type { Request } from 'express';
@@ -7,8 +7,7 @@ import { verifyDeviceToken } from '../common/utils/device-token.util';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
-import { verifyPaystackSignature } from './utils/paystack-webhook.util';
-import { ConfigService } from '@nestjs/config';
+// Paystack webhook endpoint removed in favor of unified webhook queue flow
 
 class DepositDto {
   @IsNumber() @IsPositive() amount_fiat!: number;
@@ -26,61 +25,10 @@ class WithdrawDto {
 @ApiTags('Payments')
 @Controller({ path: 'payments', version: '1' })
 export class PaymentsController {
-  constructor(
-    private readonly svc: PaymentsService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly svc: PaymentsService) {}
 
-  @Post('webhook/paystack')
-  @Public()
-  @ApiOperation({ summary: 'Handle Paystack webhook with signature verification' })
-  async handlePaystackWebhook(
-    @Req() req: any,
-    @Headers('x-paystack-signature') signature: string,
-  ) {
-    const secret = this.config.get<string>('PAYSTACK_SECRET_KEY');
-    if (!secret) {
-      throw new BadRequestException('Paystack secret is not configured');
-    }
-    if (!signature) {
-      throw new UnauthorizedException('Missing Paystack signature');
-    }
-    const rawBody = req.rawBody;
-    if (!rawBody) {
-      throw new BadRequestException('Missing raw request body');
-    }
-
-    const isValid = verifyPaystackSignature(rawBody, signature, secret);
-    if (!isValid) {
-      throw new UnauthorizedException('Invalid Paystack signature');
-    }
-
-    let event: any;
-    try {
-      event = JSON.parse(rawBody);
-    } catch (err) {
-      throw new BadRequestException('Invalid JSON payload');
-    }
-
-    if (event.event !== 'charge.success') {
-      return { ok: true };
-    }
-
-    const reference = event.data?.reference;
-    const amount = event.data?.amount;
-    const currency = event.data?.currency;
-
-    if (!reference) {
-      throw new BadRequestException('Missing transaction reference');
-    }
-
-    return this.svc.processSuccessfulPayment({
-      reference,
-      amount,
-      currency,
-      provider: 'paystack',
-    });
-  }
+  // Paystack-specific HTTP webhook endpoint removed.
+  // Use the unified `/webhooks/paystack` endpoint handled by `WebhookController` and queued processing.
 
   @Post('deposit')
   @ApiBearerAuth('JWT')

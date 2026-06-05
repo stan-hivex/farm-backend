@@ -117,7 +117,6 @@ export class AppModule implements NestModule {
         { path: 'kyc/*', method: RequestMethod.ALL },
         { path: 'payments/*', method: RequestMethod.ALL },
         { path: 'deposit/*', method: RequestMethod.ALL },
-        { path: 'paystack/*', method: RequestMethod.ALL },
         { path: 'withdraw/*', method: RequestMethod.ALL },
         { path: 'webhooks/*', method: RequestMethod.ALL },
       );
