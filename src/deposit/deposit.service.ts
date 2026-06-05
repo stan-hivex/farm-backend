@@ -142,75 +142,26 @@ switch (method) {
     };
   }
 
-  async markDepositSuccessful(reference: string) {
-    const deposit = await this.prisma.deposit.findFirst({
-      where: { reference },
-    });
-
-    this.logger.log(`markDepositSuccessful: lookup deposit reference=${reference} found=${!!deposit}`);
-
-    if (!deposit || deposit.status !== 'PENDING') {
-      return false;
-    }
-
-    const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: deposit.userId, is_active: true },
-    });
-
-    const depositWallet =
-      wallet ||
-      (await this.prisma.wallets.create({
-        data: {
-          user_id: deposit.userId,
-          wallet_name: 'Main Wallet',
-          wallet_type: 'user',
-          wallet_address: uuidv4(),
-          currency: deposit.currency || 'KES',
-        },
-      }));
-
-    const previousBalance = Number(depositWallet.balance ?? 0);
-    const updatedBalance = previousBalance + deposit.amount;
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const updatedDeposits = await tx.deposit.updateMany({
-        where: { id: deposit.id, status: 'PENDING' },
-        data: { status: 'SUCCESS' },
-      });
-      if (updatedDeposits.count === 0) {
-        return false;
-      }
-
-      await tx.wallets.update({
-        where: { id: depositWallet.id },
-        data: { balance: { increment: deposit.amount } },
-      });
-
-      await tx.ledger_entries.create({
-        data: {
-          wallet_id: depositWallet.id,
-          entry_type: 'credit',
-          amount: deposit.amount,
-          balance_before: previousBalance,
-          balance_after: updatedBalance,
-          description: `Deposit completed — ref: ${reference}`,
-        },
-      });
-      return true;
-    });
-
-    if (!result) {
-      return false;
-    }
-
-    this.logger.log(`markDepositSuccessful: deposit ${deposit.id} marked SUCCESS, emitting balance ${updatedBalance} for user ${deposit.userId}`);
-    this.websocket.emitBalanceUpdate(deposit.userId, updatedBalance);
-    this.websocket.emitTransactionUpdate(deposit.userId, {
-      reference,
-      status: 'SUCCESS',
-    });
-
-    return true;
+  /**
+   * DEPRECATED: Wallet credit must ONLY happen in WebhookService.finalizeDeposit().
+   * This method is kept for reference but should never be called.
+   *
+   * Use WebhookService.finalizeDeposit() which includes all necessary security validations:
+   * - HMAC-SHA512 signature verification
+   * - Amount validation (kobo vs fiat conversion)
+   * - Fraud detection and anti-fraud checks
+   * - Proper state machine transitions (pending → completed)
+   * - Idempotent processing (using Redis locks)
+   *
+   * @deprecated Use WebhookService.finalizeDeposit() instead
+   * @throws Error Always returns false to prevent accidental wallet credit
+   */
+  async markDepositSuccessful(reference: string): Promise<boolean> {
+    this.logger.warn(
+      `markDepositSuccessful called for ${reference} — this method is DEPRECATED. ` +
+      'Use WebhookService.finalizeDeposit() for all wallet credit operations.',
+    );
+    return false;
   }
 
   async getDepositById(id: string) {

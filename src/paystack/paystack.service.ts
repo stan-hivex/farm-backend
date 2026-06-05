@@ -17,27 +17,36 @@ export class PaystackService {
   }) {
     const callback = this.cfg.get<string>('PAYSTACK_CALLBACK_URL', 'https://app.farm/payment-success');
 
-    const response = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        email: data.email,
-
-        // PAYSTACK USES KOBO/CENTS
-        amount: Math.round(data.amount * 100),
-
-        reference: data.reference,
-
-        callback_url: callback,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${this.secret}`,
-          'Content-Type': 'application/json',
+    try {
+      const response = await axios.post(
+        'https://api.paystack.co/transaction/initialize',
+        {
+          email: data.email,
+          // PAYSTACK USES KOBO/CENTS
+          amount: Math.round(data.amount * 100),
+          reference: data.reference,
+          callback_url: callback,
         },
-      },
-    );
+        {
+          headers: {
+            Authorization: `Bearer ${this.secret}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
 
-    return response.data.data;
+      if (!response.data?.status) {
+        const errorMsg = response.data?.message || 'Paystack API returned unsuccessful status';
+        throw new Error(`Paystack initialization failed: ${errorMsg}`);
+      }
+
+      return response.data.data;
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Paystack initialization error: ${String(error)}`);
+    }
   }
 
   async verifyTransaction(reference: string) {

@@ -391,14 +391,10 @@ export class WebhookService {
     }
 
     if (depositPending) {
-      this.logger.log(`finalizeDeposit: deposit is pending for ${reference}, delegating to depositService.markDepositSuccessful`);
-      const depositHandled = await this.depositService.markDepositSuccessful(reference);
-      this.logger.log(`finalizeDeposit: depositService.markDepositSuccessful returned ${depositHandled}`);
-      if (!depositHandled) return false;
-      if (txPending) {
-        await this.completePendingTransaction(reference, transaction); // keep transaction in sync after deposit completion
-      }
-      return true;
+      // Directly handle pending deposit with wallet credit here (no delegation).
+      // This is the ONLY authorized path for crediting wallets on deposit success.
+      this.logger.log(`finalizeDeposit: deposit is pending for ${reference}, crediting wallet directly`);
+      return this.creditPendingDepositWithWallet(reference, deposit, transaction);
     }
 
     if (depositComplete && txPending) {
@@ -632,6 +628,113 @@ export class WebhookService {
 
     this.websocket.emitBalanceUpdate(wallet.user_id ?? '', previousBalance + amount);
     this.websocket.emitTransactionUpdate(wallet.user_id ?? '', { reference, status: 'SUCCESS' });
+
+    return true;
+  }
+
+  /**
+   * AUTHORIZED WALLET CREDIT PATH #3: Handle pending deposit with wallet credit.
+   * This is called when a deposit record exists and is PENDING, but we need to credit the wallet.
+   * This is the ONLY authorized method for wallet credit on deposit success.
+   */
+  private async creditPendingDepositWithWallet(reference: string, deposit: any, transaction?: any) {
+    if (!deposit || deposit.status !== 'PENDING') {
+      this.logger.warn(`creditPendingDepositWithWallet: deposit not in PENDING state for ${reference}`);
+      return false;
+    }
+
+    if (!transaction) {
+      transaction = await this.prisma.transactions.findUnique({
+        where: { transaction_reference: reference },
+      });
+    }
+
+    // STATE MACHINE VALIDATION: transaction must exist and be in pending state
+    if (!transaction || transaction.status !== 'pending') {
+      this.logger.warn(
+        `creditPendingDepositWithWallet: invalid transaction state for ${reference}. ` +
+        `Transaction: ${transaction ? `exists, status=${transaction.status}` : 'missing'}`,
+      );
+      return false;
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      // STATE MACHINE: Update deposit status to SUCCESS (idempotent: only if PENDING)
+      const updatedDeposits = await tx.deposit.updateMany({
+        where: { id: deposit.id, status: 'PENDING' },
+        data: { status: 'SUCCESS' },
+      });
+
+      if (updatedDeposits.count === 0) {
+        this.logger.warn(`creditPendingDepositWithWallet: deposit already updated or missing for ${reference}`);
+        return { ok: false };
+      }
+
+      // ENSURE WALLET EXISTS
+      let wallet = await tx.wallets.findFirst({
+        where: { user_id: deposit.userId, is_active: true },
+      });
+
+      if (!wallet) {
+        wallet = await tx.wallets.create({
+          data: {
+            user_id: deposit.userId,
+            wallet_name: 'Main Wallet',
+            wallet_type: 'user',
+            wallet_address: uuidv4(),
+            currency: deposit.currency || 'FARM',
+          },
+        });
+      }
+
+      const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
+      const creditAmount = this.normalizeAmount(Number(deposit.amount));
+
+      // WALLET CREDIT: This is the ONLY authorized place to credit wallets on deposit success
+      await tx.wallets.update({
+        where: { id: wallet.id },
+        data: { balance: { increment: creditAmount } },
+      });
+
+      // LEDGER ENTRY: Record the credit
+      await tx.ledger_entries.create({
+        data: {
+          transaction_id: transaction?.id ?? null,
+          wallet_id: wallet.id,
+          entry_type: 'credit',
+          amount: creditAmount,
+          balance_before: previousBalance,
+          balance_after: previousBalance + creditAmount,
+          description: `Deposit completed — ref: ${reference}`,
+        },
+      });
+
+      // STATE MACHINE: Update transaction to completed (idempotent: only if pending)
+      if (transaction && transaction.status !== 'completed') {
+        await tx.transactions.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'completed',
+            receiver_wallet_id: wallet.id,
+            processed_at: new Date(),
+          },
+        });
+      }
+
+      return { ok: true, wallet, previousBalance, amount: creditAmount };
+    });
+
+    if (!result.ok) {
+      return false;
+    }
+
+    const wallet = (result as any).wallet;
+    const previousBalance = (result as any).previousBalance;
+    const amount = (result as any).amount;
+
+    // Emit websocket updates
+    this.websocket.emitBalanceUpdate(deposit.userId, previousBalance + amount);
+    this.websocket.emitTransactionUpdate(deposit.userId, { reference, status: 'SUCCESS' });
 
     return true;
   }
