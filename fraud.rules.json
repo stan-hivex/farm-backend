@@ -3,7 +3,7 @@
     "id": "rule_ip_prefix_block",
     "description": "Block known bad IP prefixes (IANA reserved ranges)",
     "ip_prefixes": ["203.0.113.", "198.51.100.", "192.0.2."],
-    "action": "block",
+    "action": "challenge",
     "reason": "ip_range_block",
     "priority": 90
   },
