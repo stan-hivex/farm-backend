@@ -405,7 +405,10 @@ export class PaymentsService {
       return { block: true, reason: 'amount_exceeds_threshold', threshold: amountThreshold };
     }
     if (recent >= velocityLimit) {
-      return { block: true, reason: 'high_velocity', limit: velocityLimit };
+      // High velocity deposits: treat as a challenge (require review) rather than
+      // an outright block to avoid rejecting legitimate users who make multiple
+      // small deposits in quick succession (e.g., during testing).
+      return { block: false, challenge: true, reason: 'high_velocity', limit: velocityLimit };
     }
     if (todaysSum + ctx.amount_fiat > maxDailyAmount) {
       return { block: true, reason: 'daily_limit_exceeded', maxDailyAmount };
