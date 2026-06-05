@@ -14,9 +14,11 @@ export class PaystackService {
     email: string;
     amount: number;
     reference: string;
+    currency?: string;
     callback_url?: string;
     metadata?: Record<string, unknown>;
     payment_method?: string;
+    phone?: string;
   }) {
     const callback = data.callback_url ?? this.cfg.get<string>('PAYSTACK_CALLBACK_URL', 'https://app.farm/payment-success');
 
@@ -28,11 +30,21 @@ export class PaystackService {
       callback_url: callback,
     };
 
+    if (data.currency) {
+      payload.currency = data.currency;
+    }
     if (data.metadata) {
       payload.metadata = data.metadata;
     }
     if (data.payment_method) {
-      payload.payment_method = data.payment_method;
+      const method = String(data.payment_method).toLowerCase();
+      payload.payment_method = method;
+      if (method === 'mobile_money') {
+        payload.channels = ['mobile_money'];
+        if (data.phone) {
+          payload.mobile_money = { phone: data.phone };
+        }
+      }
     }
 
     try {

@@ -74,6 +74,7 @@ switch (method) {
     const payment = await this.paystack.initializePayment({
       email: dto.email || 'customer@email.com',
       amount: total,
+      currency: dto.currency,
       reference,
     });
 
@@ -86,10 +87,17 @@ switch (method) {
   }
 
   case 'MOBILE_MONEY': {
+    const phone = dto.phone;
+    if (!phone) {
+      throw new BadRequestException('Phone number is required for mobile money deposits');
+    }
     const payment = await this.paystack.initializePayment({
       email: dto.email || 'customer@example.com',
       amount: total,
+      currency: dto.currency,
       reference,
+      payment_method: 'MOBILE_MONEY',
+      phone,
     });
 
     return {

@@ -74,11 +74,18 @@ export class PaymentsService {
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
 
     if (paymentMethod === 'MOBILE_MONEY') {
+      const phone = dto.phone || user.phone;
+      if (!phone) {
+        throw new BadRequestException('Phone number is required for mobile money deposits');
+      }
+
       const response = await this.paystack.initializePayment({
         email: user.email || `${user.phone}@farm.app`,
         amount: dto.amount_fiat,
+        currency: dto.currency,
         reference,
         payment_method: 'MOBILE_MONEY',
+        phone,
         metadata: {
           user_id: userId,
           currency: dto.currency,
@@ -169,6 +176,7 @@ export class PaymentsService {
     const response = await this.paystack.initializePayment({
       email: user.email || `${user.phone}@farm.app`,
       amount: dto.amount_fiat,
+      currency: dto.currency,
       reference,
       metadata: { user_id: userId },
     });
