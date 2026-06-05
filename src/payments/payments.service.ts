@@ -5,6 +5,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import axios from 'axios';
 import { generateTxReference } from '../common/utils/reference.util';
+import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -240,6 +241,99 @@ export class PaymentsService {
       },
       message: 'Deposit initiated',
     };
+  }
+
+  async processSuccessfulPayment(payload: {
+    reference: string;
+    amount: number;
+    currency: string;
+    provider: string;
+  }) {
+    const { reference } = payload;
+
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
+    if (!transaction) {
+      throw new NotFoundException('Transaction not found');
+    }
+    if (transaction.transaction_type !== 'deposit') {
+      throw new BadRequestException('Transaction is not a deposit');
+    }
+    if (transaction.status === 'completed') {
+      return { ok: true };
+    }
+
+    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    const metadata = transaction.metadata as any;
+    const userId = metadata?.user_id;
+    if (!userId) {
+      throw new BadRequestException('Transaction user metadata is missing');
+    }
+
+    let wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
+    if (!wallet) {
+      wallet = await this.prisma.wallets.create({
+        data: {
+          user_id: userId,
+          wallet_name: 'Main Wallet',
+          wallet_type: 'user',
+          wallet_address: uuidv4(),
+          currency: transaction.currency || 'FARM',
+        },
+      });
+    }
+
+    const amountToCredit = Number(transaction.amount);
+    const previousBalance = Number(wallet.balance ?? 0);
+
+    await this.prisma.$transaction(async (tx) => {
+      if (deposit && deposit.status !== 'SUCCESS') {
+        await tx.deposit.update({ where: { id: deposit.id }, data: { status: 'SUCCESS' } });
+      }
+      if (!deposit) {
+        await tx.deposit.create({
+          data: {
+            userId,
+            amount: amountToCredit,
+            fee: 0,
+            total: amountToCredit,
+            currency: transaction.currency || 'FARM',
+            paymentMethod: payload.provider.toUpperCase() === 'PAYSTACK' ? 'CARD' : 'CRYPTO',
+            reference,
+            status: 'SUCCESS',
+          },
+        });
+      }
+
+      await tx.wallets.update({
+        where: { id: wallet.id },
+        data: { balance: { increment: amountToCredit } },
+      });
+
+      await tx.ledger_entries.create({
+        data: {
+          transaction_id: transaction.id,
+          wallet_id: wallet.id,
+          entry_type: 'credit',
+          amount: amountToCredit,
+          balance_before: previousBalance,
+          balance_after: previousBalance + amountToCredit,
+          description: `Paystack deposit completed — ref: ${reference}`,
+        },
+      });
+
+      await tx.transactions.update({
+        where: { id: transaction.id },
+        data: {
+          status: 'completed',
+          receiver_wallet_id: wallet.id,
+          processed_at: new Date(),
+        },
+      });
+    });
+
+    return { ok: true };
   }
 
   async requestWithdrawal(userId: string, dto: {

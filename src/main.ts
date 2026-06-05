@@ -7,7 +7,7 @@ import { WinstonModule } from 'nest-winston';
 
 import helmet from 'helmet';
 import compression from 'compression';
-import { json, urlencoded } from 'express';
+import * as bodyParser from 'body-parser';
 
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -73,22 +73,22 @@ console.log('ENV CHECK:', {
    * BODY
    */
   app.use(
-  json({
-    limit: '10mb',
-    verify: (req: any, res, buf) => {
-      req.rawBody = buf.toString();
-    },
-  }),
-);
-app.use(
-  urlencoded({
-    extended: true,
-    limit: '10mb',
-    verify: (req: any, res, buf) => {
-      req.rawBody = buf.toString();
-    },
-  }),
-);
+    bodyParser.json({
+      limit: '10mb',
+      verify: (req: any, res, buf) => {
+        req.rawBody = buf.toString();
+      },
+    }),
+  );
+  app.use(
+    bodyParser.urlencoded({
+      extended: true,
+      limit: '10mb',
+      verify: (req: any, res, buf) => {
+        req.rawBody = buf.toString();
+      },
+    }),
+  );
 
   /**
    * PREFIX + VERSIONING

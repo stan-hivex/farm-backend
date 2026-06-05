@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject, BadRequestException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
@@ -10,6 +10,7 @@ import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { QUEUES } from '../common/constants';
 import type { Queue } from 'bull';
 import type { Redis } from 'ioredis';
+import { verifyPaystackSignature } from '../payments/utils/paystack-webhook.util';
 
 @Injectable()
 export class WebhookService {
@@ -25,7 +26,7 @@ export class WebhookService {
     @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
   ) {}
 
-  async handlePaystackWebhook(payload: any, verified = false) {
+  async handlePaystackWebhook(payload: any, verified = false, rawBody?: string, signature?: string) {
     const event = payload.event;
     const eventId = this.getEventId('paystack', payload);
     if (eventId && (await this.isReplay('paystack', eventId))) {
@@ -33,9 +34,29 @@ export class WebhookService {
       await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Replay detected');
       return { received: true };
     }
+    // Paystack: attempt verification if raw body + signature provided, otherwise
+    // require that the original HTTP request performed signature verification
+    const paystackSecret = this.cfg.get<string>('PAYSTACK_WEBHOOK_SECRET');
+    if (!verified && paystackSecret && rawBody && signature) {
+      try {
+        const ok = verifyPaystackSignature(rawBody, signature, paystackSecret);
+        verified = ok;
+        if (!ok) {
+          this.logger.warn('Paystack signature verification failed during processing');
+          await this.fallbackAlert('paystack', 'Signature verification failed during processing', payload);
+          await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Invalid signature');
+          return { received: true };
+        }
+      } catch (e) {
+        this.logger.error('Error verifying Paystack signature during processing', e as any);
+        await this.fallbackAlert('paystack', 'Error verifying signature during processing', payload);
+        await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Signature verification error');
+        return { received: true };
+      }
+    }
+
     // If the original HTTP request was not signature-verified but a webhook secret
     // exists for the provider, treat this as a strict failure and alert administrators.
-    const paystackSecret = this.cfg.get<string>('PAYSTACK_WEBHOOK_SECRET');
     if (!verified && paystackSecret) {
       await this.fallbackAlert('paystack', 'Queued webhook processed without request-time signature verification', payload);
       await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Missing signature verification during processing');
@@ -64,6 +85,28 @@ export class WebhookService {
       this.logger.warn('Paystack webhook received without a reference');
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Missing reference' } });
       return { received: true };
+    }
+
+    // Amount validation (anti-fraud): verify webhook amount matches transaction amount
+    if (event === 'charge.success') {
+      try {
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+        if (transaction) {
+          const expectedAmount = Math.round(Number(transaction.amount) * 100); // convert to kobo
+          const webhookAmount = Number(payload.data?.amount);
+          if (webhookAmount !== expectedAmount) {
+            this.logger.warn(`Amount mismatch for Paystack reference ${reference}: expected ${expectedAmount} kobo, got ${webhookAmount} kobo`);
+            await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Amount mismatch' } });
+            await this.fallbackAlert('paystack', `Amount mismatch detected for ${reference}: expected ${expectedAmount}, got ${webhookAmount}`, payload);
+            return { received: true };
+          }
+        }
+      } catch (e) {
+        this.logger.error('Error validating Paystack amount', e as any);
+        await this.fallbackAlert('paystack', 'Error during amount validation', payload);
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Amount validation error' } });
+        return { received: true };
+      }
     }
 
     // Always enqueue webhook events for asynchronous processing.
@@ -138,6 +181,28 @@ export class WebhookService {
       return { received: true };
     }
 
+    // Amount validation (anti-fraud): verify webhook amount matches transaction amount
+    if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
+      try {
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+        if (transaction) {
+          const expectedAmount = Number(transaction.amount);
+          const webhookAmount = Number(payload.data?.amount ?? payload.amount);
+          if (Math.abs(webhookAmount - expectedAmount) > 0.01) { // allow small floating-point differences
+            this.logger.warn(`Amount mismatch for Ivorypay reference ${reference}: expected ${expectedAmount}, got ${webhookAmount}`);
+            await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Amount mismatch' } });
+            await this.fallbackAlert('ivorypay', `Amount mismatch detected for ${reference}: expected ${expectedAmount}, got ${webhookAmount}`, payload);
+            return { received: true };
+          }
+        }
+      } catch (e) {
+        this.logger.error('Error validating Ivorypay amount', e as any);
+        await this.fallbackAlert('ivorypay', 'Error during amount validation', payload);
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Amount validation error' } });
+        return { received: true };
+      }
+    }
+
     // Enqueue Ivorypay events for asynchronous processing.
     const queueEntry = {
       provider: 'ivorypay',
@@ -187,7 +252,6 @@ export class WebhookService {
     this.logger.warn(`Rejecting webhook from ${provider}: ${reason}`);
     return this.logWebhook(provider, event, payload, 'rejected', reason);
   }
-
   private verifyProviderPayload(provider: string, payload: any) {
     if (provider === 'paystack') {
       // Require expected Paystack fields: event, data.reference and numeric amount
@@ -281,6 +345,11 @@ export class WebhookService {
     const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
     this.logger.log(`finalizeDeposit: transaction lookup returned ${transaction ? `FOUND id=${transaction.id} status=${transaction.status}` : 'NOT_FOUND'}`);
 
+    // Reference validation: require either deposit or valid transaction
+    if (!transaction) {
+      throw new BadRequestException(`Transaction not found for reference: ${reference}`);
+    }
+
     if (!deposit && transaction?.amount) {
       const metadata = transaction.metadata as any;
       const userId = metadata?.user_id;
@@ -373,6 +442,11 @@ export class WebhookService {
   }
 
   private async finalizePendingDepositWithTransaction(reference: string, deposit: any, transaction: any) {
+    // Validate transaction reference before proceeding with wallet operations
+    if (!transaction || !transaction.id) {
+      throw new BadRequestException(`Invalid transaction for deposit finalization: reference=${reference}`);
+    }
+
     const result = await this.prisma.$transaction(async (tx) => {
       let wallet = await tx.wallets.findFirst({ where: { user_id: deposit.userId, is_active: true } });
       if (!wallet) {
@@ -444,8 +518,15 @@ export class WebhookService {
     if (!transaction) {
       transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
     }
+    
+    // Reference validation: require transaction to exist
+    if (!transaction) {
+      this.logger.warn(`Transaction not found for reference: ${reference}`);
+      return false;
+    }
+
     const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
-    if (!transaction || !isDeposit) {
+    if (!isDeposit) {
       return false;
     }
     if (transaction.status === 'completed') {
@@ -475,8 +556,15 @@ export class WebhookService {
 
   private async creditPendingTransactionDeposit(reference: string) {
     const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    
+    // Reference validation: require transaction to exist for reference
+    if (!transaction) {
+      this.logger.warn(`Transaction not found for reference: ${reference}`);
+      return false;
+    }
+
     const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
-    if (!transaction || !isDeposit) return false;
+    if (!isDeposit) return false;
     if (transaction.status === 'completed') return true;
 
     const result = await this.prisma.$transaction(async (tx) => {
@@ -573,6 +661,11 @@ export class WebhookService {
   }
 
   private async completeTransactionWithdrawal(transaction: any) {
+    // Reference validation: require valid transaction
+    if (!transaction || !transaction.id) {
+      throw new BadRequestException('Invalid transaction for withdrawal completion');
+    }
+
     if (transaction.status === 'completed') {
       return true;
     }
@@ -581,7 +674,7 @@ export class WebhookService {
       where: { id: transaction.sender_wallet_id },
     });
     if (!wallet) {
-      return false;
+      throw new BadRequestException(`Wallet not found for withdrawal transaction: ${transaction.id}`);
     }
 
     const previousBalance = Number(wallet.balance ?? 0);
@@ -625,6 +718,11 @@ export class WebhookService {
   }
 
   private async failTransactionWithdrawal(transaction: any, reason?: string) {
+    // Reference validation: require valid transaction
+    if (!transaction || !transaction.id) {
+      throw new BadRequestException('Invalid transaction for withdrawal failure handling');
+    }
+
     if (transaction.status === 'failed') {
       return true;
     }
@@ -633,6 +731,7 @@ export class WebhookService {
       where: { id: transaction.sender_wallet_id },
     });
     if (!wallet) {
+      this.logger.warn(`Wallet not found for withdrawal transaction: ${transaction.id}`);
       return false;
     }
 
@@ -701,9 +800,26 @@ export class WebhookService {
       this.logger.warn('Paystack webhook processing: missing reference');
       return;
     }
+    const lockKey = `paystack:webhook:${reference}`;
+    const lockTtl = Number(this.cfg.get<number>('WEBHOOK_LOCK_TTL_MS', 60000));
+    const locked = await this.acquireLock(lockKey, lockTtl);
+    if (!locked) {
+      this.logger.warn(`paystack webhook processing skipped for ${reference} due to existing lock`);
+      return;
+    }
 
     try {
+      // Defense-in-depth: validate amount before processing (catches queue corruption/manipulation)
       if (event === 'charge.success') {
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+        if (transaction) {
+          const expectedAmount = Math.round(Number(transaction.amount) * 100); // kobo
+          const webhookAmount = Number(payload.data?.amount);
+          if (webhookAmount !== expectedAmount) {
+            this.logger.error(`FRAUD ALERT: Amount mismatch for Paystack ${reference}: expected ${expectedAmount} kobo, got ${webhookAmount} kobo`);
+            throw new BadRequestException(`Amount mismatch: expected ${expectedAmount}, got ${webhookAmount}`);
+          }
+        }
         await this.finalizeDeposit(reference);
       } else if (['transfer.success', 'payout.success', 'transfer.completed'].includes(event)) {
         await this.finalizeWithdrawal(reference, true);
@@ -713,9 +829,38 @@ export class WebhookService {
     } catch (error) {
       this.logger.error(`Error processing Paystack webhook: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
+    } finally {
+      try {
+        await this.releaseLock(lockKey);
+      } catch (e) {
+        this.logger.debug('Failed to release lock for paystack webhook', e as any);
+      }
+    }
+
+  }
+
+  private async acquireLock(key: string, ttlMs = 60000): Promise<boolean> {
+    try {
+      if (!this.redis) {
+        this.logger.warn('Redis client not available; skipping webhook lock acquisition');
+        return true;
+      }
+      const res = await (this.redis as any).set(key, 'locked', 'NX', 'PX', ttlMs);
+      return res === 'OK';
+    } catch (e) {
+      this.logger.error('Error acquiring webhook lock', e as any);
+      return false;
     }
   }
 
+  private async releaseLock(key: string) {
+    try {
+      if (!this.redis) return;
+      await this.redis.del(key);
+    } catch (e) {
+      this.logger.debug('Error releasing webhook lock', e as any);
+    }
+  }
   /**
    * Process an Ivorypay webhook from the queue.
    * This is called by the WebhookProcessor after the event has been queued to Redis.
@@ -731,6 +876,18 @@ export class WebhookService {
     }
 
     try {
+      // Amount validation before processing (defense-in-depth)
+      if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+        if (transaction) {
+          const expectedAmount = Number(transaction.amount);
+          const webhookAmount = Number(payload.data?.amount ?? payload.amount);
+          if (Math.abs(webhookAmount - expectedAmount) > 0.01) {
+            this.logger.error(`FRAUD ALERT: Amount mismatch for Ivorypay ${reference}: expected ${expectedAmount}, got ${webhookAmount}`);
+            throw new BadRequestException(`Amount mismatch: expected ${expectedAmount}, got ${webhookAmount}`);
+          }
+        }
+      }
       if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
         await this.finalizeDeposit(reference);
       } else if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
