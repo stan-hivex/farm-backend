@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
-import axios from 'axios';
 import { generateTxReference } from '../common/utils/reference.util';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
@@ -72,6 +71,11 @@ export class PaymentsService {
         email: user.email || `${user.phone}@farm.app`,
         amount: dto.amount_fiat,
         reference,
+        payment_method: 'MOBILE_MONEY',
+        metadata: {
+          user_id: userId,
+          currency: dto.currency,
+        },
       });
 
       const tx = await this.prisma.transactions.create({
@@ -155,30 +159,12 @@ export class PaymentsService {
       throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
     }
 
-    const amountKobo = Math.round(dto.amount_fiat * 100);
-
-    const response = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        email: user.email || `${user.phone}@farm.app`,
-        amount: amountKobo,
-        reference,
-        callback_url: 'https://your-app/callback',
-        metadata: { user_id: userId },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${this.cfg.get('PAYSTACK_SECRET_KEY')}`,
-          'Content-Type': 'application/json',
-        },
-      },
-    );
-
-    if (!response.data?.status) {
-      throw new BadRequestException(
-        response.data?.message || 'Paystack initialization failed',
-      );
-    }
+    const response = await this.paystack.initializePayment({
+      email: user.email || `${user.phone}@farm.app`,
+      amount: dto.amount_fiat,
+      reference,
+      metadata: { user_id: userId },
+    });
 
     const tx = await this.prisma.transactions.create({
       data: {

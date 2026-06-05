@@ -1,806 +1,189 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-model activity_logs {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id    String?   @db.Uuid
-  activity   String?   @db.VarChar(255)
-  metadata   Json?
-  ip_address String?   @db.VarChar(100)
-  created_at DateTime? @default(now()) @db.Timestamp(6)
-  users      users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model api_keys {
-  id           String    @id @default(dbgenerated("gen_random_uuid()"))
-  user_id      String?   @db.Uuid
-  api_key      String?
-  api_secret   String?
-  permissions  Json?
-  last_used_at DateTime? @db.Timestamp(6)
-  expires_at   DateTime? @db.Timestamp(6)
-  created_at   DateTime? @default(now()) @db.Timestamp(6)
-  users        users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model audit_logs {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id     String?   @db.Uuid
-  action      String?   @db.VarChar(255)
-  entity_type String?   @db.VarChar(255)
-  entity_id   String?   @db.Uuid
-  old_values  Json?
-  new_values  Json?
-  ip_address  String?   @db.VarChar(100)
-  user_agent  String?
-  created_at  DateTime? @default(now()) @db.Timestamp(6)
-  users       users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model beneficiaries {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id          String?   @db.Uuid
-  beneficiary_name String?   @db.VarChar(255)
-  wallet_address   String?   @db.VarChar(255)
-  phone            String?   @db.VarChar(20)
-  created_at       DateTime? @default(now()) @db.Timestamp(6)
-  users            users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model blockchain_transactions {
-  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  transaction_id   String?       @db.Uuid
-  blockchain_name  String?       @default("algorand") @db.VarChar(100)
-  tx_hash          String?
-  sender_address   String?
-  receiver_address String?
-  asset_id         String?       @db.VarChar(255)
-  amount           Decimal?      @db.Decimal(30, 8)
-  confirmations    Int?          @default(0)
-  network_fee      Decimal?      @db.Decimal(30, 8)
-  status           String?       @default("pending") @db.VarChar(50)
-  raw_response     Json?
-  created_at       DateTime?     @default(now()) @db.Timestamp(6)
-  transactions     transactions? @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model contacts {
-  id                                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  owner_id                              String?   @db.Uuid
-  contact_user_id                       String?   @db.Uuid
-  nickname                              String?   @db.VarChar(255)
-  created_at                            DateTime? @default(now()) @db.Timestamp(6)
-  users_contacts_contact_user_idTousers users?    @relation("contacts_contact_user_idTousers", fields: [contact_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users_contacts_owner_idTousers        users?    @relation("contacts_owner_idTousers", fields: [owner_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model cross_border_transfers {
-  id                                                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  sender_user_id                                       String?             @db.Uuid
-  receiver_user_id                                     String?             @db.Uuid
-  sender_country                                       String?             @db.VarChar(100)
-  receiver_country                                     String?             @db.VarChar(100)
-  source_currency                                      String?             @db.VarChar(20)
-  destination_currency                                 String?             @db.VarChar(20)
-  source_amount                                        Decimal?            @db.Decimal(30, 8)
-  destination_amount                                   Decimal?            @db.Decimal(30, 8)
-  exchange_rate                                        Decimal?            @db.Decimal(30, 8)
-  transaction_id                                       String?             @db.Uuid
-  status                                               transaction_status? @default(pending)
-  created_at                                           DateTime?           @default(now()) @db.Timestamp(6)
-  users_cross_border_transfers_receiver_user_idTousers users?              @relation("cross_border_transfers_receiver_user_idTousers", fields: [receiver_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_cross_border_transfers_sender_user_idTousers   users?              @relation("cross_border_transfers_sender_user_idTousers", fields: [sender_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  transactions                                         transactions?       @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model escrow_contracts {
-  id                                                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reference_code                                     String            @unique @db.VarChar(255)
-  buyer_id                                           String?           @db.Uuid
-  seller_id                                          String?           @db.Uuid
-  arbiter_id                                         String?           @db.Uuid
-  buyer_wallet_id                                    String?           @db.Uuid
-  seller_wallet_id                                   String?           @db.Uuid
-  amount                                             Decimal           @db.Decimal(30, 8)
-  fee                                                Decimal?          @default(0) @db.Decimal(30, 8)
-  status                                             escrow_status?    @default(pending)
-  title                                              String?           @db.VarChar(255)
-  description                                        String?
-  evidence                                           Json?
-  funded_at                                          DateTime?         @db.Timestamp(6)
-  released_at                                        DateTime?         @db.Timestamp(6)
-  disputed_at                                        DateTime?         @db.Timestamp(6)
-  resolved_at                                        DateTime?         @db.Timestamp(6)
-  auto_release_at                                    DateTime?         @db.Timestamp(6)
-  resolution_note                                    String?
-  created_at                                         DateTime?         @default(now()) @db.Timestamp(6)
-  updated_at                                         DateTime?         @default(now()) @db.Timestamp(6)
-  users_escrow_contracts_arbiter_idTousers           users?            @relation("escrow_contracts_arbiter_idTousers", fields: [arbiter_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_escrow_contracts_buyer_idTousers             users?            @relation("escrow_contracts_buyer_idTousers", fields: [buyer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  wallets_escrow_contracts_buyer_wallet_idTowallets  wallets?          @relation("escrow_contracts_buyer_wallet_idTowallets", fields: [buyer_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_escrow_contracts_seller_idTousers            users?            @relation("escrow_contracts_seller_idTousers", fields: [seller_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  wallets_escrow_contracts_seller_wallet_idTowallets wallets?          @relation("escrow_contracts_seller_wallet_idTowallets", fields: [seller_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  escrow_messages                                    escrow_messages[]
-}
-
-model escrow_messages {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  escrow_id        String?           @db.Uuid
-  sender_id        String?           @db.Uuid
-  message          String?
-  attachment_url   String?
-  created_at       DateTime?         @default(now()) @db.Timestamp(6)
-  escrow_contracts escrow_contracts? @relation(fields: [escrow_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users            users?            @relation(fields: [sender_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model exchange_rates {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  base_currency   String?   @db.VarChar(20)
-  target_currency String?   @db.VarChar(20)
-  rate            Decimal?  @db.Decimal(30, 8)
-  provider        String?   @db.VarChar(100)
-  fetched_at      DateTime? @default(now()) @db.Timestamp(6)
-}
-
-model farm_token_config {
-  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  asset_id          String?           @db.VarChar(255)
-  token_name        String?           @db.VarChar(255)
-  token_symbol      String?           @db.VarChar(50)
-  total_supply      Decimal?          @db.Decimal(30, 8)
-  decimals          Int?              @default(6)
-  creator_wallet_id String?           @db.Uuid
-  created_at        DateTime?         @default(now()) @db.Timestamp(6)
-  treasury_wallets  treasury_wallets? @relation(fields: [creator_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model fee_configurations {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  transaction_type String?   @db.VarChar(100)
-  flat_fee         Decimal?  @default(0) @db.Decimal(30, 8)
-  percentage_fee   Decimal?  @default(0) @db.Decimal(10, 4)
-  minimum_fee      Decimal?  @default(0) @db.Decimal(30, 8)
-  maximum_fee      Decimal?  @default(0) @db.Decimal(30, 8)
-  is_active        Boolean?  @default(true)
-  created_at       DateTime? @default(now()) @db.Timestamp(6)
-}
-
-model investment_projects {
-  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  project_name       String             @db.VarChar(255)
-  category           String?            @db.VarChar(100)
-  description        String?
-  banner_image       String?
-  target_amount      Decimal?           @db.Decimal(30, 8)
-  raised_amount      Decimal?           @default(0) @db.Decimal(30, 8)
-  minimum_investment Decimal?           @db.Decimal(30, 8)
-  roi_percent        Decimal?           @db.Decimal(10, 2)
-  duration_months    Int?
-  total_backers      Int?               @default(0)
-  status             String?            @default("open") @db.VarChar(50)
-  starts_at          DateTime?          @db.Timestamp(6)
-  ends_at            DateTime?          @db.Timestamp(6)
-  created_by         String?            @db.Uuid
-  created_at         DateTime?          @default(now()) @db.Timestamp(6)
-  updated_at         DateTime?          @default(now()) @db.Timestamp(6)
-  users              users?             @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  user_investments   user_investments[]
-}
-
-model kyc_documents {
-  id                                     String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id                                String?     @db.Uuid
-  document_type                          String?     @db.VarChar(100)
-  front_image                            String?
-  back_image                             String?
-  selfie_image                           String?
-  document_number                        String?     @db.VarChar(255)
-  status                                 kyc_status? @default(pending)
-  reviewed_by                            String?     @db.Uuid
-  rejection_reason                       String?
-  reviewed_at                            DateTime?   @db.Timestamp(6)
-  created_at                             DateTime?   @default(now()) @db.Timestamp(6)
-  users_kyc_documents_reviewed_byTousers users?      @relation("kyc_documents_reviewed_byTousers", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_kyc_documents_user_idTousers     users?      @relation("kyc_documents_user_idTousers", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model ledger_entries {
-  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  transaction_id String?       @db.Uuid
-  wallet_id      String?       @db.Uuid
-  entry_type     String        @db.VarChar(20)
-  amount         Decimal       @db.Decimal(30, 8)
-  balance_before Decimal?      @db.Decimal(30, 8)
-  balance_after  Decimal?      @db.Decimal(30, 8)
-  description    String?
-  created_at     DateTime?     @default(now()) @db.Timestamp(6)
-  transactions   transactions? @relation(fields: [transaction_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  wallets        wallets?      @relation(fields: [wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([transaction_id], map: "idx_ledger_transaction")
-  @@index([wallet_id], map: "idx_ledger_wallet")
-}
-
-model merchant_payouts {
-  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  merchant_id    String?             @db.Uuid
-  amount         Decimal?            @db.Decimal(30, 8)
-  payout_method  String?             @db.VarChar(100)
-  account_name   String?             @db.VarChar(255)
-  account_number String?             @db.VarChar(255)
-  status         transaction_status? @default(pending)
-  processed_by   String?             @db.Uuid
-  processed_at   DateTime?           @db.Timestamp(6)
-  created_at     DateTime?           @default(now()) @db.Timestamp(6)
-  merchants      merchants?          @relation(fields: [merchant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users          users?              @relation(fields: [processed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model merchants {
-  id                                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id                            String?            @db.Uuid
-  business_name                      String             @db.VarChar(255)
-  business_email                     String?            @db.VarChar(255)
-  business_phone                     String?            @db.VarChar(20)
-  business_type                      String?            @db.VarChar(100)
-  business_registration_number       String?            @db.VarChar(255)
-  business_logo                      String?
-  country                            String?            @db.VarChar(100)
-  city                               String?            @db.VarChar(100)
-  address                            String?
-  qr_code                            String?
-  qr_secret                          String?
-  status                             merchant_status?   @default(pending)
-  daily_limit                        Decimal?           @default(0) @db.Decimal(30, 8)
-  transaction_fee_percent            Decimal?           @default(0) @db.Decimal(10, 2)
-  total_sales                        Decimal?           @default(0) @db.Decimal(30, 8)
-  approved_by                        String?            @db.Uuid
-  approved_at                        DateTime?          @db.Timestamp(6)
-  created_at                         DateTime?          @default(now()) @db.Timestamp(6)
-  updated_at                         DateTime?          @default(now()) @db.Timestamp(6)
-  merchant_payouts                   merchant_payouts[]
-  users_merchants_approved_byTousers users?             @relation("merchants_approved_byTousers", fields: [approved_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_merchants_user_idTousers     users?             @relation("merchants_user_idTousers", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  qr_payments                        qr_payments[]
-}
-
-model notifications {
-  id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id    String?            @db.Uuid
-  type       notification_type?
-  title      String?            @db.VarChar(255)
-  body       String?
-  metadata   Json?
-  is_read    Boolean?           @default(false)
-  created_at DateTime?          @default(now()) @db.Timestamp(6)
-  users      users?             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model otp_verifications {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id    String?   @db.Uuid
-  otp_code   String    @db.VarChar(10)
-  purpose    String?   @db.VarChar(50)
-  attempts   Int?      @default(0)
-  verified   Boolean?  @default(false)
-  expires_at DateTime? @db.Timestamp(6)
-  created_at DateTime? @default(now()) @db.Timestamp(6)
-  users      users?    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model qr_payments {
-  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  merchant_id    String?             @db.Uuid
-  customer_id    String?             @db.Uuid
-  transaction_id String?             @db.Uuid
-  qr_payload     String?
-  amount         Decimal?            @db.Decimal(30, 8)
-  status         transaction_status? @default(pending)
-  scanned_at     DateTime?           @db.Timestamp(6)
-  created_at     DateTime?           @default(now()) @db.Timestamp(6)
-  users          users?              @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  merchants      merchants?          @relation(fields: [merchant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  transactions   transactions?       @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model roi_payouts {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  investment_id    String?           @db.Uuid
-  amount           Decimal?          @db.Decimal(30, 8)
-  transaction_id   String?           @db.Uuid
-  payout_date      DateTime?         @db.Timestamp(6)
-  created_at       DateTime?         @default(now()) @db.Timestamp(6)
-  user_investments user_investments? @relation(fields: [investment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  transactions     transactions?     @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model security_events {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id     String?   @db.Uuid
-  event_type  String?   @db.VarChar(255)
-  description String?
-  severity    String?   @db.VarChar(50)
-  ip_address  String?   @db.VarChar(100)
-  created_at  DateTime? @default(now()) @db.Timestamp(6)
-  users       users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model support_messages {
-  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  ticket_id       String?          @db.Uuid
-  sender_id       String?          @db.Uuid
-  message         String?
-  attachment_url  String?
-  created_at      DateTime?        @default(now()) @db.Timestamp(6)
-  users           users?           @relation(fields: [sender_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  support_tickets support_tickets? @relation(fields: [ticket_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model support_tickets {
-  id                                       String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id                                  String?            @db.Uuid
-  subject                                  String?            @db.VarChar(255)
-  message                                  String?
-  status                                   String?            @default("open") @db.VarChar(50)
-  priority                                 String?            @default("medium") @db.VarChar(50)
-  assigned_to                              String?            @db.Uuid
-  closed_at                                DateTime?          @db.Timestamp(6)
-  created_at                               DateTime?          @default(now()) @db.Timestamp(6)
-  support_messages                         support_messages[]
-  users_support_tickets_assigned_toTousers users?             @relation("support_tickets_assigned_toTousers", fields: [assigned_to], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_support_tickets_user_idTousers     users?             @relation("support_tickets_user_idTousers", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model system_settings {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  setting_key   String?   @unique @db.VarChar(255)
-  setting_value String?
-  description   String?
-  updated_by    String?   @db.Uuid
-  updated_at    DateTime? @default(now()) @db.Timestamp(6)
-  users         users?    @relation(fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model transactions {
-  id                                               String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  transaction_reference                            String                    @unique @db.VarChar(255)
-  sender_wallet_id                                 String?                   @db.Uuid
-  receiver_wallet_id                               String?                   @db.Uuid
-  transaction_type                                 transaction_type
-  status                                           transaction_status?       @default(pending)
-  amount                                           Decimal                   @db.Decimal(30, 8)
-  fee                                              Decimal?                  @default(0) @db.Decimal(30, 8)
-  net_amount                                       Decimal?                  @default(0) @db.Decimal(30, 8)
-  currency                                         String?                   @default("FARM") @db.VarChar(20)
-  exchange_rate                                    Decimal?                  @db.Decimal(30, 8)
-  description                                      String?
-  metadata                                         Json?
-  ip_address                                       String?                   @db.VarChar(100)
-  device_info                                      String?
-  blockchain_tx_hash                               String?
-  processed_at                                     DateTime?                 @db.Timestamp(6)
-  created_at                                       DateTime?                 @default(now()) @db.Timestamp(6)
-  updated_at                                       DateTime?                 @default(now()) @db.Timestamp(6)
-  blockchain_transactions                          blockchain_transactions[]
-  cross_border_transfers                           cross_border_transfers[]
-  ledger_entries                                   ledger_entries[]
-  qr_payments                                      qr_payments[]
-  roi_payouts                                      roi_payouts[]
-  wallets_transactions_receiver_wallet_idTowallets wallets?                  @relation("transactions_receiver_wallet_idTowallets", fields: [receiver_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  wallets_transactions_sender_wallet_idTowallets   wallets?                  @relation("transactions_sender_wallet_idTowallets", fields: [sender_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  user_investments                                 user_investments[]
-
-  @@index([receiver_wallet_id], map: "idx_transactions_receiver")
-  @@index([sender_wallet_id], map: "idx_transactions_sender")
-  @@index([status], map: "idx_transactions_status")
-  @@index([transaction_type], map: "idx_transactions_type")
-}
-
-model treasury_wallets {
-  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  wallet_name           String?             @db.VarChar(255)
-  wallet_address        String?
-  private_key_encrypted String?
-  current_balance       Decimal?            @default(0) @db.Decimal(30, 8)
-  purpose               String?             @db.VarChar(255)
-  is_active             Boolean?            @default(true)
-  created_at            DateTime?           @default(now()) @db.Timestamp(6)
-  farm_token_config     farm_token_config[]
-}
-
-model uploads {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id     String?   @db.Uuid
-  file_name   String?   @db.VarChar(255)
-  file_url    String?
-  mime_type   String?   @db.VarChar(100)
-  file_size   BigInt?
-  uploaded_at DateTime? @default(now()) @db.Timestamp(6)
-  users       users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model user_investments {
-  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id             String?              @db.Uuid
-  project_id          String?              @db.Uuid
-  amount              Decimal?             @db.Decimal(30, 8)
-  expected_roi        Decimal?             @db.Decimal(30, 8)
-  transaction_id      String?              @db.Uuid
-  status              String?              @default("active") @db.VarChar(50)
-  invested_at         DateTime?            @default(now()) @db.Timestamp(6)
-  maturity_date       DateTime?            @db.Timestamp(6)
-  roi_payouts         roi_payouts[]
-  investment_projects investment_projects? @relation(fields: [project_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  transactions        transactions?        @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users               users?               @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model user_sessions {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id       String?   @db.Uuid
-  refresh_token String
-  jwt_id        String?   @db.VarChar(255)
-  device_name   String?   @db.VarChar(255)
-  device_os     String?   @db.VarChar(100)
-  ip_address    String?   @db.VarChar(100)
-  user_agent    String?
-  is_revoked    Boolean?  @default(false)
-  used_at       DateTime? @db.Timestamp(6)
-  expires_at    DateTime? @db.Timestamp(6)
-  created_at    DateTime? @default(now())
-  users         users?    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model users {
-  id                                                                    String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  first_name                                                            String                   @db.VarChar(100)
-  last_name                                                             String                   @db.VarChar(100)
-  username                                                              String                   @unique @db.VarChar(50)
-  email                                                                 String?                  @unique @db.VarChar(255)
-  phone                                                                 String                   @unique @db.VarChar(20)
-  password_hash                                                         String
-  pin_hash                                                              String?
-  role                                                                  user_role?               @default(user)
-  kyc_status                                                            kyc_status?              @default(none)
-  is_active                                                             Boolean?                 @default(true)
-  is_suspended                                                          Boolean?                 @default(false)
-  is_deleted                                                            Boolean?                 @default(false)
-  phone_verified                                                        Boolean?                 @default(false)
-  email_verified                                                        Boolean?                 @default(false)
-  failed_login_attempts                                                 Int?                     @default(0)
-  failed_pin_attempts                                                   Int?                     @default(0)
-  profile_image                                                         String?
-  bio                                                                   String?
-  country                                                               String?                  @db.VarChar(100)
-  city                                                                  String?                  @db.VarChar(100)
-  address                                                               String?
-  referral_code                                                         String?                  @db.VarChar(20)
-  referred_by                                                           String?                  @db.Uuid
-  last_login_at                                                         DateTime?                @db.Timestamp(6)
-  last_seen_at                                                          DateTime?                @db.Timestamp(6)
-  created_at                                                            DateTime?                @default(now()) @db.Timestamp(6)
-  updated_at                                                            DateTime?                @default(now()) @db.Timestamp(6)
-  deleted_at                                                            DateTime?                @db.Timestamp(6)
-  activity_logs                                                         activity_logs[]
-  api_keys                                                              api_keys[]
-  audit_logs                                                            audit_logs[]
-  beneficiaries                                                         beneficiaries[]
-  contacts_contacts_contact_user_idTousers                              contacts[]               @relation("contacts_contact_user_idTousers")
-  contacts_contacts_owner_idTousers                                     contacts[]               @relation("contacts_owner_idTousers")
-  cross_border_transfers_cross_border_transfers_receiver_user_idTousers cross_border_transfers[] @relation("cross_border_transfers_receiver_user_idTousers")
-  cross_border_transfers_cross_border_transfers_sender_user_idTousers   cross_border_transfers[] @relation("cross_border_transfers_sender_user_idTousers")
-  escrow_contracts_escrow_contracts_arbiter_idTousers                   escrow_contracts[]       @relation("escrow_contracts_arbiter_idTousers")
-  escrow_contracts_escrow_contracts_buyer_idTousers                     escrow_contracts[]       @relation("escrow_contracts_buyer_idTousers")
-  escrow_contracts_escrow_contracts_seller_idTousers                    escrow_contracts[]       @relation("escrow_contracts_seller_idTousers")
-  escrow_messages                                                       escrow_messages[]
-  investment_projects                                                   investment_projects[]
-  kyc_documents_kyc_documents_reviewed_byTousers                        kyc_documents[]          @relation("kyc_documents_reviewed_byTousers")
-  kyc_documents_kyc_documents_user_idTousers                            kyc_documents[]          @relation("kyc_documents_user_idTousers")
-  merchant_payouts                                                      merchant_payouts[]
-  merchants_merchants_approved_byTousers                                merchants[]              @relation("merchants_approved_byTousers")
-  merchants_merchants_user_idTousers                                    merchants[]              @relation("merchants_user_idTousers")
-  notifications                                                         notifications[]
-  otp_verifications                                                     otp_verifications[]
-  qr_payments                                                           qr_payments[]
-  security_events                                                       security_events[]
-  support_messages                                                      support_messages[]
-  support_tickets_support_tickets_assigned_toTousers                    support_tickets[]        @relation("support_tickets_assigned_toTousers")
-  support_tickets_support_tickets_user_idTousers                        support_tickets[]        @relation("support_tickets_user_idTousers")
-  system_settings                                                       system_settings[]
-  uploads                                                               uploads[]
-  user_investments                                                      user_investments[]
-  project_investments                                                   project_investments[]
-  user_sessions                                                         user_sessions[]
-  user_settings                                                         user_settings?
-  deposits                                                              Deposit[]
-  withdrawals                                                           Withdrawal[]
-  users                                                                 users?                   @relation("usersTousers", fields: [referred_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  other_users                                                           users[]                  @relation("usersTousers")
-  wallets                                                               wallets[]
-  device_tokens                                                         device_tokens[]
-
-  @@index([email], map: "idx_users_email")
-  @@index([phone], map: "idx_users_phone")
-  @@index([role], map: "idx_users_role")
-  @@index([username], map: "idx_users_username")
-}
-
-model wallets {
-  id                                                          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id                                                     String?            @db.Uuid
-  wallet_name                                                 String?            @db.VarChar(255)
-  wallet_type                                                 wallet_type?       @default(user)
-  wallet_address                                              String             @unique @db.VarChar(255)
-  balance                                                     Decimal?           @default(0) @db.Decimal(30, 8)
-  locked_balance                                              Decimal?           @default(0) @db.Decimal(30, 8)
-  currency                                                    String?            @default("FARM") @db.VarChar(20)
-  blockchain_address                                          String?
-  is_active                                                   Boolean?           @default(true)
-  is_frozen                                                   Boolean?           @default(false)
-  created_at                                                  DateTime?          @default(now()) @db.Timestamp(6)
-  updated_at                                                  DateTime?          @default(now()) @db.Timestamp(6)
-  escrow_contracts_escrow_contracts_buyer_wallet_idTowallets  escrow_contracts[] @relation("escrow_contracts_buyer_wallet_idTowallets")
-  escrow_contracts_escrow_contracts_seller_wallet_idTowallets escrow_contracts[] @relation("escrow_contracts_seller_wallet_idTowallets")
-  ledger_entries                                              ledger_entries[]
-  transactions_transactions_receiver_wallet_idTowallets       transactions[]     @relation("transactions_receiver_wallet_idTowallets")
-  transactions_transactions_sender_wallet_idTowallets         transactions[]     @relation("transactions_sender_wallet_idTowallets")
-  users                                                       users?             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@index([wallet_address], map: "idx_wallets_address")
-  @@index([user_id], map: "idx_wallets_user_id")
-}
-
-model webhook_logs {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  provider   String?   @db.VarChar(100)
-  event_name String?   @db.VarChar(255)
-  payload    Json?
-  response   String?
-  status     String?   @db.VarChar(50)
-  created_at DateTime? @default(now()) @db.Timestamp(6)
-}
-
-enum escrow_status {
-  pending
-  active
-  completed
-  disputed
-  cancelled
-  refunded
-}
-
-enum kyc_status {
-  none
-  pending
-  verified
-  rejected
-}
-
-enum merchant_status {
-  pending
-  approved
-  rejected
-  suspended
-}
-
-enum notification_type {
-  system
-  transaction
-  security
-  escrow
-  investment
-  merchant
-}
-
-enum transaction_status {
-  pending
-  processing
-  completed
-  failed
-  cancelled
-  reversed
-}
-
-enum transaction_type {
-  deposit
-  withdrawal
-  transfer
-  merchant_payment
-  escrow_lock
-  escrow_release
-  escrow_refund
-  investment
-  roi_payout
-  fee
-  conversion
-  cross_border
-}
-
-enum user_role {
-  user
-  merchant
-  admin
-  super_admin
-}
-
-enum wallet_type {
-  user
-  merchant
-  treasury
-  operations
-  creator
-}
-
-model project_investments {
-  id String @id @default(uuid()) @db.Uuid
-
-  user_id    String @db.Uuid
-  project_id String @db.Uuid
-
-  tokens_bought Decimal @db.Decimal(18, 2)
-  amount_paid   Decimal @db.Decimal(18, 2)
-
-  price_per_token Decimal @db.Decimal(18, 2)
-
-  status String @default("active")
-
-  created_at DateTime @default(now())
-
-  user    users    @relation(fields: [user_id], references: [id])
-  project projects @relation(fields: [project_id], references: [id])
-}
-
-model projects {
-  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  title       String
-  description String?
-  category    String?
-  location    String?
-  image_url   String?
-
-  total_value     Decimal @default(0) @db.Decimal(18, 2)
-  token_price     Decimal @default(0) @db.Decimal(18, 2)
-  duration_months Int?    @default(0)
-
-  total_tokens Decimal @default(0) @db.Decimal(18, 2)
-  sold_tokens  Decimal @default(0) @db.Decimal(18, 2)
-
-  roi_percentage Decimal? @default(0) @db.Decimal(5, 2)
-
-  is_verified Boolean @default(false)
-  status      String  @default("active")
-
-  created_at DateTime @default(now())
-  updated_at DateTime @default(now())
-
-  project_investments     project_investments[]
-  project_funding_history project_funding_history[]
-}
-
-model project_funding_history {
-  id         String @id @default(uuid()) @db.Uuid
-  project_id String @db.Uuid
-
-  month Int
-  value Decimal @db.Decimal(18, 2)
-
-  created_at DateTime @default(now())
-
-  project projects @relation(fields: [project_id], references: [id])
-}
-
-model user_settings {
-  id String @id @default(uuid()) @db.Uuid
-
-  user_id String @unique @db.Uuid
-
-  language String @default("en")
-
-  push_notifications Boolean @default(true)
-
-  email_notifications Boolean @default(false)
-
-  sms_notifications Boolean @default(false)
-
-  sound_enabled Boolean @default(true)
-
-  vibration_enabled Boolean @default(true)
-
-  created_at DateTime @default(now())
-
-  updated_at DateTime @updatedAt
-
-  user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
-}
-
-model device_tokens {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id    String    @db.Uuid
-  token      String    @db.VarChar(512)
-  platform   String?   @db.VarChar(50)
-  is_active  Boolean?  @default(true)
-  created_at DateTime? @default(now()) @db.Timestamp(6)
-  last_seen  DateTime?
-  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([user_id], map: "idx_device_tokens_user_id")
-}
-
-model Deposit {
-  id       String @id @default(cuid())
-  userId   String @db.Uuid
-  amount   Float
-  fee      Float  @default(0)
-  total    Float
-  currency String @default("KES")
-
-  paymentMethod PaymentMethod
-
-  status DepositStatus @default(PENDING)
-
-  reference   String  @unique
-  providerRef String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user users @relation(fields: [userId], references: [id])
-}
-
-enum PaymentMethod {
-  CARD
-  MOBILE_MONEY
-  CRYPTO
-}
-
-enum DepositStatus {
-  PENDING
-  PROCESSING
-  SUCCESS
-  FAILED
-}
-
-model Withdrawal {
-  id String @id @default(uuid())
-
-  userId String @db.Uuid
-
-  amount     Float
-  fee        Float
-  settlement Float
-  total      Float
-
-  currency String @default("KES")
-
-  method String
-
-  accountName   String?
-  accountNumber String?
-  bankName      String?
-
-  phoneNumber String?
-
-  cryptoAddress String?
-  network       String?
-
-  reference String @unique
-
-  status String @default("PENDING")
-
-  rejectionReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user users @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([status])
+import { forwardRef, Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../database/prisma.service';
+import { v4 as uuidv4 } from 'uuid';
+import { IvorypayService } from '../ivorypay/ivorypay.service';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { PaystackService } from '../paystack/paystack.service';
+@Injectable()
+export class DepositService {
+  constructor(
+    private prisma: PrismaService,
+    @Inject(forwardRef(() => IvorypayService))
+    private ivorypay: IvorypayService,
+    @Inject(forwardRef(() => PaystackService))
+    private paystack: PaystackService,
+    private websocket: WebsocketGateway,
+    private readonly cfg: ConfigService,
+  ) {}
+
+  async createDeposit(userId: string, dto: any) {
+    const fee = dto.amount * 0.02;
+    const total = dto.amount + fee;
+
+    if (this.isPotentialFraud(dto)) {
+      throw new BadRequestException('Deposit flagged for review due to anti-fraud checks');
+    }
+
+    const reference = uuidv4();
+
+    const deposit = await this.prisma.deposit.create({
+      data: {
+        userId,
+        amount: dto.amount,
+        fee,
+        total,
+        currency: dto.currency || 'KES',
+        paymentMethod: dto.paymentMethod,
+        reference,
+        status: 'PENDING',
+      },
+    });
+
+    if (dto.paymentMethod === 'CRYPTO') {
+      const payment = await this.ivorypay.createPayment({
+        amount: total,
+        currency: 'KES',
+        reference,
+        email: dto.email || 'customer@example.com',
+      });
+
+      return {
+        success: true,
+        deposit,
+        paymentLink: payment.payment_link,
+      };
+    }
+
+    if (dto.paymentMethod === 'CARD' || dto.paymentMethod === 'MOBILE_MONEY') {
+      const payment = await this.paystack.initializePayment({
+        email: dto.email || 'customer@email.com',
+        amount: total,
+        reference,
+      });
+
+      return {
+        success: true,
+        deposit,
+        authorization_url: payment.authorization_url,
+      };
+    }
+
+    return {
+      success: true,
+      deposit,
+    };
+  }
+
+  private isPotentialFraud(dto: any) {
+    const amount = Number(dto.amount ?? 0);
+    const maxAllowed = Number(this.cfg.get<number>('FRAUD_MAX_DEPOSIT_AMOUNT', 1000000));
+    if (amount > maxAllowed) {
+      return true;
+    }
+
+    if (dto.paymentMethod === 'CRYPTO' && dto.amount > (this.cfg.get<number>('FRAUD_CRYPTO_THRESHOLD', 250000))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  async getUserDeposits(userId: string) {
+    return this.prisma.deposit.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getWalletBalance(userId: string) {
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId, is_active: true },
+    });
+
+    return {
+      balance: Number(wallet?.balance ?? 0),
+      currency: wallet?.currency ?? 'KES',
+    };
+  }
+
+  async markDepositSuccessful(reference: string) {
+    const deposit = await this.prisma.deposit.findFirst({
+      where: { reference },
+    });
+
+    if (!deposit || deposit.status !== 'PENDING') {
+      return false;
+    }
+
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: deposit.userId, is_active: true },
+    });
+
+    const depositWallet =
+      wallet ||
+      (await this.prisma.wallets.create({
+        data: {
+          user_id: deposit.userId,
+          wallet_name: 'Main Wallet',
+          wallet_type: 'user',
+          wallet_address: uuidv4(),
+          currency: deposit.currency || 'KES',
+        },
+      }));
+
+    const previousBalance = Number(depositWallet.balance ?? 0);
+    const updatedBalance = previousBalance + deposit.amount;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updatedDeposits = await tx.deposit.updateMany({
+        where: { id: deposit.id, status: 'PENDING' },
+        data: { status: 'SUCCESS' },
+      });
+      if (updatedDeposits.count === 0) {
+        return false;
+      }
+
+      await tx.wallets.update({
+        where: { id: depositWallet.id },
+        data: { balance: { increment: deposit.amount } },
+      });
+
+      await tx.ledger_entries.create({
+        data: {
+          wallet_id: depositWallet.id,
+          entry_type: 'credit',
+          amount: deposit.amount,
+          balance_before: previousBalance,
+          balance_after: updatedBalance,
+          description: `Deposit completed — ref: ${reference}`,
+        },
+      });
+      return true;
+    });
+
+    if (!result) {
+      return false;
+    }
+
+    this.websocket.emitBalanceUpdate(deposit.userId, updatedBalance);
+    this.websocket.emitTransactionUpdate(deposit.userId, {
+      reference,
+      status: 'SUCCESS',
+    });
+
+    return true;
+  }
+
+  async getDepositById(id: string) {
+    const deposit = await this.prisma.deposit.findUnique({
+      where: { id },
+    });
+
+    if (!deposit) {
+      throw new NotFoundException('Deposit not found');
+    }
+
+    return deposit;
+  }
 }

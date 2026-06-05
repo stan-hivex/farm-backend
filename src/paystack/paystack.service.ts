@@ -14,19 +14,31 @@ export class PaystackService {
     email: string;
     amount: number;
     reference: string;
+    callback_url?: string;
+    metadata?: Record<string, unknown>;
+    payment_method?: string;
   }) {
-    const callback = this.cfg.get<string>('PAYSTACK_CALLBACK_URL', 'https://app.farm/payment-success');
+    const callback = data.callback_url ?? this.cfg.get<string>('PAYSTACK_CALLBACK_URL', 'https://app.farm/payment-success');
+
+    const payload: Record<string, unknown> = {
+      email: data.email,
+      // PAYSTACK USES KOBO/CENTS
+      amount: Math.round(data.amount * 100),
+      reference: data.reference,
+      callback_url: callback,
+    };
+
+    if (data.metadata) {
+      payload.metadata = data.metadata;
+    }
+    if (data.payment_method) {
+      payload.payment_method = data.payment_method;
+    }
 
     try {
       const response = await axios.post(
         'https://api.paystack.co/transaction/initialize',
-        {
-          email: data.email,
-          // PAYSTACK USES KOBO/CENTS
-          amount: Math.round(data.amount * 100),
-          reference: data.reference,
-          callback_url: callback,
-        },
+        payload,
         {
           headers: {
             Authorization: `Bearer ${this.secret}`,
