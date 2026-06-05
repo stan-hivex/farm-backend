@@ -221,7 +221,7 @@ export class PaymentsService {
 
     return {
       data: {
-        payment_url: response.data.data.authorization_url,
+        payment_url: response.authorization_url,
         reference,
         amount_farm: amount_farm.toFixed(4),
       },
