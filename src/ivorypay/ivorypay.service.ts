@@ -9,7 +9,7 @@ export class IvorypayService {
 
   constructor(private cfg: ConfigService) {
     this.secret = this.cfg.get<string>('IVORYPAY_SECRET_KEY') || process.env.IVORYPAY_SECRET_KEY || '';
-    this.baseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL') || process.env.IVORYPAY_BASE_URL || 'https://api.ivorypay.co';
+    this.baseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL') || process.env.IVORYPAY_BASE_URL || 'https://api.ivorypay.io';
   }
 
   async createPayment(data: {
