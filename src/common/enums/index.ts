@@ -8,8 +8,10 @@ export enum UserRole {
 export enum KycStatus {
   NONE = 'none',
   PENDING = 'pending',
+  UNDER_REVIEW = 'under_review',
   VERIFIED = 'verified',
   REJECTED = 'rejected',
+  ADDITIONAL_INFO_REQUIRED = 'additional_info_required',
 }
 
 export enum TransactionType {

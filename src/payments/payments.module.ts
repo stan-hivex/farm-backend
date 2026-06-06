@@ -5,11 +5,12 @@ import { PaymentProcessorService } from './payment-processor.service';
 import { WebsocketModule } from '../websocket/websocket.module';
 import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { PaystackModule } from '../paystack/paystack.module';
+import { KycGuard } from '../common/guards/kyc.guard';
 
 @Module({
 	imports: [WebsocketModule, IvorypayModule, PaystackModule],
 	controllers: [PaymentsController],
-	providers: [PaymentsService, PaymentProcessorService],
+	providers: [PaymentsService, PaymentProcessorService, KycGuard],
 	exports: [PaymentsService, PaymentProcessorService],
 })
 export class PaymentsModule {}

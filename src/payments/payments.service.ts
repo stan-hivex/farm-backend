@@ -366,10 +366,11 @@ export class PaymentsService {
       });
 
       const result = await this.prisma.$transaction(async (tx) => {
-        // Lock funds
+        const balanceBefore = Number(wallet.balance || 0);
+
         await tx.wallets.update({
           where: { id: wallet.id },
-          data: { locked_balance: { increment: dto.amount_farm } },
+          data: { balance: { decrement: dto.amount_farm } },
         });
 
         // Create transaction
@@ -378,7 +379,7 @@ export class PaymentsService {
             transaction_reference: reference,
             sender_wallet_id: wallet.id,
             transaction_type: 'withdrawal',
-            status: 'pending',
+            status: 'completed',
             amount: dto.amount_farm,
             fee: 0,
             net_amount: dto.amount_farm,
@@ -394,20 +395,20 @@ export class PaymentsService {
               provider: 'ivorypay',
               withdrawal_id: withdrawal.data?.id || withdrawal.id,
             },
+            processed_at: new Date(),
           },
         });
 
         // Create ledger entry
-        const balanceBefore = Number(wallet.balance || 0);
         await tx.ledger_entries.create({
           data: {
             transaction_id: tr.id,
             wallet_id: wallet.id,
-            entry_type: 'hold',
+            entry_type: 'debit',
             amount: Number(dto.amount_farm),
             balance_before: balanceBefore,
             balance_after: balanceBefore - Number(dto.amount_farm),
-            description: `Crypto withdrawal hold — ref: ${reference}`,
+            description: `Crypto withdrawal completed — ref: ${reference}`,
           },
         });
 
@@ -434,22 +435,23 @@ export class PaymentsService {
 
       return {
         data: result,
-        message: 'Crypto withdrawal request submitted via Ivorypay. Processing within 1-3 business days.',
+        message: 'Crypto withdrawal request submitted via Ivorypay. Processing instantly.',
       };
     }
 
     // Standard withdrawal handling for BANK_TRANSFER, MOBILE_MONEY, etc.
     const result = await this.prisma.$transaction(async (tx) => {
+      const balanceBefore = Number(wallet.balance || 0);
       await tx.wallets.update({
         where: { id: wallet.id },
-        data: { locked_balance: { increment: dto.amount_farm } },
+        data: { balance: { decrement: dto.amount_farm } },
       });
       const tr = await tx.transactions.create({
         data: {
           transaction_reference: generateTxReference(),
           sender_wallet_id: wallet.id,
           transaction_type: 'withdrawal',
-          status: 'pending',
+          status: 'completed',
           amount: dto.amount_farm,
           fee: 0,
           net_amount: dto.amount_farm,
@@ -462,20 +464,20 @@ export class PaymentsService {
             amount_fiat,
             exchange_rate: rate,
           },
+          processed_at: new Date(),
         },
       });
 
-      // Create a ledger entry to reflect held funds
-      const balanceBefore = Number(wallet.balance || 0);
+      // Create a ledger entry to reflect immediate debit
       await tx.ledger_entries.create({
         data: {
           transaction_id: tr.id,
           wallet_id: wallet.id,
-          entry_type: 'hold',
+          entry_type: 'debit',
           amount: Number(dto.amount_farm),
           balance_before: balanceBefore,
           balance_after: balanceBefore - Number(dto.amount_farm),
-          description: `Withdrawal hold — ref: ${tr.transaction_reference}`,
+          description: `Withdrawal completed — ref: ${tr.transaction_reference}`,
         },
       });
 
@@ -495,7 +497,7 @@ export class PaymentsService {
 
     return {
       data: result,
-      message: 'Withdrawal request submitted. Processing within 1-3 business days.',
+      message: 'Withdrawal request submitted. Processing instantly.',
     };
   }
 

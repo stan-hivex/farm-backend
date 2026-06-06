@@ -16,7 +16,7 @@ export class IvorypayService {
     this.baseUrl =
       this.cfg.get<string>('IVORYPAY_BASE_URL') ||
       process.env.IVORYPAY_BASE_URL ||
-      'https://api.ivorypay.io';
+      'https://api.ivorypay.io/api';
 
     console.log('IVORYPAY_BASE_URL:', this.baseUrl);
   }

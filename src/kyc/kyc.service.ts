@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { CloudinaryService } from '../common/cloudinary.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
 @Injectable()
@@ -7,25 +8,87 @@ export class KycService {
   constructor(private prisma: PrismaService) {}
 
   async submit(userId: string, dto: {
-    document_type: string; document_number?: string;
-    front_image: string; back_image?: string; selfie_image?: string;
+    document_type: string;
+    document_number?: string;
+    front_image: string;
+    back_image?: string;
+    selfie_image?: string;
+    first_name?: string;
+    last_name?: string;
+    date_of_birth?: string;
+    gender?: string;
+    nationality?: string;
+    phone?: string;
+    email?: string;
+    country?: string;
+    state?: string;
+    city?: string;
+    address?: string;
+    postal_code?: string;
   }) {
     const user = await this.prisma.users.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.kyc_status === 'verified') throw new BadRequestException('KYC already verified');
 
-    const pending = await this.prisma.kyc_documents.findFirst({
-      where: { user_id: userId, status: 'pending' },
+    const existingSubmission = await this.prisma.kyc_documents.findFirst({
+      where: {
+        user_id: userId,
+        status: { in: ['pending', 'under_review'] },
+      },
     });
-    if (pending) throw new BadRequestException('You already have a pending KYC submission');
+    if (existingSubmission) {
+      throw new BadRequestException('You already have a KYC submission in progress');
+    }
+
+    // Upload images to Cloudinary
+    const cloud = new CloudinaryService();
+    const frontUrl = await cloud.uploadBase64(dto.front_image, 'kyc');
+    const backUrl = dto.back_image
+      ? await cloud.uploadBase64(dto.back_image, 'kyc')
+      : null;
+    const selfieUrl = dto.selfie_image
+      ? await cloud.uploadBase64(dto.selfie_image, 'kyc')
+      : null;
 
     const doc = await this.prisma.kyc_documents.create({
-      data: { user_id: userId, ...dto, status: 'pending' },
+      data: {
+        user_id: userId,
+        document_type: dto.document_type,
+        document_number: dto.document_number,
+
+        // NEW (production - Cloudinary URLs)
+        front_image_url: frontUrl,
+        back_image_url: backUrl,
+        selfie_image_url: selfieUrl,
+
+        // OLD (temporary fallback - base64)
+        front_image: dto.front_image,
+        back_image: dto.back_image,
+        selfie_image: dto.selfie_image,
+
+        status: 'pending',
+      },
     });
-    await this.prisma.users.update({
-      where: { id: userId }, data: { kyc_status: 'pending' },
-    });
-    return { data: doc, message: 'KYC submitted. Review takes 1-2 business days.' };
+
+    const updateData: any = { kyc_status: 'pending' };
+    if (dto.first_name) updateData.first_name = dto.first_name;
+    if (dto.last_name) updateData.last_name = dto.last_name;
+    if (dto.date_of_birth) updateData.date_of_birth = dto.date_of_birth;
+    if (dto.country) updateData.country = dto.country;
+    if (dto.city) updateData.city = dto.city;
+    if (dto.address) updateData.address = dto.address;
+
+    if (Object.keys(updateData).length > 1) {
+      await this.prisma.users.update({
+        where: { id: userId }, data: updateData,
+      });
+    } else {
+      await this.prisma.users.update({
+        where: { id: userId }, data: { kyc_status: 'pending' },
+      });
+    }
+
+    return { data: doc, message: 'KYC submitted. Your documents will be reviewed shortly.' };
   }
 
   async getMyKyc(userId: string) {
@@ -41,8 +104,19 @@ export class KycService {
       this.prisma.kyc_documents.findMany({
         where: { status: 'pending' }, skip, take,
         orderBy: { created_at: 'asc' },
-        include: {
-          // Correct relation name: the user who submitted this document
+        select: {
+          id: true,
+          user_id: true,
+          document_type: true,
+          document_number: true,
+          created_at: true,
+          front_image: true,
+          back_image: true,
+          selfie_image: true,
+          status: true,
+          reviewed_by: true,
+          rejection_reason: true,
+          reviewed_at: true,
           users_kyc_documents_user_idTousers: {
             select: { id: true, first_name: true, last_name: true, email: true, phone: true },
           },
@@ -54,7 +128,8 @@ export class KycService {
   }
 
   async review(docId: string, reviewerId: string, dto: {
-    status: 'verified' | 'rejected'; rejection_reason?: string;
+    status: 'under_review' | 'verified' | 'rejected' | 'additional_info_required';
+    rejection_reason?: string;
   }) {
     const doc = await this.prisma.kyc_documents.findUnique({ where: { id: docId } });
     if (!doc) throw new NotFoundException('KYC document not found');

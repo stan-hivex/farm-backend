@@ -14,9 +14,22 @@ class SubmitKycDto {
   @IsNotEmpty() @IsString() front_image!: string;
   @IsOptional() @IsString() back_image?: string;
   @IsOptional() @IsString() selfie_image?: string;
+  @IsOptional() @IsString() first_name?: string;
+  @IsOptional() @IsString() last_name?: string;
+  @IsOptional() @IsString() dob?: string;
+  @IsOptional() @IsString() gender?: string;
+  @IsOptional() @IsString() nationality?: string;
+  @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() email?: string;
+  @IsOptional() @IsString() country?: string;
+  @IsOptional() @IsString() state?: string;
+  @IsOptional() @IsString() city?: string;
+  @IsOptional() @IsString() address?: string;
+  @IsOptional() @IsString() postal_code?: string;
 }
 class ReviewDto {
-  @IsIn(['verified', 'rejected']) status!: 'verified' | 'rejected';
+  @IsIn(['under_review', 'verified', 'rejected', 'additional_info_required'])
+  status!: 'under_review' | 'verified' | 'rejected' | 'additional_info_required';
   @IsOptional() @IsString() rejection_reason?: string;
 }
 
@@ -27,7 +40,29 @@ class ReviewDto {
 export class KycController {
   constructor(private readonly svc: KycService) {}
 
-  @Post('submit')      submit(@CurrentUser() u: any, @Body() dto: SubmitKycDto) { return this.svc.submit(u.id, dto); }
+  @Post('submit')
+  submit(@CurrentUser() u: any, @Body() body: any) {
+    const dto: SubmitKycDto = {
+      document_type: body.document_type || body.documentType,
+      document_number: body.document_number || body.documentNumber,
+      front_image: body.front_image || body.frontImage,
+      back_image: body.back_image || body.backImage,
+      selfie_image: body.selfie_image || body.selfieImage,
+      first_name: body.first_name || body.firstName,
+      last_name: body.last_name || body.lastName,
+      dob: body.dob || body.dateOfBirth || body.date_of_birth,
+      gender: body.gender,
+      nationality: body.nationality,
+      phone: body.phone,
+      email: body.email,
+      country: body.country,
+      state: body.state || body.county || body.county_state,
+      city: body.city,
+      address: body.address,
+      postal_code: body.postal_code || body.postalCode,
+    };
+    return this.svc.submit(u.id, dto);
+  }
   @Get('my')           getMyKyc(@CurrentUser() u: any) { return this.svc.getMyKyc(u.id); }
 
   @Get('queue')        @UseGuards(RolesGuard) @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)

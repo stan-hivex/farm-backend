@@ -5,6 +5,7 @@ import type { Request } from 'express';
 import { PaymentsService } from './payments.service';
 import { verifyDeviceToken } from '../common/utils/device-token.util';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { KycGuard } from '../common/guards/kyc.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 // Paystack webhook endpoint removed in favor of unified webhook queue flow
@@ -34,7 +35,7 @@ export class PaymentsController {
 
   @Post('deposit')
   @ApiBearerAuth('JWT')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Initiate a fiat deposit (CARD, MOBILE_MONEY, CRYPTO)' })
   deposit(@CurrentUser() u: any, @Body() dto: DepositDto, @Req() req: Request) {
     // Prefer a signed device token to prevent spoofing
@@ -52,7 +53,7 @@ export class PaymentsController {
 
   @Post('withdraw')
   @ApiBearerAuth('JWT')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Request a withdrawal' })
   withdraw(@CurrentUser() u: any, @Body() dto: WithdrawDto, @Req() req: Request) {
     let deviceRisk = 0;

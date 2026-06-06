@@ -195,20 +195,50 @@ model investment_projects {
 }
 
 model kyc_documents {
-  id                                     String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id                                String?     @db.Uuid
-  document_type                          String?     @db.VarChar(100)
-  front_image                            String?
-  back_image                             String?
-  selfie_image                           String?
-  document_number                        String?     @db.VarChar(255)
-  status                                 kyc_status? @default(pending)
-  reviewed_by                            String?     @db.Uuid
-  rejection_reason                       String?
-  reviewed_at                            DateTime?   @db.Timestamp(6)
-  created_at                             DateTime?   @default(now()) @db.Timestamp(6)
-  users_kyc_documents_reviewed_byTousers users?      @relation("kyc_documents_reviewed_byTousers", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_kyc_documents_user_idTousers     users?      @relation("kyc_documents_user_idTousers", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  user_id           String?  @db.Uuid
+
+  document_type     String?
+  document_number   String?
+
+  first_name        String?
+  last_name         String?
+
+  date_of_birth     DateTime?
+
+  gender            String?
+  nationality       String?
+
+  phone             String?
+  email             String?
+
+  country           String?
+  county            String?
+  city              String?
+
+  physical_address  String?
+  postal_code       String?
+  address_document  String?
+
+  front_image       String?
+  back_image        String?
+  selfie_image      String?
+
+  front_image_url   String?
+  back_image_url    String?
+  selfie_image_url  String?
+
+  status            kyc_status? @default(pending)
+
+  reviewed_by       String?  @db.Uuid
+  rejection_reason  String?
+
+  reviewed_at       DateTime?
+  created_at        DateTime? @default(now())
+
+  users_kyc_documents_reviewed_byTousers users? @relation("kyc_documents_reviewed_byTousers", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_kyc_documents_user_idTousers     users? @relation("kyc_documents_user_idTousers", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model ledger_entries {
@@ -469,6 +499,7 @@ model users {
   pin_hash                                                              String?
   role                                                                  user_role?               @default(user)
   kyc_status                                                            kyc_status?              @default(none)
+  kyc_level                                                             Int?                     @default(0)
   is_active                                                             Boolean?                 @default(true)
   is_suspended                                                          Boolean?                 @default(false)
   is_deleted                                                            Boolean?                 @default(false)
@@ -579,8 +610,10 @@ enum escrow_status {
 enum kyc_status {
   none
   pending
+  under_review
   verified
   rejected
+  additional_info_required
 }
 
 enum merchant_status {
