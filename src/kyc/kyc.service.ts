@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { CloudinaryService } from '../common/cloudinary.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
@@ -40,35 +40,49 @@ export class KycService {
       throw new BadRequestException('You already have a KYC submission in progress');
     }
 
-    // Upload images to Cloudinary
-    const cloud = new CloudinaryService();
-    const frontUrl = await cloud.uploadBase64(dto.front_image, 'kyc');
-    const backUrl = dto.back_image
-      ? await cloud.uploadBase64(dto.back_image, 'kyc')
-      : null;
-    const selfieUrl = dto.selfie_image
-      ? await cloud.uploadBase64(dto.selfie_image, 'kyc')
-      : null;
+    // Upload images to Cloudinary (log and fail gracefully)
+    let frontUrl: string | null = null;
+    let backUrl: string | null = null;
+    let selfieUrl: string | null = null;
+    try {
+      const cloud = new CloudinaryService();
+      frontUrl = await cloud.uploadBase64(dto.front_image, 'kyc');
+      backUrl = dto.back_image ? await cloud.uploadBase64(dto.back_image, 'kyc') : null;
+      selfieUrl = dto.selfie_image ? await cloud.uploadBase64(dto.selfie_image, 'kyc') : null;
+    } catch (e) {
+      // Log cloud upload error but continue to store base64 as fallback
+      // so users can still submit KYC while we investigate Cloudinary issues.
+      // eslint-disable-next-line no-console
+      console.error('KYC Cloudinary upload failed:', e instanceof Error ? e.stack || e.message : String(e));
+    }
 
-    const doc = await this.prisma.kyc_documents.create({
-      data: {
-        user_id: userId,
-        document_type: dto.document_type,
-        document_number: dto.document_number,
+    let doc;
+    try {
+      doc = await this.prisma.kyc_documents.create({
+        data: {
+          user_id: userId,
+          document_type: dto.document_type,
+          document_number: dto.document_number,
 
-        // NEW (production - Cloudinary URLs)
-        front_image_url: frontUrl,
-        back_image_url: backUrl,
-        selfie_image_url: selfieUrl,
+          // NEW (production - Cloudinary URLs)
+          front_image_url: frontUrl,
+          back_image_url: backUrl,
+          selfie_image_url: selfieUrl,
 
-        // OLD (temporary fallback - base64)
-        front_image: dto.front_image,
-        back_image: dto.back_image,
-        selfie_image: dto.selfie_image,
+          // OLD (temporary fallback - base64)
+          front_image: dto.front_image,
+          back_image: dto.back_image,
+          selfie_image: dto.selfie_image,
 
-        status: 'pending',
-      },
-    });
+          status: 'pending',
+        },
+      });
+    } catch (err) {
+      // Prisma/schema errors will surface here; log details and return 500
+      // eslint-disable-next-line no-console
+      console.error('Prisma create kyc_documents failed:', err instanceof Error ? err.stack || err.message : String(err));
+      throw new InternalServerErrorException('Failed to save KYC submission');
+    }
 
     const updateData: any = { kyc_status: 'pending' };
     if (dto.first_name) updateData.first_name = dto.first_name;
