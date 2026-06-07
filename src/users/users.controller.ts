@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Put,
+  Patch,
   Post,
   Delete,
   Body,
@@ -18,6 +19,8 @@ import {
 import {
   IsOptional,
   IsString,
+  IsNotEmpty,
+  IsEmail,
 } from 'class-validator';
 
 import { UsersService } from './users.service';
@@ -44,6 +47,26 @@ class UpdateProfileDto {
   @IsOptional()
   @IsString()
   city?: string;
+}
+
+class ChangeEmailDto {
+  @IsNotEmpty()
+  @IsEmail()
+  new_email!: string;
+
+  @IsNotEmpty()
+  @IsString()
+  current_password!: string;
+}
+
+class ChangePhoneDto {
+  @IsNotEmpty()
+  @IsString()
+  new_phone!: string;
+
+  @IsNotEmpty()
+  @IsString()
+  current_password!: string;
 }
 
 class AddContactDto {
@@ -78,6 +101,22 @@ export class UsersController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.svc.updateProfile(u.id, dto);
+  }
+
+  @Patch('me/email')
+  changeEmail(
+    @CurrentUser() u: any,
+    @Body() dto: ChangeEmailDto,
+  ) {
+    return this.svc.changeEmail(u.id, dto);
+  }
+
+  @Patch('me/phone')
+  changePhone(
+    @CurrentUser() u: any,
+    @Body() dto: ChangePhoneDto,
+  ) {
+    return this.svc.changePhone(u.id, dto);
   }
 
   @Get('search')

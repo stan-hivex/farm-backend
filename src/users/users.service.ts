@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
@@ -120,5 +121,73 @@ export class UsersService {
       where: { user_id: userId, is_read: false }, data: { is_read: true },
     });
     return { message: 'All notifications marked as read' };
+  }
+
+  async changeEmail(userId: string, dto: { new_email: string; current_password: string }) {
+    // Validate new email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(dto.new_email)) {
+      throw new BadRequestException('Invalid email format');
+    }
+
+    // Check if new email already exists
+    const existingUser = await this.prisma.users.findFirst({
+      where: { email: dto.new_email, is_deleted: false },
+    });
+    if (existingUser && existingUser.id !== userId) {
+      throw new ConflictException('Email already in use');
+    }
+
+    // Verify current password
+    const user = await this.prisma.users.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const passwordMatches = await bcrypt.compare(dto.current_password, user.password_hash);
+    if (!passwordMatches) {
+      throw new BadRequestException('Incorrect current password');
+    }
+
+    // Update email
+    const updated = await this.prisma.users.update({
+      where: { id: userId },
+      data: { email: dto.new_email, email_verified: false },
+      select: { id: true, email: true, email_verified: true },
+    });
+
+    return { data: updated, message: 'Email updated successfully. Please verify your new email.' };
+  }
+
+  async changePhone(userId: string, dto: { new_phone: string; current_password: string }) {
+    // Validate phone format (basic: digits, +, and hyphens)
+    const phoneRegex = /^[\d+\-() ]{7,20}$/;
+    if (!phoneRegex.test(dto.new_phone)) {
+      throw new BadRequestException('Invalid phone number format');
+    }
+
+    // Check if new phone already exists
+    const existingUser = await this.prisma.users.findFirst({
+      where: { phone: dto.new_phone, is_deleted: false },
+    });
+    if (existingUser && existingUser.id !== userId) {
+      throw new ConflictException('Phone number already in use');
+    }
+
+    // Verify current password
+    const user = await this.prisma.users.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const passwordMatches = await bcrypt.compare(dto.current_password, user.password_hash);
+    if (!passwordMatches) {
+      throw new BadRequestException('Incorrect current password');
+    }
+
+    // Update phone
+    const updated = await this.prisma.users.update({
+      where: { id: userId },
+      data: { phone: dto.new_phone, phone_verified: false },
+      select: { id: true, phone: true, phone_verified: true },
+    });
+
+    return { data: updated, message: 'Phone number updated successfully. Please verify your new phone.' };
   }
 }
