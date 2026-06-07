@@ -39,6 +39,7 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 import { AuditMiddleware } from './common/middleware/audit.middleware';
 import { SettingsModule } from './settings/settings.module';
+import { SecurityModule } from './security/security.module';
 import { DepositModule } from './deposit/deposit.module';
 import { PaystackModule } from './paystack/paystack.module';
 import { WithdrawModule } from './withdraw/withdraw.module';
@@ -84,6 +85,7 @@ import { WebhookModule } from './webhook/webhook.module';
     WebsocketModule,
     RedisModule,
     SettingsModule,
+    SecurityModule,
     DepositModule,
     PaystackModule,
     WithdrawModule,
