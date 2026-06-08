@@ -35,6 +35,10 @@ export class WithdrawService {
       throw new BadRequestException('Invalid amount');
     }
 
+    if (amount < 10) {
+      throw new BadRequestException('Withdrawal amount must be at least 10 FARM');
+    }
+
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
@@ -143,9 +147,17 @@ export class WithdrawService {
       return createdWithdrawal;
     });
 
+    // Automatically process withdrawal with payment provider (async, doesn't block response)
+    setImmediate(() => {
+      this.approveWithdrawal(reference).catch(err => {
+        // Log but don't fail - webhook can handle it too
+        console.error(`Auto-approval failed for withdrawal ${reference}:`, err);
+      });
+    });
+
     return {
       success: true,
-      message: 'Withdrawal created successfully and is pending approval',
+      message: 'Withdrawal submitted successfully. Processing with your bank...',
       withdrawal,
       balanceAfter: balance - total,
     };
