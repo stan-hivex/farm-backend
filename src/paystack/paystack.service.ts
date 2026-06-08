@@ -86,4 +86,90 @@ export class PaystackService {
     return response.data.data;
   }
 
+  async createTransferRecipient(data: {
+    type: 'nuban' | 'mobile_money';
+    name: string;
+    accountNumber?: string;
+    bankCode?: string;
+    phone?: string;
+    currency?: string;
+  }) {
+    const payload: Record<string, unknown> = {
+      type: data.type,
+      name: data.name,
+      currency: data.currency ?? 'KES',
+    };
+
+    if (data.type === 'nuban') {
+      payload['account_number'] = data.accountNumber;
+      payload['bank_code'] = data.bankCode;
+    }
+
+    if (data.type === 'mobile_money') {
+      payload['phone'] = data.phone;
+    }
+
+    const response = await axios.post(
+      'https://api.paystack.co/transferrecipient',
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${this.secret}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    if (!response.data?.status) {
+      const errorMsg = response.data?.message || 'Paystack create recipient failed';
+      throw new Error(errorMsg);
+    }
+
+    return response.data.data;
+  }
+
+  async initiateTransfer(data: {
+    amount: number;
+    recipient: string;
+    reference: string;
+    reason?: string;
+    currency?: string;
+  }) {
+    const payload: Record<string, unknown> = {
+      source: 'balance',
+      amount: Math.round(data.amount * 100),
+      recipient: data.recipient,
+      reference: data.reference,
+      reason: data.reason ?? 'Withdrawal payout',
+      currency: data.currency ?? 'KES',
+    };
+
+    const response = await axios.post(
+      'https://api.paystack.co/transfer',
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${this.secret}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    if (!response.data?.status) {
+      const errorMsg = response.data?.message || 'Paystack initiate transfer failed';
+      throw new Error(errorMsg);
+    }
+
+    return response.data.data;
+  }
+
+  async createTransfer(data: {
+    amount: number;
+    recipient: string;
+    reason: string;
+    reference: string;
+    currency?: string;
+  }) {
+    return this.initiateTransfer(data);
+  }
 }

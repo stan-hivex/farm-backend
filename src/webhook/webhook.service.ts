@@ -741,7 +741,7 @@ export class WebhookService {
 
   private async finalizeWithdrawal(reference: string, success: boolean, reason?: string) {
     const handledByWithdrawService = success
-      ? await this.withdrawService.approveWithdrawal(reference)
+      ? await this.withdrawService.markAsSuccess(reference)
       : await this.withdrawService.rejectWithdrawal(reference, reason || 'Withdrawal failed');
 
     if (handledByWithdrawService) {

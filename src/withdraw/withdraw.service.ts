@@ -7,6 +7,8 @@ import {
 
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { PaystackService } from '../paystack/paystack.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 import { v4 as uuidv4 } from 'uuid';
 
@@ -15,6 +17,8 @@ export class WithdrawService {
   constructor(
     private prisma: PrismaService,
     private authService: AuthService,
+    private paystackService: PaystackService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async createWithdrawal(userId: string, dto: any) {
@@ -80,20 +84,18 @@ export class WithdrawService {
 
     const withdrawal = await this.prisma.$transaction(async (tx) => {
       if (wallet) {
-        // Try to atomically increment locked_balance only if available balance covers amount
         const updated = await tx.$executeRaw`
           UPDATE "wallets"
           SET "locked_balance" = "locked_balance" + ${amount}
           WHERE "id" = ${wallet.id} AND ("balance" - "locked_balance") >= ${amount}
         `;
 
-        // $executeRaw returns the number of affected rows (Postgres)
         if (typeof updated === 'number' && updated === 0) {
           throw new BadRequestException('Insufficient wallet balance');
         }
       }
 
-      return tx.withdrawal.create({
+      const createdWithdrawal = await tx.withdrawal.create({
         data: {
           userId,
           amount,
@@ -112,11 +114,38 @@ export class WithdrawService {
           status: 'PENDING',
         },
       });
+
+      await tx.transactions.create({
+        data: {
+          transaction_reference: reference,
+          transaction_type: 'withdrawal',
+          status: 'pending',
+          amount,
+          fee,
+          net_amount: settlement,
+          currency: 'KES',
+          description: `Withdrawal request — ref: ${reference}`,
+          sender_wallet_id: wallet?.id,
+          metadata: {
+            method: dto.method,
+            accountName: dto.accountName,
+            accountNumber: dto.accountNumber,
+            bankName: dto.bankName,
+            bankCode: dto.bankCode,
+            phoneNumber: dto.phoneNumber,
+            cryptoAddress: dto.cryptoAddress,
+            network: dto.network,
+            provider: dto.method === 'CRYPTO' ? 'crypto' : 'paystack',
+          },
+        },
+      });
+
+      return createdWithdrawal;
     });
 
     return {
       success: true,
-      message: 'Withdrawal created successfully',
+      message: 'Withdrawal created successfully and is pending approval',
       withdrawal,
       balanceAfter: balance - total,
     };
@@ -149,14 +178,57 @@ export class WithdrawService {
   }
 
   async approveWithdrawal(reference: string) {
-    // attempt to move withdrawal into processing (atomic)
-    const updated = await this.prisma.withdrawal.updateMany({
-      where: { reference, status: 'PENDING' },
+    const withdrawal = await this.prisma.withdrawal.findFirst({ where: { reference } });
+    if (!withdrawal) return false;
+
+    await this.prisma.withdrawal.update({
+      where: { id: withdrawal.id },
       data: { status: 'PROCESSING' },
     });
-    if (updated.count === 0) return false;
 
-    // now load the withdrawal record
+    if (withdrawal.method === 'BANK_TRANSFER' || withdrawal.method === 'MOBILE_MONEY') {
+      try {
+        const recipient = await this.paystackService.createTransferRecipient({
+          type: withdrawal.method === 'BANK_TRANSFER' ? 'nuban' : 'mobile_money',
+          name: withdrawal.accountName ?? withdrawal.phoneNumber ?? 'FARM user',
+          accountNumber: withdrawal.accountNumber,
+          bankCode: withdrawal.bankCode ?? withdrawal.bankName,
+          phone: withdrawal.phoneNumber,
+          currency: 'KES',
+        });
+
+        const transfer = await this.paystackService.initiateTransfer({
+          amount: Number(withdrawal.amount),
+          recipient: recipient.recipient_code || recipient.recipientCode || recipient.code,
+          reference,
+          reason: `Withdrawal payout for ${reference}`,
+          currency: 'KES',
+        });
+
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+        if (transaction) {
+          const metadata = {
+            ...(transaction.metadata as any || {}),
+            recipientCode: recipient.recipient_code || recipient.recipientCode || recipient.code,
+            transferCode: transfer.transfer_code || transfer.transferCode || transfer.code,
+            transferStatus: transfer.status,
+          };
+          await this.prisma.transactions.update({
+            where: { id: transaction.id },
+            data: { metadata },
+          });
+        }
+      } catch (error) {
+        const reason = `Transfer initiation failed: ${error instanceof Error ? error.message : String(error)}`;
+        await this.rejectWithdrawal(reference, reason);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  async markAsSuccess(reference: string) {
     const withdrawal = await this.prisma.withdrawal.findFirst({ where: { reference } });
     if (!withdrawal) return false;
 
@@ -164,41 +236,51 @@ export class WithdrawService {
       where: { user_id: withdrawal.userId, is_active: true },
     });
 
-    if (!wallet) {
-      await this.prisma.withdrawal.update({ where: { id: withdrawal.id }, data: { status: 'SUCCESS' } });
-      return true;
-    }
-
-    const previousBalance = Number(wallet.balance ?? 0);
-    const previousLocked = Number(wallet.locked_balance ?? 0);
-    const withdrawAmount = Number(withdrawal.amount);
-
     await this.prisma.$transaction(async (tx) => {
-      await tx.wallets.update({
-        where: { id: wallet.id },
-        data: {
-          balance: { decrement: withdrawAmount },
-          locked_balance: { decrement: Math.min(previousLocked, withdrawAmount) },
-        },
-      });
+      if (wallet) {
+        const previousBalance = Number(wallet.balance ?? 0);
+        const previousLocked = Number(wallet.locked_balance ?? 0);
+        const amount = Number(withdrawal.amount);
 
-      await tx.ledger_entries.create({
-        data: {
-          wallet_id: wallet.id,
-          entry_type: 'debit',
-          amount: withdrawAmount,
-          balance_before: previousBalance,
-          balance_after: previousBalance - withdrawAmount,
-          description: `Withdrawal settled — ref: ${reference}`,
-        },
-      });
+        await tx.wallets.update({
+          where: { id: wallet.id },
+          data: {
+            locked_balance: { decrement: Math.min(previousLocked, amount) },
+            balance: { decrement: amount },
+          },
+        });
 
-      await tx.withdrawal.update({ where: { id: withdrawal.id }, data: { status: 'SUCCESS' } });
+        await tx.ledger_entries.create({
+          data: {
+            wallet_id: wallet.id,
+            entry_type: 'debit',
+            amount,
+            balance_before: previousBalance,
+            balance_after: previousBalance - amount,
+            description: `Withdrawal payout completed — ref: ${reference}`,
+          },
+        });
+      }
+
+      await tx.withdrawal.update({
+        where: { id: withdrawal.id },
+        data: { status: 'SUCCESS' },
+      });
 
       const transaction = await tx.transactions.findUnique({ where: { transaction_reference: reference } });
       if (transaction) {
-        await tx.transactions.update({ where: { id: transaction.id }, data: { status: 'completed', processed_at: new Date() } });
+        await tx.transactions.update({
+          where: { id: transaction.id },
+          data: { status: 'completed', processed_at: new Date() },
+        });
       }
+    });
+
+    await this.notificationsService.createInApp(withdrawal.userId, {
+      type: 'transaction',
+      title: 'Withdrawal completed',
+      body: `Your withdrawal of ${withdrawal.total} KES has been completed.`,
+      metadata: { reference },
     });
 
     return true;
@@ -222,6 +304,13 @@ export class WithdrawService {
 
       const transaction = await tx.transactions.findUnique({ where: { transaction_reference: reference } });
       if (transaction) await tx.transactions.update({ where: { id: transaction.id }, data: { status: 'failed', processed_at: new Date() } });
+    });
+
+    await this.notificationsService.createInApp(current.userId, {
+      type: 'transaction',
+      title: 'Withdrawal failed',
+      body: `Your withdrawal request of ${current.total} KES failed. Reason: ${reason}`,
+      metadata: { reference },
     });
 
     return true;
