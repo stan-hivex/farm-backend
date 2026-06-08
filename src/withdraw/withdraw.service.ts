@@ -39,6 +39,35 @@ export class WithdrawService {
       throw new BadRequestException('Withdrawal amount must be at least 10 FARM');
     }
 
+    const method = String(dto.method || '').toUpperCase();
+    if (!['BANK_TRANSFER', 'MOBILE_MONEY', 'CRYPTO'].includes(method)) {
+      throw new BadRequestException('Unsupported withdrawal method');
+    }
+
+    if (method === 'BANK_TRANSFER') {
+      if (!dto.accountNumber || !dto.accountName || !dto.bankName) {
+        throw new BadRequestException(
+          'Bank transfer withdrawals require account name, account number, and bank name',
+        );
+      }
+
+        const resolvedBankCode = dto.bankCode || await this.resolveBankCode(dto.bankName);
+      if (!resolvedBankCode) {
+        throw new BadRequestException(
+          'Unknown bank name. Provide a valid bank code or use a supported bank name.',
+        );
+      }
+      dto.bankCode = resolvedBankCode;
+    }
+
+    if (method === 'MOBILE_MONEY' && !dto.phoneNumber) {
+      throw new BadRequestException('Phone number is required for mobile money withdrawals');
+    }
+
+    if (method === 'CRYPTO' && !dto.cryptoAddress) {
+      throw new BadRequestException('Crypto address is required for crypto withdrawals');
+    }
+
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
@@ -68,11 +97,11 @@ export class WithdrawService {
 
     let feePercent = 0.015;
 
-    if (dto.method === 'MOBILE_MONEY') {
+    if (method === 'MOBILE_MONEY') {
       feePercent = 0.02;
     }
 
-    if (dto.method === 'CRYPTO') {
+    if (method === 'CRYPTO') {
       feePercent = 0.005;
     }
 
@@ -88,15 +117,15 @@ export class WithdrawService {
 
     const withdrawal = await this.prisma.$transaction(async (tx) => {
       if (wallet) {
-        const updated = await tx.$executeRaw`
-          UPDATE "wallets"
-          SET "locked_balance" = "locked_balance" + ${amount}
-          WHERE "id" = ${wallet.id} AND ("balance" - "locked_balance") >= ${amount}
-        `;
-
-        if (typeof updated === 'number' && updated === 0) {
+        const available = Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0);
+        if (amount > available) {
           throw new BadRequestException('Insufficient wallet balance');
         }
+
+        await tx.wallets.update({
+          where: { id: wallet.id },
+          data: { locked_balance: { increment: amount } },
+        });
       }
 
       const createdWithdrawal = await tx.withdrawal.create({
@@ -107,10 +136,11 @@ export class WithdrawService {
           settlement,
           total,
           currency: 'KES',
-          method: dto.method,
+          method,
           accountName: dto.accountName,
           accountNumber: dto.accountNumber,
           bankName: dto.bankName,
+          bankCode: dto.bankCode,
           phoneNumber: dto.phoneNumber,
           cryptoAddress: dto.cryptoAddress,
           network: dto.network,
@@ -131,7 +161,7 @@ export class WithdrawService {
           description: `Withdrawal request — ref: ${reference}`,
           sender_wallet_id: wallet?.id,
           metadata: {
-            method: dto.method,
+            method,
             accountName: dto.accountName,
             accountNumber: dto.accountNumber,
             bankName: dto.bankName,
@@ -139,7 +169,7 @@ export class WithdrawService {
             phoneNumber: dto.phoneNumber,
             cryptoAddress: dto.cryptoAddress,
             network: dto.network,
-            provider: dto.method === 'CRYPTO' ? 'crypto' : 'paystack',
+            provider: method === 'CRYPTO' ? 'crypto' : 'paystack',
           },
         },
       });
@@ -204,7 +234,7 @@ export class WithdrawService {
           type: withdrawal.method === 'BANK_TRANSFER' ? 'nuban' : 'mobile_money',
           name: withdrawal.accountName ?? withdrawal.phoneNumber ?? 'FARM user',
           accountNumber: withdrawal.accountNumber ?? undefined,
-          bankCode: withdrawal.bankName ?? undefined,
+            bankCode: withdrawal.bankCode ?? undefined,
           phone: withdrawal.phoneNumber ?? undefined,
           currency: 'KES',
         });
@@ -326,5 +356,36 @@ export class WithdrawService {
     });
 
     return true;
+  }
+
+  private resolveBankCode(bankName: string): string | undefined {
+    if (!bankName) return undefined;
+    const normalized = bankName.trim().toLowerCase();
+    const bankMap: Record<string, string> = {
+      'access bank': '044',
+      'diamond bank': '063',
+      'ecobank': '050',
+      'fidelity bank': '070',
+      'first bank': '011',
+      'first city monument bank': '214',
+      'fcmb': '214',
+      'gtbank': '058',
+      'guaranty trust bank': '058',
+      'heritage bank': '030',
+      'jaiz bank': '301',
+      'polaris bank': '076',
+      'stanbic ibtc bank': '221',
+      'standard chartered': '068',
+      'sterling bank': '232',
+      'union bank': '032',
+      'unity bank': '215',
+      'wema bank': '035',
+      'zenith bank': '057',
+      'keystone bank': '082',
+      'heritage bank plc': '030',
+      'opal bank': '013',
+      'fcnb': '214',
+    };
+    return bankMap[normalized];
   }
 }
