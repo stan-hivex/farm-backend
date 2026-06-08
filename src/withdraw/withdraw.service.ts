@@ -128,25 +128,32 @@ export class WithdrawService {
         });
       }
 
+      // Build withdrawal data, excluding bankCode if not available (for DB compatibility during migration)
+      const withdrawalData: any = {
+        userId,
+        amount,
+        fee,
+        settlement,
+        total,
+        currency: 'KES',
+        method,
+        accountName: dto.accountName,
+        accountNumber: dto.accountNumber,
+        bankName: dto.bankName,
+        phoneNumber: dto.phoneNumber,
+        cryptoAddress: dto.cryptoAddress,
+        network: dto.network,
+        reference,
+        status: 'PENDING',
+      };
+      
+      // Include bankCode only if it was resolved/provided
+      if (dto.bankCode) {
+        withdrawalData.bankCode = dto.bankCode;
+      }
+
       const createdWithdrawal = await tx.withdrawal.create({
-        data: {
-          userId,
-          amount,
-          fee,
-          settlement,
-          total,
-          currency: 'KES',
-          method,
-          accountName: dto.accountName,
-          accountNumber: dto.accountNumber,
-          bankName: dto.bankName,
-          bankCode: dto.bankCode,
-          phoneNumber: dto.phoneNumber,
-          cryptoAddress: dto.cryptoAddress,
-          network: dto.network,
-          reference,
-          status: 'PENDING',
-        },
+        data: withdrawalData,
       });
 
       await tx.transactions.create({
