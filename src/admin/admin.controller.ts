@@ -13,6 +13,28 @@ class ResolveDto { @IsIn(['buyer','seller']) winner!: 'buyer'|'seller'; @IsStrin
 class MerchantDecisionDto { @IsIn(['approved','rejected']) status!: 'approved'|'rejected'; @IsOptional() @IsString() rejection_reason?: string; }
 class SettingDto { @IsString() value!: string; }
 
+class SendNotificationDto {
+  @IsString() user_id!: string;
+  @IsString() title!: string;
+  @IsString() body!: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() metadata?: any;
+  @IsOptional() @IsBoolean() push?: boolean;
+  @IsOptional() @IsBoolean() email?: boolean;
+  @IsOptional() @IsBoolean() sms?: boolean;
+}
+
+class BroadcastNotificationDto {
+  @IsString() title!: string;
+  @IsString() body!: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() metadata?: any;
+  @IsOptional() @IsBoolean() push?: boolean;
+  @IsOptional() @IsBoolean() email?: boolean;
+  @IsOptional() @IsBoolean() sms?: boolean;
+  @IsOptional() @IsString() target_role?: string;
+}
+
 @ApiTags('Admin')
 @ApiBearerAuth('JWT')
 @UseGuards(JwtGuard, RolesGuard)
@@ -22,15 +44,22 @@ export class AdminController {
   constructor(private readonly svc: AdminService) {}
 
   @Get('dashboard')               stats() { return this.svc.getDashboardStats(); }
+  @Get('transactions')            transactions(@Query() q: any) { return this.svc.listTransactions(q); }
   @Get('users')                   users(@Query() q: any) { return this.svc.listUsers(q); }
   @Get('users/:id')               user(@Param('id') id: string) { return this.svc.getUserDetail(id); }
   @Patch('users/:id/status')      userStatus(@Param('id') id: string, @Body() dto: UserStatusDto, @CurrentUser() u: any) { return this.svc.updateUserStatus(id, dto, u.id); }
   @Get('escrow')                  escrows(@Query() q: any) { return this.svc.listAllEscrows(q); }
+  @Get('escrow/:id')              escrowDetail(@Param('id') id: string) { return this.svc.getEscrow(id); }
   @Post('escrow/:id/resolve')     resolve(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.resolveDispute(id, u.id, dto); }
   @Get('merchants')               merchants(@Query() q: any) { return this.svc.listMerchants(q); }
   @Post('merchants/:id/decision') decision(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: MerchantDecisionDto) { return this.svc.approveMerchant(id, u.id, dto); }
   @Get('payouts')                 payouts(@Query() q: any) { return this.svc.listPayouts(q); }
   @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.processPayout(id, u.id, 'completed'); }
+  @Post('notifications/send')     sendNotification(@CurrentUser() u: any, @Body() dto: SendNotificationDto) { return this.svc.sendNotification(u.id, dto); }
+  @Post('notifications/broadcast') broadcastNotification(@CurrentUser() u: any, @Body() dto: BroadcastNotificationDto) { return this.svc.broadcastNotification(u.id, dto); }
+  @Get('kyc/queue')               kycQueue(@Query() q: any) { return this.svc.listKycQueue(q); }
+  @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
+  @Get('analytics')               analytics() { return this.svc.getAdminAnalytics(); }
   @Get('settings')                settings() { return this.svc.getSettings(); }
   @Put('settings/:key')           updateSetting(@Param('key') key: string, @Body() dto: SettingDto, @CurrentUser() u: any) { return this.svc.updateSetting(key, dto.value, u.id); }
   @Get('audit-logs')              auditLogs(@Query() q: any) { return this.svc.getAuditLogs(q); }

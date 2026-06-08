@@ -1,11 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService, private escrowService: EscrowService) {}
+  constructor(
+    private prisma: PrismaService,
+    private escrowService: EscrowService,
+    private notifications: NotificationsService,
+  ) {}
 
   async getDashboardStats() {
     const [totalUsers, totalMerchants, activeEscrows, txVolume, pendingKyc, pendingPayouts] =
@@ -58,6 +63,57 @@ export class AdminService {
     ]);
     return {
       data: users.map((u) => ({ ...u, balance: Number(u.wallets[0]?.balance ?? 0) })),
+      meta: paginate(total, page, limit),
+    };
+  }
+
+  async listTransactions(query: any) {
+    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const where: any = {};
+
+    if (query.status) where.status = query.status;
+    if (query.transaction_type) where.transaction_type = query.transaction_type;
+    if (query.search) {
+      where.OR = [
+        { transaction_reference: { contains: query.search, mode: 'insensitive' } },
+        { description: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      this.prisma.transactions.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
+        include: {
+          wallets_transactions_sender_wallet_idTowallets: {
+            select: { wallet_address: true, user_id: true },
+          },
+          wallets_transactions_receiver_wallet_idTowallets: {
+            select: { wallet_address: true, user_id: true },
+          },
+        },
+      }),
+      this.prisma.transactions.count({ where }),
+    ]);
+
+    return {
+      data: items.map((tx) => ({
+        id: tx.id,
+        transaction_reference: tx.transaction_reference,
+        transaction_type: tx.transaction_type,
+        status: tx.status,
+        amount: Number(tx.amount),
+        fee: Number(tx.fee ?? 0),
+        net_amount: Number(tx.net_amount ?? 0),
+        currency: tx.currency,
+        description: tx.description,
+        created_at: tx.created_at,
+        processed_at: tx.processed_at,
+        sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
+        receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
+      })),
       meta: paginate(total, page, limit),
     };
   }
@@ -136,6 +192,19 @@ export class AdminService {
     return { message: `Escrow resolved in favour of ${dto.winner}` };
   }
 
+  async getEscrow(escrowId: string) {
+    const escrow = await this.prisma.escrow_contracts.findUnique({
+      where: { id: escrowId },
+      include: {
+        users_escrow_contracts_buyer_idTousers: { select: { id: true, username: true, email: true } },
+        users_escrow_contracts_seller_idTousers: { select: { id: true, username: true, email: true } },
+        escrow_messages: { orderBy: { created_at: 'asc' } },
+      },
+    });
+    if (!escrow) throw new NotFoundException('Escrow not found');
+    return { data: { ...escrow, amount: Number(escrow.amount), fee: Number(escrow.fee ?? 0) } };
+  }
+
   async listMerchants(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const where: any = {};
@@ -199,6 +268,139 @@ export class AdminService {
       data: { status: status as any, processed_by: adminId, processed_at: new Date() },
     });
     return { data: payout, message: `Payout marked ${status}` };
+  }
+
+  async sendNotification(adminId: string, dto: {
+    user_id: string;
+    title: string;
+    body: string;
+    type?: string;
+    metadata?: any;
+    push?: boolean;
+    email?: boolean;
+    sms?: boolean;
+  }) {
+    const user = await this.prisma.users.findUnique({ where: { id: dto.user_id } });
+    if (!user) throw new NotFoundException('User not found');
+
+    await this.notifications.createInApp(dto.user_id, {
+      type: dto.type ?? 'admin',
+      title: dto.title,
+      body: dto.body,
+      metadata: dto.metadata,
+    });
+
+    if (dto.push) {
+      await this.notifications.sendPush(dto.user_id, dto.title, dto.body, dto.metadata);
+    }
+    if (dto.email && user.email) {
+      await this.notifications.sendEmail(user.email, dto.title, `<p>${dto.body}</p>`);
+    }
+    if (dto.sms && user.phone) {
+      await this.notifications.sendSms(user.phone, dto.body);
+    }
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: 'SEND_NOTIFICATION',
+        entity_type: 'users',
+        entity_id: dto.user_id,
+        new_values: { title: dto.title, body: dto.body, type: dto.type, push: dto.push, email: dto.email, sms: dto.sms },
+      },
+    });
+
+    return { message: 'Notification sent' };
+  }
+
+  async broadcastNotification(adminId: string, dto: {
+    title: string;
+    body: string;
+    type?: string;
+    metadata?: any;
+    push?: boolean;
+    email?: boolean;
+    sms?: boolean;
+    target_role?: string;
+  }) {
+    const where: any = { is_deleted: false, is_active: true };
+    if (dto.target_role) where.role = dto.target_role;
+
+    const users = await this.prisma.users.findMany({ where, select: { id: true, email: true, phone: true } });
+
+    const notificationPromises = users.map((user) =>
+      this.notifications.createInApp(user.id, {
+        type: dto.type ?? 'admin',
+        title: dto.title,
+        body: dto.body,
+        metadata: dto.metadata,
+      }),
+    );
+    await Promise.all(notificationPromises);
+
+    if (dto.push) {
+      await Promise.all(users.map((user) => this.notifications.sendPush(user.id, dto.title, dto.body, dto.metadata)));
+    }
+    if (dto.email) {
+      await Promise.all(users.filter((u) => u.email).map((user) => this.notifications.sendEmail(user.email!, dto.title, `<p>${dto.body}</p>`)));
+    }
+    if (dto.sms) {
+      await Promise.all(users.filter((u) => u.phone).map((user) => this.notifications.sendSms(user.phone!, dto.body)));
+    }
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: 'BROADCAST_NOTIFICATION',
+        entity_type: 'users',
+        entity_id: null,
+        new_values: { title: dto.title, body: dto.body, type: dto.type, push: dto.push, email: dto.email, sms: dto.sms, target_role: dto.target_role },
+      },
+    });
+
+    return { message: `Broadcast sent to ${users.length} users` };
+  }
+
+  async getAdminAnalytics() {
+    const [totalUsers, totalEscrows, totalTransactions, pendingKyc, pendingPayouts, totalSecurityEvents] =
+      await Promise.all([
+        this.prisma.users.count({ where: { is_deleted: false } }),
+        this.prisma.escrow_contracts.count({ where: {} }),
+        this.prisma.transactions.count({ where: {} }),
+        this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
+        this.prisma.merchant_payouts.count({ where: { status: 'pending' } }),
+        this.prisma.security_events.count(),
+      ]);
+
+    const recentTransactions = await this.prisma.transactions.findMany({
+      orderBy: { created_at: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        transaction_reference: true,
+        transaction_type: true,
+        amount: true,
+        net_amount: true,
+        status: true,
+        created_at: true,
+      },
+    });
+
+    return {
+      data: {
+        total_users: totalUsers,
+        total_escrows: totalEscrows,
+        total_transactions: totalTransactions,
+        pending_kyc: pendingKyc,
+        pending_payouts: pendingPayouts,
+        security_events: totalSecurityEvents,
+        recent_transactions: recentTransactions.map((tx) => ({
+          ...tx,
+          amount: Number(tx.amount),
+          net_amount: Number(tx.net_amount ?? 0),
+        })),
+      },
+    };
   }
 
   async getSettings() {
@@ -419,6 +621,93 @@ export class AdminService {
         suspended_accounts: suspendedAccounts,
       },
     };
+  }
+
+  async listKycQueue(query: any) {
+    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const [items, total] = await Promise.all([
+      this.prisma.kyc_documents.findMany({
+        where: { status: 'pending' },
+        skip,
+        take,
+        orderBy: { created_at: 'asc' },
+        select: {
+          id: true,
+          user_id: true,
+          document_type: true,
+          document_number: true,
+          first_name: true,
+          last_name: true,
+          status: true,
+          created_at: true,
+          front_image_url: true,
+          back_image_url: true,
+          selfie_image_url: true,
+          users_kyc_documents_user_idTousers: {
+            select: { id: true, username: true, email: true, phone: true },
+          },
+        },
+      }),
+      this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
+    ]);
+    return {
+      data: items.map((d) => ({
+        id: d.id,
+        user_id: d.user_id,
+        username: d.users_kyc_documents_user_idTousers?.username,
+        email: d.users_kyc_documents_user_idTousers?.email,
+        phone: d.users_kyc_documents_user_idTousers?.phone,
+        first_name: d.first_name,
+        last_name: d.last_name,
+        document_type: d.document_type,
+        document_number: d.document_number,
+        status: d.status,
+        created_at: d.created_at,
+        front_image_url: d.front_image_url,
+        back_image_url: d.back_image_url,
+        selfie_image_url: d.selfie_image_url,
+      })),
+      meta: paginate(total, page, limit),
+    };
+  }
+
+  async reviewKyc(
+    kycDocId: string,
+    adminId: string,
+    dto: { status: 'verified' | 'rejected' | 'under_review' | 'additional_info_required'; rejection_reason?: string },
+  ) {
+    const doc = await this.prisma.kyc_documents.findUnique({ where: { id: kycDocId } });
+    if (!doc) throw new NotFoundException('KYC document not found');
+    if (doc.status !== 'pending') throw new BadRequestException('Document already reviewed');
+
+    await this.prisma.kyc_documents.update({
+      where: { id: kycDocId },
+      data: {
+        status: dto.status as any,
+        reviewed_by: adminId,
+        rejection_reason: dto.rejection_reason,
+        reviewed_at: new Date(),
+      },
+    });
+
+    // Update user's kyc_status based on approval
+    await this.prisma.users.update({
+      where: { id: doc.user_id! },
+      data: { kyc_status: dto.status as any },
+    });
+
+    // Log the action
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: `REVIEW_KYC_${dto.status.toUpperCase()}`,
+        entity_type: 'kyc_documents',
+        entity_id: kycDocId,
+        new_values: dto as any,
+      },
+    });
+
+    return { message: `KYC ${dto.status}`, data: { kyc_id: kycDocId, user_id: doc.user_id, status: dto.status } };
   }
 
   async getComplianceReport(query: any) {
