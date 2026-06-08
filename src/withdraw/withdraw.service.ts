@@ -191,9 +191,9 @@ export class WithdrawService {
         const recipient = await this.paystackService.createTransferRecipient({
           type: withdrawal.method === 'BANK_TRANSFER' ? 'nuban' : 'mobile_money',
           name: withdrawal.accountName ?? withdrawal.phoneNumber ?? 'FARM user',
-          accountNumber: withdrawal.accountNumber,
-          bankCode: withdrawal.bankCode ?? withdrawal.bankName,
-          phone: withdrawal.phoneNumber,
+          accountNumber: withdrawal.accountNumber ?? undefined,
+          bankCode: withdrawal.bankName ?? undefined,
+          phone: withdrawal.phoneNumber ?? undefined,
           currency: 'KES',
         });
 
