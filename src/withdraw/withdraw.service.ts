@@ -51,7 +51,7 @@ export class WithdrawService {
         );
       }
 
-        const resolvedBankCode = dto.bankCode || await this.resolveBankCode(dto.bankName);
+      const resolvedBankCode = dto.bankCode || this.resolveBankCode(dto.bankName);
       if (!resolvedBankCode) {
         throw new BadRequestException(
           'Unknown bank name. Provide a valid bank code or use a supported bank name.',
@@ -60,12 +60,29 @@ export class WithdrawService {
       dto.bankCode = resolvedBankCode;
     }
 
-    if (method === 'MOBILE_MONEY' && !dto.phoneNumber) {
-      throw new BadRequestException('Phone number is required for mobile money withdrawals');
+    if (method === 'MOBILE_MONEY') {
+      if (!dto.phoneNumber) {
+        throw new BadRequestException('Phone number is required for mobile money withdrawals');
+      }
+      // Clear non-applicable fields for mobile money
+      dto.accountName = undefined;
+      dto.accountNumber = undefined;
+      dto.bankName = undefined;
+      dto.bankCode = undefined;
+      dto.cryptoAddress = undefined;
+      dto.network = undefined;
     }
 
-    if (method === 'CRYPTO' && !dto.cryptoAddress) {
-      throw new BadRequestException('Crypto address is required for crypto withdrawals');
+    if (method === 'CRYPTO') {
+      if (!dto.cryptoAddress) {
+        throw new BadRequestException('Crypto address is required for crypto withdrawals');
+      }
+      // Clear non-applicable fields for crypto
+      dto.accountName = undefined;
+      dto.accountNumber = undefined;
+      dto.bankName = undefined;
+      dto.bankCode = undefined;
+      dto.phoneNumber = undefined;
     }
 
     const wallet = await this.prisma.wallets.findFirst({
@@ -128,7 +145,7 @@ export class WithdrawService {
         });
       }
 
-      // Build withdrawal data, excluding bankCode if not available (for DB compatibility during migration)
+      // Build withdrawal data with method-specific fields
       const withdrawalData: any = {
         userId,
         amount,
@@ -137,19 +154,24 @@ export class WithdrawService {
         total,
         currency: 'KES',
         method,
-        accountName: dto.accountName,
-        accountNumber: dto.accountNumber,
-        bankName: dto.bankName,
-        phoneNumber: dto.phoneNumber,
-        cryptoAddress: dto.cryptoAddress,
-        network: dto.network,
         reference,
         status: 'PENDING',
       };
-      
-      // Include bankCode only if it was resolved/provided
-      if (dto.bankCode) {
-        withdrawalData.bankCode = dto.bankCode;
+
+      // Add method-specific fields (other fields are cleared above)
+      if (method === 'BANK_TRANSFER') {
+        withdrawalData.accountName = dto.accountName;
+        withdrawalData.accountNumber = dto.accountNumber;
+        withdrawalData.bankName = dto.bankName;
+        // Only include bankCode if it was resolved (conditional until migration applies)
+        if (dto.bankCode) {
+          withdrawalData.bankCode = dto.bankCode;
+        }
+      } else if (method === 'MOBILE_MONEY') {
+        withdrawalData.phoneNumber = dto.phoneNumber;
+      } else if (method === 'CRYPTO') {
+        withdrawalData.cryptoAddress = dto.cryptoAddress;
+        withdrawalData.network = dto.network;
       }
 
       const createdWithdrawal = await tx.withdrawal.create({
@@ -169,13 +191,19 @@ export class WithdrawService {
           sender_wallet_id: wallet?.id,
           metadata: {
             method,
-            accountName: dto.accountName,
-            accountNumber: dto.accountNumber,
-            bankName: dto.bankName,
-            bankCode: dto.bankCode,
-            phoneNumber: dto.phoneNumber,
-            cryptoAddress: dto.cryptoAddress,
-            network: dto.network,
+            ...(method === 'BANK_TRANSFER' && {
+              accountName: dto.accountName,
+              accountNumber: dto.accountNumber,
+              bankName: dto.bankName,
+              bankCode: dto.bankCode,
+            }),
+            ...(method === 'MOBILE_MONEY' && {
+              phoneNumber: dto.phoneNumber,
+            }),
+            ...(method === 'CRYPTO' && {
+              cryptoAddress: dto.cryptoAddress,
+              network: dto.network,
+            }),
             provider: method === 'CRYPTO' ? 'crypto' : 'paystack',
           },
         },
@@ -237,14 +265,29 @@ export class WithdrawService {
 
     if (withdrawal.method === 'BANK_TRANSFER' || withdrawal.method === 'MOBILE_MONEY') {
       try {
-        const recipient = await this.paystackService.createTransferRecipient({
-          type: withdrawal.method === 'BANK_TRANSFER' ? 'nuban' : 'mobile_money',
-          name: withdrawal.accountName ?? withdrawal.phoneNumber ?? 'FARM user',
-          accountNumber: withdrawal.accountNumber ?? undefined,
-            bankCode: withdrawal.bankCode ?? undefined,
-          phone: withdrawal.phoneNumber ?? undefined,
+        let recipientData: any = {
           currency: 'KES',
-        });
+        };
+
+        if (withdrawal.method === 'BANK_TRANSFER') {
+          recipientData = {
+            ...recipientData,
+            type: 'nuban',
+            name: withdrawal.accountName || 'FARM user',
+            accountNumber: withdrawal.accountNumber,
+            bankCode: withdrawal.bankCode,
+          };
+        } else {
+          // MOBILE_MONEY
+          recipientData = {
+            ...recipientData,
+            type: 'mobile_money',
+            name: withdrawal.phoneNumber || 'FARM user',
+            phone: withdrawal.phoneNumber,
+          };
+        }
+
+        const recipient = await this.paystackService.createTransferRecipient(recipientData);
 
         const transfer = await this.paystackService.initiateTransfer({
           amount: Number(withdrawal.amount),
