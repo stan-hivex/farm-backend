@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { WithdrawController } from './withdraw.controller';
 import { WithdrawService } from './withdraw.service';
 import { DatabaseModule } from '../database/database.module';
@@ -11,7 +11,7 @@ import { KycGuard } from '../common/guards/kyc.guard';
   imports: [
     DatabaseModule,
     AuthModule,
-    PaystackModule,
+    forwardRef(() => PaystackModule),
     NotificationsModule,
   ],
   controllers: [WithdrawController],

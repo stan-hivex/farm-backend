@@ -16,7 +16,7 @@ import { QUEUES } from '../common/constants';
 @Module({
   imports: [
     forwardRef(() => DepositModule),
-    WithdrawModule,
+    forwardRef(() => WithdrawModule),
     WebsocketModule,
     forwardRef(() => PaymentsModule),
     ScheduleModule.forRoot(),

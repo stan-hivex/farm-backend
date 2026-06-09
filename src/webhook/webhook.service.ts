@@ -924,10 +924,10 @@ export class WebhookService {
           }
         }
         await this.finalizeDeposit(reference);
-      } else if (['transfer.success', 'payout.success', 'transfer.completed'].includes(event)) {
-        await this.finalizeWithdrawal(reference, true);
-      } else if (['transfer.failed', 'payout.failed', 'charge.failed'].includes(event)) {
-        await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+      } else if (event === 'transfer.success') {
+        await this.withdrawService.markAsSuccess(reference);
+      } else if (['transfer.failed', 'transfer.reversed'].includes(event)) {
+        await this.withdrawService.rejectWithdrawal(reference, payload.data?.reason);
       }
     } catch (error) {
       this.logger.error(`Error processing Paystack webhook: ${error instanceof Error ? error.message : String(error)}`);

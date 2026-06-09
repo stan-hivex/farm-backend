@@ -1,13 +1,10 @@
-import { forwardRef, Module } from '@nestjs/common';
-
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { IvorypayService } from './ivorypay.service';
-import { IvorypayController } from './ivorypay.controller';
-import { WebhookModule } from '../webhook/webhook.module';
 
 @Module({
-  imports: [forwardRef(() => WebhookModule)],
+  imports: [ConfigModule],
   providers: [IvorypayService],
-  controllers: [IvorypayController],
   exports: [IvorypayService],
 })
 export class IvorypayModule {}

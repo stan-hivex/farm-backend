@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { PaymentProcessorService } from './payment-processor.service';
@@ -9,7 +9,12 @@ import { WithdrawModule } from '../withdraw/withdraw.module';
 import { KycGuard } from '../common/guards/kyc.guard';
 
 @Module({
-	imports: [WebsocketModule, IvorypayModule, PaystackModule, WithdrawModule],
+	imports: [
+		WebsocketModule,
+		IvorypayModule,
+		forwardRef(() => PaystackModule),
+		forwardRef(() => WithdrawModule),
+	],
 	controllers: [PaymentsController],
 	providers: [PaymentsService, PaymentProcessorService, KycGuard],
 	exports: [PaymentsService, PaymentProcessorService],

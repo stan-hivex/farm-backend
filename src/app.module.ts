@@ -1,126 +1,67 @@
-import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard } from '@nestjs/throttler';
-import { ThrottlerModule } from '@nestjs/throttler';
-import { ScheduleModule } from '@nestjs/schedule';
-import { BullModule } from '@nestjs/bull';
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
+import { PrismaModule } from './database/prisma.module';
 import { RedisModule } from './common/redis.module';
-
-function getRequiredString(cfg: ConfigService, key: string): string {
-  const value = cfg.get<string>(key);
-  if (!value) {
-    throw new Error(`${key} is required but was not found in configuration`);
-  }
-  return value;
-}
-
-function getOptionalString(cfg: ConfigService, key: string): string | undefined {
-  return cfg.get<string>(key) ?? undefined;
-}
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { WalletsModule } from './wallets/wallets.module';
-import { TransactionsModule } from './transactions/transactions.module';
-import { EscrowModule } from './escrow/escrow.module';
-import { QrModule } from './qr/qr.module';
-import { MerchantsModule } from './merchants/merchants.module';
-import { InvestmentsModule } from './investments/investments.module';
-import { BlockchainModule } from './blockchain/blockchain.module';
-import { PaymentsModule } from './payments/payments.module';
-import { NotificationsModule } from './notifications/notifications.module';
-import { KycModule } from './kyc/kyc.module';
-import { AdminModule } from './admin/admin.module';
-import { AnalyticsModule } from './analytics/analytics.module';
-import { HealthModule } from './health/health.module';
-import { WebsocketModule } from './websocket/websocket.module';
-import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
-import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
-import { AuditMiddleware } from './common/middleware/audit.middleware';
-import { SettingsModule } from './settings/settings.module';
-import { SecurityModule } from './security/security.module';
 import { DepositModule } from './deposit/deposit.module';
-import { PaystackModule } from './paystack/paystack.module';
 import { WithdrawModule } from './withdraw/withdraw.module';
+import { PaymentsModule } from './payments/payments.module';
+import { PaystackModule } from './paystack/paystack.module';
+import { IvorypayModule } from './ivorypay/ivorypay.module';
 import { WebhookModule } from './webhook/webhook.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { SecurityModule } from './security/security.module';
+import { KycModule } from './kyc/kyc.module';
+import { HealthModule } from './health/health.module';
+import { ProjectsModule } from './projects/projects.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { AdminModule } from './admin/admin.module';
+import { MerchantsModule } from './merchants/merchants.module';
+import { SettingsModule } from './settings/settings.module';
+import { StkPushModule } from './stk/stk.module';
+import { TransactionsModule } from './transactions/transactions.module';
+import { BlockchainModule } from './blockchain/blockchain.module';
+import { QrModule } from './qr/qr.module';
+import { WebsocketModule } from './websocket/websocket.module';
+import { EscrowModule } from './escrow/escrow.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: process.env.NODE_ENV === 'production' ? undefined : ['.env'],
-      ignoreEnvFile: process.env.NODE_ENV === 'production',
-    }),
-    ThrottlerModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => ([{
-        ttl: cfg.get<number>('RATE_LIMIT_TTL', 60000),
-        limit: cfg.get<number>('RATE_LIMIT_MAX', 100),
-      }]),
-    }),
-    ScheduleModule.forRoot(),
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => ({
-        redis: getOptionalString(cfg, 'REDIS_URL'),
-        defaultJobOptions: { removeOnComplete: 100, removeOnFail: 500, attempts: 3 },
-      }),
+      envFilePath: ['.env', '.env.production'],
+      ignoreEnvFile: false,
     }),
     DatabaseModule,
+    PrismaModule,
+    RedisModule,
     AuthModule,
     UsersModule,
     WalletsModule,
-    TransactionsModule,
-    EscrowModule,
-    QrModule,
-    MerchantsModule,
-    InvestmentsModule,
-    BlockchainModule,
-    PaymentsModule,
-    NotificationsModule,
-    KycModule,
-    AdminModule,
-    AnalyticsModule,
-    HealthModule,
-    WebsocketModule,
-    RedisModule,
-    SettingsModule,
-    SecurityModule,
     DepositModule,
-    PaystackModule,
     WithdrawModule,
+    PaymentsModule,
+    PaystackModule,
+    IvorypayModule,
     WebhookModule,
-  ],
-  providers: [
-    IdempotencyMiddleware,
-    {
-      provide: APP_GUARD,
-      useClass: ThrottlerGuard,
-    },
+    NotificationsModule,
+    SecurityModule,
+    KycModule,
+    HealthModule,
+    ProjectsModule,
+    AnalyticsModule,
+    AdminModule,
+    MerchantsModule,
+    SettingsModule,
+    StkPushModule,
+    TransactionsModule,
+    BlockchainModule,
+    QrModule,
+    WebsocketModule,
+    EscrowModule,
   ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer
-      // Request ID on every route
-      .apply(RequestIdMiddleware)
-      .forRoutes({ path: '*', method: RequestMethod.ALL });
-
-    consumer
-      // Idempotency on POST financial routes
-      .apply(IdempotencyMiddleware)
-      .forRoutes({ path: '*', method: RequestMethod.POST });
-
-    consumer
-      // Auto-audit on admin, kyc, and payment routes
-      .apply(AuditMiddleware)
-      .forRoutes(
-        { path: 'admin/*', method: RequestMethod.ALL },
-        { path: 'kyc/*', method: RequestMethod.ALL },
-        { path: 'payments/*', method: RequestMethod.ALL },
-        { path: 'deposit/*', method: RequestMethod.ALL },
-        { path: 'withdraw/*', method: RequestMethod.ALL },
-        { path: 'webhooks/*', method: RequestMethod.ALL },
-      );
-  }
-}
+export class AppModule {}
