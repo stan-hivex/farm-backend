@@ -84,7 +84,7 @@ export class PaymentsService {
         amount: dto.amount_fiat,
         currency: dto.currency,
         reference,
-        payment_method: 'MOBILE_MONEY',
+        channels: ['mobile_money'],
         phone,
         metadata: {
           user_id: userId,
@@ -145,7 +145,8 @@ export class PaymentsService {
         data: {
           provider: 'PAYSTACK',
           reference,
-          authorization_url: response.authorization_url,
+          payment_url: response.authorization_url || response.authorizationUrl,
+          authorization_url: response.authorization_url || response.authorizationUrl,
         },
         message: 'Mobile money deposit initiated via Paystack checkout',
       };

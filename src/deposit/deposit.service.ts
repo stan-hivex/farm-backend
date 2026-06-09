@@ -76,6 +76,7 @@ export class DepositService {
     return {
       success: true,
       payment_url: paymentUrl,
+      authorization_url: paymentUrl,
       reference,
       deposit,
     };
