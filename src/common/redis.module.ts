@@ -1,4 +1,4 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
@@ -13,7 +13,22 @@ function getOptionalString(cfg: ConfigService, key: string): string | undefined 
       provide: 'REDIS_CLIENT',
       useFactory: (cfg: ConfigService) => {
         const url = getOptionalString(cfg, 'REDIS_URL');
-        return url ? new Redis(url) : null;
+        if (!url) {
+          return null;
+        }
+
+        const logger = new Logger('RedisModule');
+        const client = new Redis(url);
+
+        client.on('error', (error: Error) => {
+          logger.warn(`Redis connection error: ${error.message}`);
+        });
+
+        client.on('connect', () => {
+          logger.log('Connected to Redis successfully');
+        });
+
+        return client;
       },
       inject: [ConfigService],
     },

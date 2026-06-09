@@ -16,14 +16,7 @@ class DepositDto {
   @IsOptional() @IsString() paymentMethod?: 'CARD' | 'MOBILE_MONEY' | 'CRYPTO';
   @IsOptional() @IsString() phone?: string;
 }
-class WithdrawDto {
-  @IsNumber() @IsPositive() amount_farm!: number;
-  @IsNotEmpty() @IsString() currency_fiat!: string;
-  @IsNotEmpty() @IsString() method!: string;
-  @IsNotEmpty() @IsString() destination!: string;
-  @IsOptional() @IsString() wallet_address?: string; // Crypto wallet address for CRYPTO method
-  @IsOptional() @IsString() network?: string; // Blockchain network (e.g., ETH, BTC, SOL) for CRYPTO method
-}
+// WithdrawDto removed: use WithdrawService endpoints instead
 
 @ApiTags('Payments')
 @Controller({ path: 'payments', version: '1' })
@@ -51,22 +44,8 @@ export class PaymentsController {
     return this.svc.initiateDeposit(u.id, dto, { deviceRisk, ip: req.ip || '' });
   }
 
-  @Post('withdraw')
-  @ApiBearerAuth('JWT')
-  @UseGuards(JwtGuard, KycGuard)
-  @ApiOperation({ summary: 'Request a withdrawal' })
-  withdraw(@CurrentUser() u: any, @Body() dto: WithdrawDto, @Req() req: Request) {
-    let deviceRisk = 0;
-    const token = (req.headers['x-device-token'] as string) || '';
-    if (token) {
-      const p = verifyDeviceToken(token) as any;
-      if (p && typeof p.deviceRisk !== 'undefined') deviceRisk = Number(p.deviceRisk) || 0;
-    } else {
-      const header = req.headers['x-device-risk'] || req.headers['x-device-risk-score'];
-      deviceRisk = header ? Number(header as string) || 0 : 0;
-    }
-    return this.svc.requestWithdrawal(u.id, dto, { deviceRisk, ip: req.ip || '' });
-  }
+  // Withdrawal endpoint removed: use POST /api/v1/withdraw/create (WithdrawService)
+  // The old requestWithdrawal() method incorrectly debited wallets immediately.
 
   @Get('deposits')
   @ApiBearerAuth('JWT')

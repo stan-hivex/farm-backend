@@ -48,8 +48,20 @@ async function bootstrap() {
     }),
   );
 
-  const port = configService.get<number>('PORT') || 3000;
-  await app.listen(port);
+  const port = Number(process.env.PORT || configService.get<number>('PORT') || 3000);
+
+  try {
+    await app.listen(port);
+  } catch (error) {
+    if ((error as any)?.code === 'EADDRINUSE') {
+      const fallbackPort = port + 1;
+      Logger.warn(`Port ${port} is already in use. Trying ${fallbackPort} instead.`, 'Bootstrap');
+      await app.listen(fallbackPort);
+    } else {
+      Logger.error('Failed to start application', error as any, 'Bootstrap');
+      process.exit(1);
+    }
+  }
 
   Logger.log(`Application is running on: ${await app.getUrl()}`, 'Bootstrap');
 }
