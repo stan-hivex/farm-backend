@@ -50,6 +50,13 @@ export class WithdrawService {
           'Bank transfer withdrawals require account name, account number, and bank name',
         );
       }
+
+      const bankCode = this.resolveBankCode(dto.bankName);
+      if (!bankCode) {
+        throw new BadRequestException(
+          'Unsupported bank name. Provide a valid supported bank name for bank transfers.',
+        );
+      }
     }
 
     if (method === 'MOBILE_MONEY') {
@@ -255,11 +262,17 @@ export class WithdrawService {
         };
 
         if (withdrawal.method === 'BANK_TRANSFER') {
+          const bankCode = this.resolveBankCode(withdrawal.bankName || '');
+          if (!bankCode) {
+            throw new Error(`Unsupported bank name for Paystack nuban transfer: ${withdrawal.bankName}`);
+          }
+
           recipientData = {
             ...recipientData,
             type: 'nuban',
             name: withdrawal.accountName || 'FARM user',
             accountNumber: withdrawal.accountNumber,
+            bankCode,
           };
         } else {
           // MOBILE_MONEY
@@ -295,6 +308,14 @@ export class WithdrawService {
           });
         }
       } catch (error) {
+        console.error('approveWithdrawal error', {
+          reference,
+          method: withdrawal.method,
+          bankName: withdrawal.bankName,
+          phoneNumber: withdrawal.phoneNumber,
+          error: error instanceof Error ? error.message : String(error),
+        });
+
         const reason = `Transfer initiation failed: ${error instanceof Error ? error.message : String(error)}`;
         await this.rejectWithdrawal(reference, reason);
         return false;
@@ -302,6 +323,39 @@ export class WithdrawService {
     }
 
     return true;
+  }
+
+  private resolveBankCode(bankName: string): string | undefined {
+    if (!bankName) return undefined;
+    const normalized = bankName.trim().toLowerCase();
+    const bankMap: Record<string, string> = {
+      'access bank': '044',
+      'diamond bank': '063',
+      'ecobank': '050',
+      'fidelity bank': '070',
+      'first bank': '011',
+      'first city monument bank': '214',
+      'fcmb': '214',
+      'gtbank': '058',
+      'guaranty trust bank': '058',
+      'heritage bank': '030',
+      'jaiz bank': '301',
+      'polaris bank': '076',
+      'stanbic ibtc bank': '221',
+      'standard chartered': '068',
+      'sterling bank': '232',
+      'union bank': '032',
+      'unity bank': '215',
+      'wema bank': '035',
+      'zenith bank': '057',
+      'keystone bank': '082',
+      'heritage bank plc': '030',
+      'opal bank': '013',
+      'first city': '214',
+      'co-operative bank': '063',
+      'cooperative bank': '063',
+    };
+    return bankMap[normalized];
   }
 
   async markAsSuccess(reference: string) {
