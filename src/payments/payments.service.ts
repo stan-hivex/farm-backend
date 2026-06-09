@@ -92,6 +92,8 @@ export class PaymentsService {
         },
       });
 
+      // No wallet credit occurs during deposit initiation.
+      // Wallet balance must only be updated after a successful Paystack webhook.
       const tx = await this.prisma.transactions.create({
         data: {
           transaction_reference: reference,

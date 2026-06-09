@@ -1,3 +1,4 @@
+import * as express from 'express';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
@@ -5,6 +6,16 @@ import { ConfigService } from '@nestjs/config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  const rawBodySaver = (req: express.Request, res: express.Response, buf: Buffer, encoding: string) => {
+    if (buf && buf.length) {
+      (req as any).rawBody = buf.toString(encoding || 'utf8');
+    }
+  };
+
+  app.use(express.json({ verify: rawBodySaver }));
+  app.use(express.urlencoded({ extended: true, verify: rawBodySaver }));
+
   app.setGlobalPrefix('api');
   app.enableVersioning({
     type: VersioningType.URI,

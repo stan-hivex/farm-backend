@@ -23,16 +23,22 @@ export class PaystackService {
 
     try {
       this.logger.log(`Paystack: initializing transaction for ${options.reference}`);
+      const requestBody: any = {
+        email: options.email,
+        amount: this.toPaystackAmount(options.amount),
+        reference: options.reference,
+        ...(options.channels && { channels: options.channels }),
+        ...(options.phone && { phone: options.phone }),
+        ...(options.metadata && { metadata: options.metadata }),
+      };
+
+      if (options.currency) {
+        requestBody.currency = options.currency;
+      }
+
       const response = await axios.post(
         `${this.paystackBaseUrl}/transaction/initialize`,
-        {
-          email: options.email,
-          amount: this.toPaystackAmount(options.amount),
-          reference: options.reference,
-          ...(options.channels && { channels: options.channels }),
-          ...(options.phone && { phone: options.phone }),
-          ...(options.metadata && { metadata: options.metadata }),
-        },
+        requestBody,
         {
           headers: {
             Authorization: `Bearer ${this.secretKey}`,
@@ -42,6 +48,7 @@ export class PaystackService {
       );
 
       if (!response.data.status || !response.data.data) {
+        this.logger.error('Paystack initialized with invalid response body', response.data);
         throw new BadRequestException('Invalid Paystack response');
       }
 
@@ -52,8 +59,12 @@ export class PaystackService {
         access_code: response.data.data.access_code,
       };
     } catch (e: any) {
-      this.logger.error(`Paystack initialize error: ${e.response?.data?.message || e.message}`);
-      throw new BadRequestException(`Paystack integration failed: ${e.response?.data?.message || e.message}`);
+      const message = e.response?.data?.message || e.message;
+      this.logger.error(`Paystack initialize error: ${message}`);
+      if (e.response?.data) {
+        this.logger.debug(`Paystack initialize error details: ${JSON.stringify(e.response.data)}`);
+      }
+      throw new BadRequestException(`Paystack integration failed: ${message}`);
     }
   }
 
