@@ -106,26 +106,38 @@ export class PaystackService {
     }
 
     if (data.type === 'mobile_money') {
-      payload['phone'] = data.phone;
+      payload['phone'] = this.normalizePhone(data.phone || '');
     }
 
-    const response = await axios.post(
-      'https://api.paystack.co/transferrecipient',
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${this.secret}`,
-          'Content-Type': 'application/json',
+    try {
+      const response = await axios.post(
+        'https://api.paystack.co/transferrecipient',
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${this.secret}`,
+            'Content-Type': 'application/json',
+          },
         },
-      },
-    );
+      );
 
-    if (!response.data?.status) {
-      const errorMsg = response.data?.message || 'Paystack create recipient failed';
-      throw new Error(errorMsg);
+      if (!response.data?.status) {
+        const errorMsg = response.data?.message || 'Paystack create recipient failed';
+        throw new Error(`${errorMsg} - ${JSON.stringify(response.data)}`);
+      }
+
+      return response.data.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        throw new Error(
+          `Paystack create recipient failed: ${error.response.status} ${JSON.stringify(error.response.data)}`,
+        );
+      }
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Paystack create recipient error: ${String(error)}`);
     }
-
-    return response.data.data;
   }
 
   async initiateTransfer(data: {
@@ -144,23 +156,35 @@ export class PaystackService {
       currency: data.currency ?? 'KES',
     };
 
-    const response = await axios.post(
-      'https://api.paystack.co/transfer',
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${this.secret}`,
-          'Content-Type': 'application/json',
+    try {
+      const response = await axios.post(
+        'https://api.paystack.co/transfer',
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${this.secret}`,
+            'Content-Type': 'application/json',
+          },
         },
-      },
-    );
+      );
 
-    if (!response.data?.status) {
-      const errorMsg = response.data?.message || 'Paystack initiate transfer failed';
-      throw new Error(errorMsg);
+      if (!response.data?.status) {
+        const errorMsg = response.data?.message || 'Paystack initiate transfer failed';
+        throw new Error(`${errorMsg} - ${JSON.stringify(response.data)}`);
+      }
+
+      return response.data.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response) {
+        throw new Error(
+          `Paystack initiate transfer failed: ${error.response.status} ${JSON.stringify(error.response.data)}`,
+        );
+      }
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Paystack initiate transfer error: ${String(error)}`);
     }
-
-    return response.data.data;
   }
 
   async createTransfer(data: {
@@ -172,4 +196,14 @@ export class PaystackService {
   }) {
     return this.initiateTransfer(data);
   }
+
+  private normalizePhone(phone: string): string {
+    let digits = phone.replace(/\D/g, '');
+    if (!digits) return phone;
+    if (digits.startsWith('0')) {
+      digits = `254${digits.slice(1)}`;
+    }
+    return digits;
+  }
 }
+

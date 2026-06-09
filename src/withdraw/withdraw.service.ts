@@ -276,11 +276,16 @@ export class WithdrawService {
           };
         } else {
           // MOBILE_MONEY
+          const normalizedPhone = withdrawal.phoneNumber?.replace(/\D/g, '');
+          if (!normalizedPhone) {
+            throw new Error('Invalid phone number for mobile money withdrawal');
+          }
+
           recipientData = {
             ...recipientData,
             type: 'mobile_money',
             name: withdrawal.phoneNumber || 'FARM user',
-            phone: withdrawal.phoneNumber,
+            phone: normalizedPhone.startsWith('0') ? `254${normalizedPhone.slice(1)}` : normalizedPhone,
           };
         }
 
@@ -327,7 +332,12 @@ export class WithdrawService {
 
   private resolveBankCode(bankName: string): string | undefined {
     if (!bankName) return undefined;
-    const normalized = bankName.trim().toLowerCase();
+    const normalized = bankName
+      .trim()
+      .toLowerCase()
+      .replace(/[\s\-_.]+/g, ' ')
+      .replace(/\s+/g, ' ');
+
     const bankMap: Record<string, string> = {
       'access bank': '044',
       'diamond bank': '063',
@@ -352,7 +362,10 @@ export class WithdrawService {
       'heritage bank plc': '030',
       'opal bank': '013',
       'first city': '214',
-      'co-operative bank': '063',
+      'co operative bank': '063',
+      'co operative bank': '063',
+      'co op bank': '063',
+      'coop bank': '063',
       'cooperative bank': '063',
     };
     return bankMap[normalized];
