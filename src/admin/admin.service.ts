@@ -262,6 +262,20 @@ export class AdminService {
     };
   }
 
+  async listAllWithdrawals(query: any) {
+    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const where: any = {};
+    if (query.status) where.status = query.status;
+    const [items, total] = await Promise.all([
+      this.prisma.withdrawal.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
+      this.prisma.withdrawal.count({ where }),
+    ]);
+    return {
+      data: items.map((w) => ({ ...w, amount: Number(w.amount) })),
+      meta: paginate(total, page, limit),
+    };
+  }
+
   async processPayout(payoutId: string, adminId: string, status: 'completed' | 'failed') {
     const payout = await this.prisma.merchant_payouts.update({
       where: { id: payoutId },

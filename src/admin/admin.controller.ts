@@ -2,6 +2,8 @@ import { Controller, Get, Post, Put, Patch, Body, Param, Query, UseGuards } from
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString, IsBoolean } from 'class-validator';
 import { AdminService } from './admin.service';
+import { WithdrawService } from '../withdraw/withdraw.service';
+import { NotFoundException } from '@nestjs/common';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -41,7 +43,7 @@ class BroadcastNotificationDto {
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller({ path: 'admin', version: '1' })
 export class AdminController {
-  constructor(private readonly svc: AdminService) {}
+  constructor(private readonly svc: AdminService, private readonly withdrawService: WithdrawService) {}
 
   @Get('dashboard')               stats() { return this.svc.getDashboardStats(); }
   @Get('transactions')            transactions(@Query() q: any) { return this.svc.listTransactions(q); }
@@ -74,4 +76,15 @@ export class AdminController {
   @Get('audit/users/:id/sessions') userSessions(@Param('id') id: string, @Query() q: any) { return this.svc.getUserSessions(id, q); }
   @Get('audit/admin-logs')        adminLogs(@Query() q: any) { return this.svc.getAdminAuditLog(q); }
   @Get('audit/compliance')        complianceReport(@Query() q: any) { return this.svc.getComplianceReport(q); }
+
+  @Get('withdrawals')             allWithdrawals(@Query() q: any) { return this.svc.listAllWithdrawals(q); }
+
+  @Post('withdrawals/:id/process')
+  async processWithdrawal(@Param('id') id: string, @CurrentUser() u: any) {
+    const w = await this.withdrawService.getWithdrawal(id);
+    if (!w) throw new NotFoundException('Withdrawal not found');
+    // For admin-triggered processing we mark as success (webhook will normally confirm)
+    await this.withdrawService.markAsSuccess(w.reference);
+    return { message: 'Withdrawal processed (marked completed)' };
+  }
 }

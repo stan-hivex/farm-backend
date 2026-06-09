@@ -12,6 +12,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { PaystackModule } from './paystack/paystack.module';
 import { IvorypayModule } from './ivorypay/ivorypay.module';
 import { WebhookModule } from './webhook/webhook.module';
+import { InvestmentsModule } from './investments/investments.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SecurityModule } from './security/security.module';
 import { KycModule } from './kyc/kyc.module';
@@ -51,6 +52,7 @@ import { EscrowModule } from './escrow/escrow.module';
     SecurityModule,
     KycModule,
     HealthModule,
+    InvestmentsModule,
     ProjectsModule,
     AnalyticsModule,
     AdminModule,
