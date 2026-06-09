@@ -363,7 +363,6 @@ export class WithdrawService {
       'opal bank': '013',
       'first city': '214',
       'co operative bank': '063',
-      'co operative bank': '063',
       'co op bank': '063',
       'coop bank': '063',
       'cooperative bank': '063',
