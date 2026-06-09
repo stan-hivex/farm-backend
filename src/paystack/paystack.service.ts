@@ -6,9 +6,13 @@ export class PaystackService {
 
   async initializePayment(options: any) {
     this.logger.log(`Mock Paystack initialize payment ${options.reference}`);
+    // Return a real Paystack checkout host so redirects work in deployed environments.
+    // In production this service should call Paystack's API; for now provide a checkout URL.
+    const base = 'https://checkout.paystack.com';
+    const path = options.reference ? `/${options.reference}` : '';
     return {
-      authorization_url: 'https://paystack.mock/authorize',
-      authorizationUrl: 'https://paystack.mock/authorize',
+      authorization_url: `${base}${path}`,
+      authorizationUrl: `${base}${path}`,
     };
   }
 
