@@ -817,7 +817,6 @@ model Withdrawal {
   accountName   String?
   accountNumber String?
   bankName      String?
-  bankCode      String?
 
   phoneNumber String?
 

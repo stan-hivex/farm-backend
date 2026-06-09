@@ -22,10 +22,6 @@ export class CreateWithdrawDto {
 
   @IsOptional()
   @IsString()
-  bankCode?: string;
-
-  @IsOptional()
-  @IsString()
   phoneNumber?: string;
 
   @IsOptional()

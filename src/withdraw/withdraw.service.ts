@@ -50,14 +50,6 @@ export class WithdrawService {
           'Bank transfer withdrawals require account name, account number, and bank name',
         );
       }
-
-      const resolvedBankCode = dto.bankCode || this.resolveBankCode(dto.bankName);
-      if (!resolvedBankCode) {
-        throw new BadRequestException(
-          'Unknown bank name. Provide a valid bank code or use a supported bank name.',
-        );
-      }
-      dto.bankCode = resolvedBankCode;
     }
 
     if (method === 'MOBILE_MONEY') {
@@ -68,7 +60,6 @@ export class WithdrawService {
       dto.accountName = undefined;
       dto.accountNumber = undefined;
       dto.bankName = undefined;
-      dto.bankCode = undefined;
       dto.cryptoAddress = undefined;
       dto.network = undefined;
     }
@@ -81,7 +72,6 @@ export class WithdrawService {
       dto.accountName = undefined;
       dto.accountNumber = undefined;
       dto.bankName = undefined;
-      dto.bankCode = undefined;
       dto.phoneNumber = undefined;
     }
 
@@ -163,10 +153,6 @@ export class WithdrawService {
         withdrawalData.accountName = dto.accountName;
         withdrawalData.accountNumber = dto.accountNumber;
         withdrawalData.bankName = dto.bankName;
-        // Only include bankCode if it was resolved (conditional until migration applies)
-        if (dto.bankCode) {
-          withdrawalData.bankCode = dto.bankCode;
-        }
       } else if (method === 'MOBILE_MONEY') {
         withdrawalData.phoneNumber = dto.phoneNumber;
       } else if (method === 'CRYPTO') {
@@ -195,7 +181,6 @@ export class WithdrawService {
               accountName: dto.accountName,
               accountNumber: dto.accountNumber,
               bankName: dto.bankName,
-              bankCode: dto.bankCode,
             }),
             ...(method === 'MOBILE_MONEY' && {
               phoneNumber: dto.phoneNumber,
@@ -275,7 +260,6 @@ export class WithdrawService {
             type: 'nuban',
             name: withdrawal.accountName || 'FARM user',
             accountNumber: withdrawal.accountNumber,
-            bankCode: withdrawal.bankCode,
           };
         } else {
           // MOBILE_MONEY
@@ -408,34 +392,4 @@ export class WithdrawService {
     return true;
   }
 
-  private resolveBankCode(bankName: string): string | undefined {
-    if (!bankName) return undefined;
-    const normalized = bankName.trim().toLowerCase();
-    const bankMap: Record<string, string> = {
-      'access bank': '044',
-      'diamond bank': '063',
-      'ecobank': '050',
-      'fidelity bank': '070',
-      'first bank': '011',
-      'first city monument bank': '214',
-      'fcmb': '214',
-      'gtbank': '058',
-      'guaranty trust bank': '058',
-      'heritage bank': '030',
-      'jaiz bank': '301',
-      'polaris bank': '076',
-      'stanbic ibtc bank': '221',
-      'standard chartered': '068',
-      'sterling bank': '232',
-      'union bank': '032',
-      'unity bank': '215',
-      'wema bank': '035',
-      'zenith bank': '057',
-      'keystone bank': '082',
-      'heritage bank plc': '030',
-      'opal bank': '013',
-      'fcnb': '214',
-    };
-    return bankMap[normalized];
-  }
 }

@@ -1,12 +1,8 @@
--- Enable UUID generation functions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
 -- CreateEnum
 CREATE TYPE "escrow_status" AS ENUM ('pending', 'active', 'completed', 'disputed', 'cancelled', 'refunded');
 
 -- CreateEnum
-CREATE TYPE "kyc_status" AS ENUM ('none', 'pending', 'verified', 'rejected');
+CREATE TYPE "kyc_status" AS ENUM ('none', 'pending', 'under_review', 'verified', 'rejected', 'additional_info_required');
 
 -- CreateEnum
 CREATE TYPE "merchant_status" AS ENUM ('pending', 'approved', 'rejected', 'suspended');
@@ -26,9 +22,15 @@ CREATE TYPE "user_role" AS ENUM ('user', 'merchant', 'admin', 'super_admin');
 -- CreateEnum
 CREATE TYPE "wallet_type" AS ENUM ('user', 'merchant', 'treasury', 'operations', 'creator');
 
+-- CreateEnum
+CREATE TYPE "PaymentMethod" AS ENUM ('CARD', 'MOBILE_MONEY', 'CRYPTO');
+
+-- CreateEnum
+CREATE TYPE "DepositStatus" AS ENUM ('PENDING', 'PROCESSING', 'SUCCESS', 'FAILED');
+
 -- CreateTable
 CREATE TABLE "activity_logs" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "activity" VARCHAR(255),
     "metadata" JSONB,
@@ -40,7 +42,7 @@ CREATE TABLE "activity_logs" (
 
 -- CreateTable
 CREATE TABLE "api_keys" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" TEXT NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "api_key" TEXT,
     "api_secret" TEXT,
@@ -54,7 +56,7 @@ CREATE TABLE "api_keys" (
 
 -- CreateTable
 CREATE TABLE "audit_logs" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "action" VARCHAR(255),
     "entity_type" VARCHAR(255),
@@ -70,7 +72,7 @@ CREATE TABLE "audit_logs" (
 
 -- CreateTable
 CREATE TABLE "beneficiaries" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "beneficiary_name" VARCHAR(255),
     "wallet_address" VARCHAR(255),
@@ -82,7 +84,7 @@ CREATE TABLE "beneficiaries" (
 
 -- CreateTable
 CREATE TABLE "blockchain_transactions" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "transaction_id" UUID,
     "blockchain_name" VARCHAR(100) DEFAULT 'algorand',
     "tx_hash" TEXT,
@@ -101,7 +103,7 @@ CREATE TABLE "blockchain_transactions" (
 
 -- CreateTable
 CREATE TABLE "contacts" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "owner_id" UUID,
     "contact_user_id" UUID,
     "nickname" VARCHAR(255),
@@ -112,7 +114,7 @@ CREATE TABLE "contacts" (
 
 -- CreateTable
 CREATE TABLE "cross_border_transfers" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "sender_user_id" UUID,
     "receiver_user_id" UUID,
     "sender_country" VARCHAR(100),
@@ -131,7 +133,7 @@ CREATE TABLE "cross_border_transfers" (
 
 -- CreateTable
 CREATE TABLE "escrow_contracts" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "reference_code" VARCHAR(255) NOT NULL,
     "buyer_id" UUID,
     "seller_id" UUID,
@@ -158,7 +160,7 @@ CREATE TABLE "escrow_contracts" (
 
 -- CreateTable
 CREATE TABLE "escrow_messages" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "escrow_id" UUID,
     "sender_id" UUID,
     "message" TEXT,
@@ -170,7 +172,7 @@ CREATE TABLE "escrow_messages" (
 
 -- CreateTable
 CREATE TABLE "exchange_rates" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "base_currency" VARCHAR(20),
     "target_currency" VARCHAR(20),
     "rate" DECIMAL(30,8),
@@ -182,7 +184,7 @@ CREATE TABLE "exchange_rates" (
 
 -- CreateTable
 CREATE TABLE "farm_token_config" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "asset_id" VARCHAR(255),
     "token_name" VARCHAR(255),
     "token_symbol" VARCHAR(50),
@@ -196,7 +198,7 @@ CREATE TABLE "farm_token_config" (
 
 -- CreateTable
 CREATE TABLE "fee_configurations" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "transaction_type" VARCHAR(100),
     "flat_fee" DECIMAL(30,8) DEFAULT 0,
     "percentage_fee" DECIMAL(10,4) DEFAULT 0,
@@ -210,7 +212,7 @@ CREATE TABLE "fee_configurations" (
 
 -- CreateTable
 CREATE TABLE "investment_projects" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "project_name" VARCHAR(255) NOT NULL,
     "category" VARCHAR(100),
     "description" TEXT,
@@ -233,25 +235,41 @@ CREATE TABLE "investment_projects" (
 
 -- CreateTable
 CREATE TABLE "kyc_documents" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
-    "document_type" VARCHAR(100),
+    "document_type" TEXT,
+    "document_number" TEXT,
+    "first_name" TEXT,
+    "last_name" TEXT,
+    "date_of_birth" TIMESTAMP(3),
+    "gender" TEXT,
+    "nationality" TEXT,
+    "phone" TEXT,
+    "email" TEXT,
+    "country" TEXT,
+    "county" TEXT,
+    "city" TEXT,
+    "physical_address" TEXT,
+    "postal_code" TEXT,
+    "address_document" TEXT,
     "front_image" TEXT,
     "back_image" TEXT,
     "selfie_image" TEXT,
-    "document_number" VARCHAR(255),
+    "front_image_url" TEXT,
+    "back_image_url" TEXT,
+    "selfie_image_url" TEXT,
     "status" "kyc_status" DEFAULT 'pending',
     "reviewed_by" UUID,
     "rejection_reason" TEXT,
-    "reviewed_at" TIMESTAMP(6),
-    "created_at" TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+    "reviewed_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "kyc_documents_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ledger_entries" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "transaction_id" UUID,
     "wallet_id" UUID,
     "entry_type" VARCHAR(20) NOT NULL,
@@ -266,7 +284,7 @@ CREATE TABLE "ledger_entries" (
 
 -- CreateTable
 CREATE TABLE "merchant_payouts" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "merchant_id" UUID,
     "amount" DECIMAL(30,8),
     "payout_method" VARCHAR(100),
@@ -282,7 +300,7 @@ CREATE TABLE "merchant_payouts" (
 
 -- CreateTable
 CREATE TABLE "merchants" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "business_name" VARCHAR(255) NOT NULL,
     "business_email" VARCHAR(255),
@@ -309,7 +327,7 @@ CREATE TABLE "merchants" (
 
 -- CreateTable
 CREATE TABLE "notifications" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "type" "notification_type",
     "title" VARCHAR(255),
@@ -323,7 +341,7 @@ CREATE TABLE "notifications" (
 
 -- CreateTable
 CREATE TABLE "otp_verifications" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "otp_code" VARCHAR(10) NOT NULL,
     "purpose" VARCHAR(50),
@@ -337,7 +355,7 @@ CREATE TABLE "otp_verifications" (
 
 -- CreateTable
 CREATE TABLE "qr_payments" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "merchant_id" UUID,
     "customer_id" UUID,
     "transaction_id" UUID,
@@ -352,7 +370,7 @@ CREATE TABLE "qr_payments" (
 
 -- CreateTable
 CREATE TABLE "roi_payouts" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "investment_id" UUID,
     "amount" DECIMAL(30,8),
     "transaction_id" UUID,
@@ -364,7 +382,7 @@ CREATE TABLE "roi_payouts" (
 
 -- CreateTable
 CREATE TABLE "security_events" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "event_type" VARCHAR(255),
     "description" TEXT,
@@ -377,7 +395,7 @@ CREATE TABLE "security_events" (
 
 -- CreateTable
 CREATE TABLE "support_messages" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "ticket_id" UUID,
     "sender_id" UUID,
     "message" TEXT,
@@ -389,7 +407,7 @@ CREATE TABLE "support_messages" (
 
 -- CreateTable
 CREATE TABLE "support_tickets" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "subject" VARCHAR(255),
     "message" TEXT,
@@ -404,7 +422,7 @@ CREATE TABLE "support_tickets" (
 
 -- CreateTable
 CREATE TABLE "system_settings" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "setting_key" VARCHAR(255),
     "setting_value" TEXT,
     "description" TEXT,
@@ -416,7 +434,7 @@ CREATE TABLE "system_settings" (
 
 -- CreateTable
 CREATE TABLE "transactions" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "transaction_reference" VARCHAR(255) NOT NULL,
     "sender_wallet_id" UUID,
     "receiver_wallet_id" UUID,
@@ -441,7 +459,7 @@ CREATE TABLE "transactions" (
 
 -- CreateTable
 CREATE TABLE "treasury_wallets" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "wallet_name" VARCHAR(255),
     "wallet_address" TEXT,
     "private_key_encrypted" TEXT,
@@ -455,7 +473,7 @@ CREATE TABLE "treasury_wallets" (
 
 -- CreateTable
 CREATE TABLE "uploads" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "file_name" VARCHAR(255),
     "file_url" TEXT,
@@ -468,7 +486,7 @@ CREATE TABLE "uploads" (
 
 -- CreateTable
 CREATE TABLE "user_investments" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "project_id" UUID,
     "amount" DECIMAL(30,8),
@@ -483,7 +501,7 @@ CREATE TABLE "user_investments" (
 
 -- CreateTable
 CREATE TABLE "user_sessions" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "refresh_token" TEXT NOT NULL,
     "jwt_id" VARCHAR(255),
@@ -494,14 +512,14 @@ CREATE TABLE "user_sessions" (
     "is_revoked" BOOLEAN DEFAULT false,
     "used_at" TIMESTAMP(6),
     "expires_at" TIMESTAMP(6),
-    "created_at" TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+    "created_at" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "users" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "first_name" VARCHAR(100) NOT NULL,
     "last_name" VARCHAR(100) NOT NULL,
     "username" VARCHAR(50) NOT NULL,
@@ -511,6 +529,7 @@ CREATE TABLE "users" (
     "pin_hash" TEXT,
     "role" "user_role" DEFAULT 'user',
     "kyc_status" "kyc_status" DEFAULT 'none',
+    "kyc_level" INTEGER DEFAULT 0,
     "is_active" BOOLEAN DEFAULT true,
     "is_suspended" BOOLEAN DEFAULT false,
     "is_deleted" BOOLEAN DEFAULT false,
@@ -536,7 +555,7 @@ CREATE TABLE "users" (
 
 -- CreateTable
 CREATE TABLE "wallets" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "user_id" UUID,
     "wallet_name" VARCHAR(255),
     "wallet_type" "wallet_type" DEFAULT 'user',
@@ -555,7 +574,7 @@ CREATE TABLE "wallets" (
 
 -- CreateTable
 CREATE TABLE "webhook_logs" (
-    "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "provider" VARCHAR(100),
     "event_name" VARCHAR(255),
     "payload" JSONB,
@@ -564,6 +583,126 @@ CREATE TABLE "webhook_logs" (
     "created_at" TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "webhook_logs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "project_investments" (
+    "id" UUID NOT NULL,
+    "user_id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "tokens_bought" DECIMAL(18,2) NOT NULL,
+    "amount_paid" DECIMAL(18,2) NOT NULL,
+    "price_per_token" DECIMAL(18,2) NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'active',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "project_investments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "projects" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "title" TEXT NOT NULL,
+    "description" TEXT,
+    "category" TEXT,
+    "location" TEXT,
+    "image_url" TEXT,
+    "total_value" DECIMAL(18,2) NOT NULL DEFAULT 0,
+    "token_price" DECIMAL(18,2) NOT NULL DEFAULT 0,
+    "duration_months" INTEGER DEFAULT 0,
+    "total_tokens" DECIMAL(18,2) NOT NULL DEFAULT 0,
+    "sold_tokens" DECIMAL(18,2) NOT NULL DEFAULT 0,
+    "roi_percentage" DECIMAL(5,2) DEFAULT 0,
+    "is_verified" BOOLEAN NOT NULL DEFAULT false,
+    "status" TEXT NOT NULL DEFAULT 'active',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "projects_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "project_funding_history" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "month" INTEGER NOT NULL,
+    "value" DECIMAL(18,2) NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "project_funding_history_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "user_settings" (
+    "id" UUID NOT NULL,
+    "user_id" UUID NOT NULL,
+    "language" TEXT NOT NULL DEFAULT 'en',
+    "push_notifications" BOOLEAN NOT NULL DEFAULT true,
+    "email_notifications" BOOLEAN NOT NULL DEFAULT false,
+    "sms_notifications" BOOLEAN NOT NULL DEFAULT false,
+    "sound_enabled" BOOLEAN NOT NULL DEFAULT true,
+    "vibration_enabled" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "user_settings_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "device_tokens" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "user_id" UUID NOT NULL,
+    "token" VARCHAR(512) NOT NULL,
+    "platform" VARCHAR(50),
+    "is_active" BOOLEAN DEFAULT true,
+    "created_at" TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+    "last_seen" TIMESTAMP(3),
+
+    CONSTRAINT "device_tokens_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Deposit" (
+    "id" TEXT NOT NULL,
+    "userId" UUID NOT NULL,
+    "amount" DOUBLE PRECISION NOT NULL,
+    "fee" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "total" DOUBLE PRECISION NOT NULL,
+    "currency" TEXT NOT NULL DEFAULT 'KES',
+    "paymentMethod" "PaymentMethod" NOT NULL,
+    "status" "DepositStatus" NOT NULL DEFAULT 'PENDING',
+    "reference" TEXT NOT NULL,
+    "providerRef" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Deposit_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Withdrawal" (
+    "id" TEXT NOT NULL,
+    "userId" UUID NOT NULL,
+    "amount" DOUBLE PRECISION NOT NULL,
+    "fee" DOUBLE PRECISION NOT NULL,
+    "settlement" DOUBLE PRECISION NOT NULL,
+    "total" DOUBLE PRECISION NOT NULL,
+    "currency" TEXT NOT NULL DEFAULT 'KES',
+    "method" TEXT NOT NULL,
+    "accountName" TEXT,
+    "accountNumber" TEXT,
+    "bankName" TEXT,
+    "bankCode" TEXT,
+    "phoneNumber" TEXT,
+    "cryptoAddress" TEXT,
+    "network" TEXT,
+    "reference" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "rejectionReason" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Withdrawal_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -622,6 +761,24 @@ CREATE INDEX "idx_wallets_address" ON "wallets"("wallet_address");
 
 -- CreateIndex
 CREATE INDEX "idx_wallets_user_id" ON "wallets"("user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "user_settings_user_id_key" ON "user_settings"("user_id");
+
+-- CreateIndex
+CREATE INDEX "idx_device_tokens_user_id" ON "device_tokens"("user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Deposit_reference_key" ON "Deposit"("reference");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Withdrawal_reference_key" ON "Withdrawal"("reference");
+
+-- CreateIndex
+CREATE INDEX "Withdrawal_userId_idx" ON "Withdrawal"("userId");
+
+-- CreateIndex
+CREATE INDEX "Withdrawal_status_idx" ON "Withdrawal"("status");
 
 -- AddForeignKey
 ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
@@ -769,3 +926,24 @@ ALTER TABLE "users" ADD CONSTRAINT "users_referred_by_fkey" FOREIGN KEY ("referr
 
 -- AddForeignKey
 ALTER TABLE "wallets" ADD CONSTRAINT "wallets_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+
+-- AddForeignKey
+ALTER TABLE "project_investments" ADD CONSTRAINT "project_investments_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "project_investments" ADD CONSTRAINT "project_investments_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "project_funding_history" ADD CONSTRAINT "project_funding_history_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "device_tokens" ADD CONSTRAINT "device_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Deposit" ADD CONSTRAINT "Deposit_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Withdrawal" ADD CONSTRAINT "Withdrawal_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
