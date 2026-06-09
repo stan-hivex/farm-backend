@@ -20,7 +20,8 @@ export class DepositService {
     if (amount < 10) throw new BadRequestException('Minimum deposit is KES 10');
 
     const reference = uuidv4();
-    const feeRate = dto.paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
+    const paymentMethod = (dto.paymentMethod || 'CARD').toUpperCase();
+    const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
     const fee = amount * feeRate;
     const total = amount + fee;
 
@@ -31,16 +32,16 @@ export class DepositService {
         fee,
         total,
         currency: dto.currency || 'KES',
-        paymentMethod: dto.paymentMethod,
+        paymentMethod,
         reference,
         status: 'PENDING',
         providerRef: reference,
       },
     });
 
-    let paymentUrl: string;
+    let paymentUrl: string | null = null;
 
-    if (dto.paymentMethod === 'CRYPTO') {
+    if (paymentMethod === 'CRYPTO') {
       const init = await this.ivorypay.createPayment({
         amount: total,
         currency: 'KES',
@@ -49,17 +50,27 @@ export class DepositService {
         description: `Farm deposit ${total} KES via crypto`,
       });
       paymentUrl = init.data?.payment_link || init.payment_link || init.checkout_url;
-    } else {
+    } else if (paymentMethod === 'MOBILE_MONEY') {
+      if (!dto.phone) {
+        throw new BadRequestException('Phone number is required for mobile money deposits');
+      }
+
       const init = await this.paystack.initializePayment({
         email: dto.email || `${userId}@farm.app`,
         amount: total,
         reference,
         currency: 'KES',
-        channels: dto.paymentMethod === 'MOBILE_MONEY' ? ['mobile_money'] : undefined,
+        channels: ['mobile_money'],
         phone: dto.phone,
-        metadata: { userId, depositId: deposit.id },
+        metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
+    } else if (paymentMethod === 'CARD') {
+      // Card deposits should not use mobile-money Paystack flow; leave card handling
+      // to the client or a separate card-specific integration.
+      paymentUrl = null;
+    } else {
+      throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
     }
 
     return {

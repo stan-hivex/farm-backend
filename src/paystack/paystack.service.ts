@@ -27,8 +27,10 @@ export class PaystackService {
         `${this.paystackBaseUrl}/transaction/initialize`,
         {
           email: options.email,
-          amount: options.amount, // in kobo (1 NGN = 100 kobo)
+          amount: this.toPaystackAmount(options.amount),
           reference: options.reference,
+          ...(options.channels && { channels: options.channels }),
+          ...(options.phone && { phone: options.phone }),
           ...(options.metadata && { metadata: options.metadata }),
         },
         {
@@ -103,6 +105,14 @@ export class PaystackService {
       this.logger.error(`Paystack recipient creation error: ${e.response?.data?.message || e.message}`);
       throw new BadRequestException(`Paystack recipient failed: ${e.response?.data?.message || e.message}`);
     }
+  }
+
+  private toPaystackAmount(amount: number | string) {
+    const value = Number(amount);
+    if (Number.isNaN(value)) {
+      throw new BadRequestException('Invalid amount for Paystack initialization');
+    }
+    return Math.round(value * 100);
   }
 
   async initiateTransfer(payload: any) {
