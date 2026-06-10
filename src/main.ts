@@ -9,7 +9,8 @@ async function bootstrap() {
 
   const rawBodySaver = (req: express.Request, res: express.Response, buf: Buffer, encoding: string) => {
     if (buf && buf.length) {
-      (req as any).rawBody = buf.toString(encoding || 'utf8');
+      const enc = (encoding as BufferEncoding) ?? 'utf8';
+      (req as any).rawBody = buf.toString(enc);
     }
   };
 
