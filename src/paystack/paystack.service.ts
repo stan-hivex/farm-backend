@@ -22,7 +22,14 @@ export class PaystackService {
     }
 
     try {
-      this.logger.log(`Paystack: initializing transaction for ${options.reference}`);
+      this.logger.log(
+        `Paystack: initializing transaction for ${options.reference} | ` +
+        `channels=${JSON.stringify(options.channels)} | ` +
+        `phone=${options.phone || 'N/A'} | ` +
+        `currency=${options.currency || 'N/A'} | ` +
+        `amount=${options.amount}`
+      );
+
       const requestBody: any = {
         email: options.email,
         amount: this.toPaystackAmount(options.amount),

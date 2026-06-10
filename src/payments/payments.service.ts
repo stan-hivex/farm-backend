@@ -79,6 +79,11 @@ export class PaymentsService {
         throw new BadRequestException('Phone number is required for mobile money deposits');
       }
 
+      // Validate phone format: Paystack mobile-money requires international format (+country code)
+      if (!phone.startsWith('+')) {
+        this.logger.warn(`Mobile-money phone not in international format: ${phone}. Expected format: +254XXXXXXXXX`);
+      }
+
       const response = await this.paystack.initializePayment({
         email: user.email || `${user.phone}@farm.app`,
         amount: dto.amount_fiat,
