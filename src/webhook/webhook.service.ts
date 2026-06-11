@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { DepositService } from '../deposit/deposit.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
+import { PaystackService } from '../paystack/paystack.service';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { QUEUES } from '../common/constants';
@@ -22,6 +23,7 @@ export class WebhookService {
     private readonly withdrawService: WithdrawService,
     private readonly websocket: WebsocketGateway,
     private readonly cfg: ConfigService,
+    private readonly paystackService: PaystackService,
     @InjectQueue(QUEUES.WEBHOOKS) private readonly webhookQueue: Queue,
     @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
   ) {}
@@ -366,6 +368,7 @@ export class WebhookService {
             total: Number(transaction.amount),
             currency: transaction.currency || 'FARM',
             paymentMethod,
+            provider: metadata?.provider?.toString()?.toLowerCase() === 'ivorypay' ? 'ivorypay' : 'paystack',
             status: 'PENDING',
             userId,
           },
@@ -923,7 +926,14 @@ export class WebhookService {
             throw new BadRequestException(`Amount mismatch: expected ${expectedAmount}, got ${webhookAmount}`);
           }
         }
-        await this.finalizeDeposit(reference);
+
+        const verifiedTransaction = await this.paystackService.verifyTransaction(reference);
+        if (!verifiedTransaction || verifiedTransaction.status !== 'success') {
+          this.logger.warn(`Paystack webhook processing: transaction ${reference} verification status=${verifiedTransaction?.status ?? 'unknown'}; skipping deposit finalization`);
+          return;
+        }
+
+        await this.depositService.finalizeSuccessfulDeposit(reference);
       } else if (event === 'transfer.success') {
         await this.withdrawService.markAsSuccess(reference);
       } else if (['transfer.failed', 'transfer.reversed'].includes(event)) {

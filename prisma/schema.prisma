@@ -195,47 +195,47 @@ model investment_projects {
 }
 
 model kyc_documents {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
-  user_id           String?  @db.Uuid
+  user_id String? @db.Uuid
 
-  document_type     String?
-  document_number   String?
+  document_type   String?
+  document_number String?
 
-  first_name        String?
-  last_name         String?
+  first_name String?
+  last_name  String?
 
-  date_of_birth     DateTime?
+  date_of_birth DateTime?
 
-  gender            String?
-  nationality       String?
+  gender      String?
+  nationality String?
 
-  phone             String?
-  email             String?
+  phone String?
+  email String?
 
-  country           String?
-  county            String?
-  city              String?
+  country String?
+  county  String?
+  city    String?
 
-  physical_address  String?
-  postal_code       String?
-  address_document  String?
+  physical_address String?
+  postal_code      String?
+  address_document String?
 
-  front_image       String?
-  back_image        String?
-  selfie_image      String?
+  front_image  String?
+  back_image   String?
+  selfie_image String?
 
-  front_image_url   String?
-  back_image_url    String?
-  selfie_image_url  String?
+  front_image_url  String?
+  back_image_url   String?
+  selfie_image_url String?
 
-  status            kyc_status? @default(pending)
+  status kyc_status? @default(pending)
 
-  reviewed_by       String?  @db.Uuid
-  rejection_reason  String?
+  reviewed_by      String? @db.Uuid
+  rejection_reason String?
 
-  reviewed_at       DateTime?
-  created_at        DateTime? @default(now())
+  reviewed_at DateTime?
+  created_at  DateTime? @default(now())
 
   users_kyc_documents_reviewed_byTousers users? @relation("kyc_documents_reviewed_byTousers", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_kyc_documents_user_idTousers     users? @relation("kyc_documents_user_idTousers", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -776,7 +776,8 @@ model Deposit {
 
   paymentMethod PaymentMethod
 
-  status DepositStatus @default(PENDING)
+  status   DepositStatus @default(PENDING)
+  provider String?       @db.VarChar(50)
 
   reference   String  @unique
   providerRef String?
