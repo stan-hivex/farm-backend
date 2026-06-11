@@ -195,50 +195,36 @@ model investment_projects {
 }
 
 model kyc_documents {
-  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-
-  user_id String? @db.Uuid
-
-  document_type   String?
-  document_number String?
-
-  first_name String?
-  last_name  String?
-
-  date_of_birth DateTime?
-
-  gender      String?
-  nationality String?
-
-  phone String?
-  email String?
-
-  country String?
-  county  String?
-  city    String?
-
-  physical_address String?
-  postal_code      String?
-  address_document String?
-
-  front_image  String?
-  back_image   String?
-  selfie_image String?
-
-  front_image_url  String?
-  back_image_url   String?
-  selfie_image_url String?
-
-  status kyc_status? @default(pending)
-
-  reviewed_by      String? @db.Uuid
-  rejection_reason String?
-
-  reviewed_at DateTime?
-  created_at  DateTime? @default(now())
-
-  users_kyc_documents_reviewed_byTousers users? @relation("kyc_documents_reviewed_byTousers", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_kyc_documents_user_idTousers     users? @relation("kyc_documents_user_idTousers", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                     String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                                String?     @db.Uuid
+  document_type                          String?
+  front_image                            String?
+  back_image                             String?
+  selfie_image                           String?
+  document_number                        String?
+  status                                 kyc_status? @default(pending)
+  reviewed_by                            String?     @db.Uuid
+  rejection_reason                       String?
+  reviewed_at                            DateTime?
+  created_at                             DateTime?   @default(now())
+  address_document                       String?
+  back_image_url                         String?
+  city                                   String?
+  country                                String?
+  county                                 String?
+  date_of_birth                          DateTime?
+  email                                  String?
+  first_name                             String?
+  front_image_url                        String?
+  gender                                 String?
+  last_name                              String?
+  nationality                            String?
+  phone                                  String?
+  physical_address                       String?
+  postal_code                            String?
+  selfie_image_url                       String?
+  users_kyc_documents_reviewed_byTousers users?      @relation("kyc_documents_reviewed_byTousers", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_kyc_documents_user_idTousers     users?      @relation("kyc_documents_user_idTousers", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model ledger_entries {
@@ -499,7 +485,6 @@ model users {
   pin_hash                                                              String?
   role                                                                  user_role?               @default(user)
   kyc_status                                                            kyc_status?              @default(none)
-  kyc_level                                                             Int?                     @default(0)
   is_active                                                             Boolean?                 @default(true)
   is_suspended                                                          Boolean?                 @default(false)
   is_deleted                                                            Boolean?                 @default(false)
@@ -519,6 +504,9 @@ model users {
   created_at                                                            DateTime?                @default(now()) @db.Timestamp(6)
   updated_at                                                            DateTime?                @default(now()) @db.Timestamp(6)
   deleted_at                                                            DateTime?                @db.Timestamp(6)
+  kyc_level                                                             Int?                     @default(0)
+  deposits                                                              Deposit[]
+  withdrawals                                                           Withdrawal[]
   activity_logs                                                         activity_logs[]
   api_keys                                                              api_keys[]
   audit_logs                                                            audit_logs[]
@@ -527,6 +515,7 @@ model users {
   contacts_contacts_owner_idTousers                                     contacts[]               @relation("contacts_owner_idTousers")
   cross_border_transfers_cross_border_transfers_receiver_user_idTousers cross_border_transfers[] @relation("cross_border_transfers_receiver_user_idTousers")
   cross_border_transfers_cross_border_transfers_sender_user_idTousers   cross_border_transfers[] @relation("cross_border_transfers_sender_user_idTousers")
+  device_tokens                                                         device_tokens[]
   escrow_contracts_escrow_contracts_arbiter_idTousers                   escrow_contracts[]       @relation("escrow_contracts_arbiter_idTousers")
   escrow_contracts_escrow_contracts_buyer_idTousers                     escrow_contracts[]       @relation("escrow_contracts_buyer_idTousers")
   escrow_contracts_escrow_contracts_seller_idTousers                    escrow_contracts[]       @relation("escrow_contracts_seller_idTousers")
@@ -539,6 +528,7 @@ model users {
   merchants_merchants_user_idTousers                                    merchants[]              @relation("merchants_user_idTousers")
   notifications                                                         notifications[]
   otp_verifications                                                     otp_verifications[]
+  project_investments                                                   project_investments[]
   qr_payments                                                           qr_payments[]
   security_events                                                       security_events[]
   support_messages                                                      support_messages[]
@@ -547,15 +537,11 @@ model users {
   system_settings                                                       system_settings[]
   uploads                                                               uploads[]
   user_investments                                                      user_investments[]
-  project_investments                                                   project_investments[]
   user_sessions                                                         user_sessions[]
   user_settings                                                         user_settings?
-  deposits                                                              Deposit[]
-  withdrawals                                                           Withdrawal[]
   users                                                                 users?                   @relation("usersTousers", fields: [referred_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   other_users                                                           users[]                  @relation("usersTousers")
   wallets                                                               wallets[]
-  device_tokens                                                         device_tokens[]
 
   @@index([email], map: "idx_users_email")
   @@index([phone], map: "idx_users_phone")
@@ -598,6 +584,118 @@ model webhook_logs {
   created_at DateTime? @default(now()) @db.Timestamp(6)
 }
 
+model project_investments {
+  id              String   @id @default(uuid()) @db.Uuid
+  user_id         String   @db.Uuid
+  project_id      String   @db.Uuid
+  tokens_bought   Decimal  @db.Decimal(18, 2)
+  amount_paid     Decimal  @db.Decimal(18, 2)
+  price_per_token Decimal  @db.Decimal(18, 2)
+  status          String   @default("active")
+  created_at      DateTime @default(now())
+  project         projects @relation(fields: [project_id], references: [id])
+  user            users    @relation(fields: [user_id], references: [id])
+}
+
+model projects {
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title                   String
+  description             String?
+  category                String?
+  location                String?
+  image_url               String?
+  total_value             Decimal                   @default(0) @db.Decimal(18, 2)
+  token_price             Decimal                   @default(0) @db.Decimal(18, 2)
+  duration_months         Int?                      @default(0)
+  total_tokens            Decimal                   @default(0) @db.Decimal(18, 2)
+  sold_tokens             Decimal                   @default(0) @db.Decimal(18, 2)
+  roi_percentage          Decimal?                  @default(0) @db.Decimal(5, 2)
+  is_verified             Boolean                   @default(false)
+  status                  String                    @default("active")
+  created_at              DateTime                  @default(now())
+  updated_at              DateTime                  @default(now())
+  project_funding_history project_funding_history[]
+  project_investments     project_investments[]
+}
+
+model project_funding_history {
+  id         String   @id @default(uuid()) @db.Uuid
+  project_id String   @db.Uuid
+  month      Int
+  value      Decimal  @db.Decimal(18, 2)
+  created_at DateTime @default(now())
+  project    projects @relation(fields: [project_id], references: [id])
+}
+
+model user_settings {
+  id                  String   @id @default(uuid()) @db.Uuid
+  user_id             String   @unique @db.Uuid
+  language            String   @default("en")
+  push_notifications  Boolean  @default(true)
+  email_notifications Boolean  @default(false)
+  sms_notifications   Boolean  @default(false)
+  sound_enabled       Boolean  @default(true)
+  vibration_enabled   Boolean  @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+  user                users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model device_tokens {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String    @db.Uuid
+  token      String    @db.VarChar(512)
+  platform   String?   @db.VarChar(50)
+  is_active  Boolean?  @default(true)
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+  last_seen  DateTime?
+  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id], map: "idx_device_tokens_user_id")
+}
+
+model Deposit {
+  id            String        @id @default(cuid())
+  userId        String        @db.Uuid
+  amount        Float
+  fee           Float         @default(0)
+  total         Float
+  currency      String        @default("KES")
+  paymentMethod PaymentMethod
+  status        DepositStatus @default(PENDING)
+  reference     String        @unique
+  providerRef   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  user          users         @relation(fields: [userId], references: [id])
+}
+
+model Withdrawal {
+  id              String   @id @default(uuid())
+  userId          String   @db.Uuid
+  amount          Float
+  fee             Float
+  settlement      Float
+  total           Float
+  currency        String   @default("KES")
+  method          String
+  accountName     String?
+  accountNumber   String?
+  bankName        String?
+  phoneNumber     String?
+  cryptoAddress   String?
+  network         String?
+  reference       String   @unique
+  status          String   @default("PENDING")
+  rejectionReason String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            users    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+}
+
 enum escrow_status {
   pending
   active
@@ -610,9 +708,9 @@ enum escrow_status {
 enum kyc_status {
   none
   pending
-  under_review
   verified
   rejected
+  under_review
   additional_info_required
 }
 
@@ -671,123 +769,6 @@ enum wallet_type {
   creator
 }
 
-model project_investments {
-  id String @id @default(uuid()) @db.Uuid
-
-  user_id    String @db.Uuid
-  project_id String @db.Uuid
-
-  tokens_bought Decimal @db.Decimal(18, 2)
-  amount_paid   Decimal @db.Decimal(18, 2)
-
-  price_per_token Decimal @db.Decimal(18, 2)
-
-  status String @default("active")
-
-  created_at DateTime @default(now())
-
-  user    users    @relation(fields: [user_id], references: [id])
-  project projects @relation(fields: [project_id], references: [id])
-}
-
-model projects {
-  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  title       String
-  description String?
-  category    String?
-  location    String?
-  image_url   String?
-
-  total_value     Decimal @default(0) @db.Decimal(18, 2)
-  token_price     Decimal @default(0) @db.Decimal(18, 2)
-  duration_months Int?    @default(0)
-
-  total_tokens Decimal @default(0) @db.Decimal(18, 2)
-  sold_tokens  Decimal @default(0) @db.Decimal(18, 2)
-
-  roi_percentage Decimal? @default(0) @db.Decimal(5, 2)
-
-  is_verified Boolean @default(false)
-  status      String  @default("active")
-
-  created_at DateTime @default(now())
-  updated_at DateTime @default(now())
-
-  project_investments     project_investments[]
-  project_funding_history project_funding_history[]
-}
-
-model project_funding_history {
-  id         String @id @default(uuid()) @db.Uuid
-  project_id String @db.Uuid
-
-  month Int
-  value Decimal @db.Decimal(18, 2)
-
-  created_at DateTime @default(now())
-
-  project projects @relation(fields: [project_id], references: [id])
-}
-
-model user_settings {
-  id String @id @default(uuid()) @db.Uuid
-
-  user_id String @unique @db.Uuid
-
-  language String @default("en")
-
-  push_notifications Boolean @default(true)
-
-  email_notifications Boolean @default(false)
-
-  sms_notifications Boolean @default(false)
-
-  sound_enabled Boolean @default(true)
-
-  vibration_enabled Boolean @default(true)
-
-  created_at DateTime @default(now())
-
-  updated_at DateTime @updatedAt
-
-  user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
-}
-
-model device_tokens {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id    String    @db.Uuid
-  token      String    @db.VarChar(512)
-  platform   String?   @db.VarChar(50)
-  is_active  Boolean?  @default(true)
-  created_at DateTime? @default(now()) @db.Timestamp(6)
-  last_seen  DateTime?
-  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([user_id], map: "idx_device_tokens_user_id")
-}
-
-model Deposit {
-  id       String @id @default(cuid())
-  userId   String @db.Uuid
-  amount   Float
-  fee      Float  @default(0)
-  total    Float
-  currency String @default("KES")
-
-  paymentMethod PaymentMethod
-
-  status   DepositStatus @default(PENDING)
-  provider String?       @db.VarChar(50)
-
-  reference   String  @unique
-  providerRef String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user users @relation(fields: [userId], references: [id])
-}
-
 enum PaymentMethod {
   CARD
   MOBILE_MONEY
@@ -799,42 +780,4 @@ enum DepositStatus {
   PROCESSING
   SUCCESS
   FAILED
-}
-
-model Withdrawal {
-  id String @id @default(uuid())
-
-  userId String @db.Uuid
-
-  amount     Float
-  fee        Float
-  settlement Float
-  total      Float
-
-  currency String @default("KES")
-
-  method String
-
-  accountName   String?
-  accountNumber String?
-  bankName      String?
-
-  phoneNumber String?
-
-  cryptoAddress String?
-  network       String?
-
-  reference String @unique
-
-  status String @default("PENDING")
-
-  rejectionReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user users @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([status])
 }
