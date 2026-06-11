@@ -30,7 +30,10 @@ export class DepositController {
     @Req() req: any,
     @Body() dto: any,
   ) {
-    const userId = req.user.id;
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
 
     return this.depositService.createDeposit(
       userId,
@@ -40,7 +43,10 @@ export class DepositController {
 
   @Get('history')
   async history(@Req() req: any) {
-    const userId = req.user.id;
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
 
     return this.depositService.getUserDeposits(
       userId,
@@ -49,7 +55,10 @@ export class DepositController {
 
   @Get('wallet')
   async wallet(@Req() req: any) {
-    const userId = req.user.id;
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
 
     return this.depositService.getWalletBalance(
       userId,

@@ -17,7 +17,9 @@ export class DepositService {
 
   async createDeposit(userId: string, dto: any) {
     const amount = Number(dto.amount_fiat);
-    if (amount < 10) throw new BadRequestException('Minimum deposit is KES 10');
+    if (!Number.isFinite(amount) || amount < 10) {
+      throw new BadRequestException('Invalid deposit amount. Minimum deposit is KES 10');
+    }
 
     const reference = uuidv4();
     const paymentMethod = (dto.paymentMethod || 'CARD').toUpperCase();
