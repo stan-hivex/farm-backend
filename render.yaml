@@ -11,7 +11,7 @@ services:
       npx prisma generate
       npm run build
 
-    startCommand: node dist/src/main.js
+    startCommand: cd /opt/render/project && node dist/src/main.js
 
     envVars:
       - key: NODE_ENV
