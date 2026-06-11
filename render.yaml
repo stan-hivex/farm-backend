@@ -3,6 +3,7 @@ services:
     name: farm-backend
     runtime: node
     plan: starter
+    dir: .
 
     buildCommand: |
       npm ci
