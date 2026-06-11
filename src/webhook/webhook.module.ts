@@ -9,6 +9,7 @@ import { DepositModule } from '../deposit/deposit.module';
 import { WithdrawModule } from '../withdraw/withdraw.module';
 import { WebsocketModule } from '../websocket/websocket.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { PaystackModule } from '../paystack/paystack.module';
 import { PrismaService } from '../database/prisma.service';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
 import { QUEUES } from '../common/constants';
@@ -19,6 +20,7 @@ import { QUEUES } from '../common/constants';
     forwardRef(() => WithdrawModule),
     WebsocketModule,
     forwardRef(() => PaymentsModule),
+    forwardRef(() => PaystackModule),
     ScheduleModule.forRoot(),
     BullModule.registerQueue({
       name: QUEUES.WEBHOOKS,
