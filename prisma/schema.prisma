@@ -661,13 +661,13 @@ model Deposit {
   fee           Float         @default(0)
   total         Float
   currency      String        @default("KES")
-  provider      String?       @db.VarChar(100)
   paymentMethod PaymentMethod
   status        DepositStatus @default(PENDING)
   reference     String        @unique
   providerRef   String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  provider      String?       @db.VarChar(100)
   user          users         @relation(fields: [userId], references: [id])
 }
 
