@@ -33,7 +33,7 @@ import { EscrowModule } from './escrow/escrow.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: ['.env', '.env.production'],
+      envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],
       ignoreEnvFile: false,
     }),
     DatabaseModule,

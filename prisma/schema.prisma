@@ -661,6 +661,7 @@ model Deposit {
   fee           Float         @default(0)
   total         Float
   currency      String        @default("KES")
+  provider      String?       @db.VarChar(100)
   paymentMethod PaymentMethod
   status        DepositStatus @default(PENDING)
   reference     String        @unique
