@@ -53,6 +53,18 @@ async function bootstrap() {
     credentials: true,
   });
 
+  // Explicitly handle OPTIONS preflight requests so Cloudflare and browsers
+  // receive a quick successful response. CORS headers are provided by the
+  // cors middleware registered via `enableCors` above.
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.method === 'OPTIONS') {
+      res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+      return res.sendStatus(204);
+    }
+    return next();
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
