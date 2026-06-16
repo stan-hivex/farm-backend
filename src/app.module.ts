@@ -46,9 +46,7 @@ import { EscrowModule } from './escrow/escrow.module';
           throw new Error('REDIS_URL is required for Bull queue processing');
         }
         return {
-          redis: {
-            url: redisUrl,
-          },
+          redis: redisUrl,
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: false,
