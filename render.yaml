@@ -18,4 +18,4 @@ services:
         value: production
       - key: CORS_ORIGINS
         # Replace with your Cloudflare origin(s), comma-separated if multiple.
-        value: https://royal-wood-780a.algorandfarm686.workers.dev
+        value: https://*.algorandfarm686.workers.dev

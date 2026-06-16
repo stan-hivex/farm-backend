@@ -32,13 +32,37 @@ async function bootstrap() {
 
   const localhostCorsRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
+  const corsOriginMatches = (origin: string) => {
+    if (!corsOrigins?.length) {
+      return false;
+    }
+
+    return corsOrigins.some((allowedOrigin) => {
+      if (allowedOrigin === '*') {
+        return true;
+      }
+
+      if (allowedOrigin.startsWith('*.')) {
+        return origin.endsWith(allowedOrigin.slice(1));
+      }
+
+      if (allowedOrigin.includes('*')) {
+        const escaped = allowedOrigin.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`);
+        return pattern.test(origin);
+      }
+
+      return origin === allowedOrigin;
+    });
+  };
+
   app.enableCors({
     origin: (origin, callback) => {
       if (!origin) {
         return callback(null, true);
       }
 
-      if (corsOrigins?.includes(origin)) {
+      if (corsOriginMatches(origin)) {
         return callback(null, true);
       }
 
