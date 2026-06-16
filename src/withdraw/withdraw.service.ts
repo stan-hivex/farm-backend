@@ -67,7 +67,7 @@ export class WithdrawService {
           description: `Pending withdrawal ${amount} FARM`,
           metadata: {
             method: dto.method,
-            userId,
+            user_id: userId,
             reference,
           },
         },

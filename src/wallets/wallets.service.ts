@@ -126,6 +126,7 @@ export class WalletsService {
           currency: 'FARM',
           description: dto.description || `Transfer to ${dto.recipient_identifier}`,
           ip_address: ip,
+          metadata: { user_id: senderId },
         },
       });
 

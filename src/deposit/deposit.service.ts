@@ -43,6 +43,28 @@ export class DepositService {
       },
     });
 
+    // Create corresponding transaction record so webhook finalizer can find it
+    try {
+      await this.prisma.transactions.create({
+        data: {
+          transaction_reference: reference,
+          transaction_type: 'deposit',
+          amount: total,
+          status: 'pending',
+          currency: dto.currency || 'KES',
+          metadata: {
+            user_id: userId,
+            provider,
+            paymentMethod,
+            deposit_id: deposit.id,
+            amount_fiat: amount,
+          },
+        },
+      });
+    } catch (e) {
+      this.logger.error(`createDeposit: failed to create transaction for reference=${reference}`, e as any);
+    }
+
     let paymentUrl: string | null = null;
 
     if (paymentMethod === 'CRYPTO') {

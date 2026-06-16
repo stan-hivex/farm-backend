@@ -117,6 +117,7 @@ export class EscrowService {
           fee,
           net_amount: dto.amount,
           description: `Escrow lock: ${dto.title}`,
+          metadata: { user_id: buyerId, escrow_id: c.id },
           processed_at: new Date(),
         },
       });
@@ -252,6 +253,7 @@ export class EscrowService {
           fee: Number(escrow.fee),
           net_amount: Number(escrow.amount),
           description: `Escrow release: ${escrow.title}`,
+          metadata: { user_id: escrow.buyer_id, escrow_id: escrow.id },
           processed_at: new Date(),
         },
       });
@@ -295,6 +297,7 @@ export class EscrowService {
           fee: 0,
           net_amount: Number(escrow.amount),
           description: `Escrow refund: ${escrow.title}`,
+          metadata: { user_id: escrow.buyer_id, escrow_id: escrow.id },
           processed_at: new Date(),
         },
       });

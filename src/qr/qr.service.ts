@@ -116,6 +116,7 @@ export class QrService {
           amount: dto.amount, fee, net_amount: dto.amount - fee,
           currency: 'FARM',
           description: `Payment to ${merchant.business_name}`,
+          metadata: { user_id: customerId, merchant_id: merchant.id },
           processed_at: new Date(),
         },
       });

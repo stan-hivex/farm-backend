@@ -85,6 +85,7 @@ export class InvestmentsService {
           status: 'completed',
           amount: dto.amount, fee: 0, net_amount: dto.amount,
           description: `Investment: ${project.project_name}`,
+          metadata: { user_id: userId },
           processed_at: new Date(),
         },
       });
