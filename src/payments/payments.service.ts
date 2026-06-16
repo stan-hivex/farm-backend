@@ -459,7 +459,7 @@ export class PaymentsService {
         amount: Number(t.amount),
         // Hoist metadata fields to top level so the Flutter widget can read them
         method: meta.method ?? 'BANK',
-        status: t.status === 'completed' ? 'SUCCESS' : status,
+        status: t.status?.toLowerCase() === 'completed' ? 'SUCCESS' : status,
       };
     }),
   };

@@ -89,17 +89,30 @@ export class WebhookService {
       return { received: true };
     }
 
-    // Amount validation (anti-fraud): verify webhook amount matches transaction amount
+    // Amount validation (anti-fraud): verify webhook amount matches transaction amount.
+    // Use transaction.metadata.amount_fiat when available (initiator provides fiat + exchange rate),
+    // otherwise fall back to the stored transaction.amount conversion.
     if (event === 'charge.success') {
       try {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
-          const expectedAmount = Math.round(Number(transaction.amount) * 100); // convert to kobo
+          const metadata = transaction.metadata as any ?? {};
+          // Paystack webhook amount is sent in kobo (integer). Prefer comparing against original fiat amount
+          // stored in metadata (amount_fiat), otherwise fall back to transaction.amount * 100.
           const webhookAmount = Number(payload.data?.amount);
-          if (webhookAmount !== expectedAmount) {
-            this.logger.warn(`Amount mismatch for Paystack reference ${reference}: expected ${expectedAmount} kobo, got ${webhookAmount} kobo`);
+          let expectedKobo: number | null = null;
+          if (metadata?.amount_fiat !== undefined && metadata?.amount_fiat !== null) {
+            expectedKobo = Math.round(Number(metadata.amount_fiat) * 100);
+          } else {
+            expectedKobo = Number.isFinite(Number(transaction.amount)) ? Math.round(Number(transaction.amount) * 100) : null;
+          }
+
+          if (expectedKobo === null || isNaN(webhookAmount)) {
+            this.logger.warn(`Paystack amount validation skipped for ${reference} due to missing data`);
+          } else if (webhookAmount !== expectedKobo) {
+            this.logger.warn(`Amount mismatch for Paystack reference ${reference}: expected ${expectedKobo} kobo, got ${webhookAmount} kobo`);
             await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Amount mismatch' } });
-            await this.fallbackAlert('paystack', `Amount mismatch detected for ${reference}: expected ${expectedAmount}, got ${webhookAmount}`, payload);
+            await this.fallbackAlert('paystack', `Amount mismatch detected for ${reference}: expected ${expectedKobo}, got ${webhookAmount}`, payload);
             return { received: true };
           }
         }
@@ -188,12 +201,19 @@ export class WebhookService {
       try {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
-          const expectedAmount = Number(transaction.amount);
+          const metadata = transaction.metadata as any ?? {};
           const webhookAmount = Number(payload.data?.amount ?? payload.amount);
-          if (Math.abs(webhookAmount - expectedAmount) > 0.01) { // allow small floating-point differences
-            this.logger.warn(`Amount mismatch for Ivorypay reference ${reference}: expected ${expectedAmount}, got ${webhookAmount}`);
+          // Prefer comparing against original fiat amount if available in metadata
+          let expected = metadata?.amount_fiat !== undefined && metadata?.amount_fiat !== null
+            ? Number(metadata.amount_fiat)
+            : Number(transaction.amount);
+
+          if (!isFinite(expected) || isNaN(webhookAmount)) {
+            this.logger.warn(`Ivorypay amount validation skipped for ${reference} due to missing data`);
+          } else if (Math.abs(webhookAmount - expected) > 0.01) { // allow small floating-point differences
+            this.logger.warn(`Amount mismatch for Ivorypay reference ${reference}: expected ${expected}, got ${webhookAmount}`);
             await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Amount mismatch' } });
-            await this.fallbackAlert('ivorypay', `Amount mismatch detected for ${reference}: expected ${expectedAmount}, got ${webhookAmount}`, payload);
+            await this.fallbackAlert('ivorypay', `Amount mismatch detected for ${reference}: expected ${expected}, got ${webhookAmount}`, payload);
             return { received: true };
           }
         }
@@ -380,8 +400,8 @@ export class WebhookService {
     const depositPending = !!deposit && deposit.status === 'PENDING';
     const depositComplete = !!deposit && deposit.status === 'SUCCESS';
     const isDeposit = !!transaction && transaction.transaction_type?.toLowerCase() === 'deposit';
-    const txPending = isDeposit && transaction.status !== 'completed';
-    const txComplete = isDeposit && transaction.status === 'completed';
+    const txPending = isDeposit && transaction.status?.toLowerCase() !== 'completed';
+    const txComplete = isDeposit && transaction.status?.toLowerCase() === 'completed';
 
     if (depositComplete && txComplete) {
       this.logger.log(`finalizeDeposit: already completed for ${reference}`);
@@ -409,7 +429,7 @@ export class WebhookService {
       return this.creditPendingTransactionDeposit(reference);
     }
 
-    if (transaction && transaction.status !== 'completed') {
+    if (transaction && transaction.status?.toLowerCase() !== 'completed') {
       this.logger.log(`finalizeDeposit: transaction exists and not completed for ${reference}, crediting`);
       await this.creditPendingTransactionDeposit(reference);
     }
@@ -489,7 +509,7 @@ export class WebhookService {
       });
 
       const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
-      if (transaction && isDeposit && transaction.status !== 'completed') {
+      if (transaction && isDeposit && transaction.status?.toLowerCase() !== 'completed') {
         await tx.transactions.update({
           where: { id: transaction.id },
           data: {
@@ -528,7 +548,7 @@ export class WebhookService {
     if (!isDeposit) {
       return false;
     }
-    if (transaction.status === 'completed') {
+    if (transaction.status?.toLowerCase() === 'completed') {
       return true;
     }
 
@@ -564,7 +584,7 @@ export class WebhookService {
 
     const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
     if (!isDeposit) return false;
-    if (transaction.status === 'completed') return true;
+    if (transaction.status?.toLowerCase() === 'completed') return true;
 
     const result = await this.prisma.$transaction(async (tx) => {
       let wallet: any = null;
@@ -653,7 +673,7 @@ export class WebhookService {
     }
 
     // STATE MACHINE VALIDATION: transaction must exist and be in pending state
-    if (!transaction || transaction.status !== 'pending') {
+    if (!transaction || transaction.status?.toLowerCase() !== 'pending') {
       this.logger.warn(
         `creditPendingDepositWithWallet: invalid transaction state for ${reference}. ` +
         `Transaction: ${transaction ? `exists, status=${transaction.status}` : 'missing'}`,
@@ -713,7 +733,7 @@ export class WebhookService {
       });
 
       // STATE MACHINE: Update transaction to completed (idempotent: only if pending)
-      if (transaction && transaction.status !== 'completed') {
+      if (transaction && transaction.status?.toLowerCase() !== 'completed') {
         await tx.transactions.update({
           where: { id: transaction.id },
           data: {
@@ -772,7 +792,7 @@ export class WebhookService {
       throw new BadRequestException('Invalid transaction for withdrawal completion');
     }
 
-    if (transaction.status === 'completed') {
+    if (transaction.status?.toLowerCase() === 'completed') {
       return true;
     }
 
@@ -829,7 +849,7 @@ export class WebhookService {
       throw new BadRequestException('Invalid transaction for withdrawal failure handling');
     }
 
-    if (transaction.status === 'failed') {
+    if (transaction.status?.toLowerCase() === 'failed') {
       return true;
     }
 
@@ -919,11 +939,20 @@ export class WebhookService {
       if (event === 'charge.success') {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
-          const expectedAmount = Math.round(Number(transaction.amount) * 100); // kobo
+          const metadata = transaction.metadata as any ?? {};
           const webhookAmount = Number(payload.data?.amount);
-          if (webhookAmount !== expectedAmount) {
-            this.logger.error(`FRAUD ALERT: Amount mismatch for Paystack ${reference}: expected ${expectedAmount} kobo, got ${webhookAmount} kobo`);
-            throw new BadRequestException(`Amount mismatch: expected ${expectedAmount}, got ${webhookAmount}`);
+          let expectedKobo: number | null = null;
+          if (metadata?.amount_fiat !== undefined && metadata?.amount_fiat !== null) {
+            expectedKobo = Math.round(Number(metadata.amount_fiat) * 100);
+          } else {
+            expectedKobo = Number.isFinite(Number(transaction.amount)) ? Math.round(Number(transaction.amount) * 100) : null;
+          }
+
+          if (expectedKobo === null || isNaN(webhookAmount)) {
+            this.logger.warn(`Paystack processing amount validation skipped for ${reference} due to missing data`);
+          } else if (webhookAmount !== expectedKobo) {
+            this.logger.error(`FRAUD ALERT: Amount mismatch for Paystack ${reference}: expected ${expectedKobo} kobo, got ${webhookAmount} kobo`);
+            throw new BadRequestException(`Amount mismatch: expected ${expectedKobo}, got ${webhookAmount}`);
           }
         }
 
@@ -993,11 +1022,16 @@ export class WebhookService {
       if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
-          const expectedAmount = Number(transaction.amount);
+          const metadata = transaction.metadata as any ?? {};
           const webhookAmount = Number(payload.data?.amount ?? payload.amount);
-          if (Math.abs(webhookAmount - expectedAmount) > 0.01) {
-            this.logger.error(`FRAUD ALERT: Amount mismatch for Ivorypay ${reference}: expected ${expectedAmount}, got ${webhookAmount}`);
-            throw new BadRequestException(`Amount mismatch: expected ${expectedAmount}, got ${webhookAmount}`);
+          const expected = metadata?.amount_fiat !== undefined && metadata?.amount_fiat !== null
+            ? Number(metadata.amount_fiat)
+            : Number(transaction.amount);
+          if (!isFinite(expected) || isNaN(webhookAmount)) {
+            this.logger.warn(`Ivorypay processing amount validation skipped for ${reference} due to missing data`);
+          } else if (Math.abs(webhookAmount - expected) > 0.01) {
+            this.logger.error(`FRAUD ALERT: Amount mismatch for Ivorypay ${reference}: expected ${expected}, got ${webhookAmount}`);
+            throw new BadRequestException(`Amount mismatch: expected ${expected}, got ${webhookAmount}`);
           }
         }
       }

@@ -141,8 +141,8 @@ export class DepositService {
     const depositPending = !!deposit && deposit.status === 'PENDING';
     const depositComplete = !!deposit && deposit.status === 'SUCCESS';
     const isDeposit = transaction.transaction_type?.toLowerCase() === 'deposit';
-    const txPending = isDeposit && transaction.status !== 'completed';
-    const txComplete = isDeposit && transaction.status === 'completed';
+    const txPending = isDeposit && transaction.status?.toLowerCase() !== 'completed';
+    const txComplete = isDeposit && transaction.status?.toLowerCase() === 'completed';
 
     if (depositComplete && txComplete) {
       this.logger.log(`finalizeSuccessfulDeposit: already completed for ${reference}`);
@@ -165,7 +165,7 @@ export class DepositService {
       return this.creditPendingTransactionDeposit(reference);
     }
 
-    if (transaction.status !== 'completed') {
+    if (transaction.status?.toLowerCase() !== 'completed') {
       return this.creditPendingTransactionDeposit(reference);
     }
 
@@ -219,7 +219,7 @@ export class DepositService {
         },
       });
 
-      if (transaction.status !== 'completed') {
+      if (transaction.status?.toLowerCase() !== 'completed') {
         await tx.transactions.update({
           where: { id: transaction.id },
           data: {
@@ -242,7 +242,7 @@ export class DepositService {
       return false;
     }
 
-    if (transaction.status === 'completed') {
+    if (transaction.status?.toLowerCase() === 'completed') {
       return true;
     }
 
@@ -276,7 +276,7 @@ export class DepositService {
 
     const isDeposit = transaction.transaction_type?.toLowerCase() === 'deposit';
     if (!isDeposit) return false;
-    if (transaction.status === 'completed') return true;
+    if (transaction.status?.toLowerCase() === 'completed') return true;
 
     const result = await this.prisma.$transaction(async (tx) => {
       let wallet: any = transaction.receiver_wallet_id
@@ -349,7 +349,7 @@ export class DepositService {
       transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
     }
 
-    if (!transaction || transaction.status !== 'pending') {
+    if (!transaction || transaction.status?.toLowerCase() !== 'pending') {
       this.logger.warn(
         `creditPendingDepositWithWallet: invalid transaction state for ${reference}. ` +
         `Transaction: ${transaction ? `exists, status=${transaction.status}` : 'missing'}`,
@@ -397,7 +397,7 @@ export class DepositService {
         },
       });
 
-      if (transaction.status !== 'completed') {
+      if (transaction.status?.toLowerCase() !== 'completed') {
         await tx.transactions.update({
           where: { id: transaction.id },
           data: {
