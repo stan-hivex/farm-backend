@@ -3,14 +3,47 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { PaystackService } from '../paystack/paystack.service';
 import { generateEscrowReference, generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
 @Injectable()
 export class EscrowService {
   private readonly logger = new Logger(EscrowService.name);
+  private readonly paystackPaybill = '4084333';
+  private readonly paystackAccount = '85365';
 
-  constructor(private prisma: PrismaService, private authService: AuthService) {}
+  constructor(
+    private prisma: PrismaService,
+    private authService: AuthService,
+    private paystack: PaystackService,
+  ) {}
+
+  private async remitEscrowFee(amount: number, reference: string) {
+    if (amount <= 0) return;
+
+    const payload = {
+      type: 'mobile_money',
+      name: 'FARM Platform',
+      currency: 'KES',
+      provider: 'MPESA',
+      phone: this.paystackPaybill,
+      account_number: this.paystackAccount,
+      metadata: {
+        purpose: 'escrow_fee',
+        reference,
+      },
+    };
+
+    const recipient = await this.paystack.createTransferRecipient(payload);
+
+    await this.paystack.initiateTransfer({
+      amount,
+      recipient: recipient.recipient_code,
+      reference,
+      currency: 'KES',
+    });
+  }
 
   async create(buyerId: string, dto: {
     seller_identifier: string; amount: number; title: string;
@@ -87,6 +120,10 @@ export class EscrowService {
           processed_at: new Date(),
         },
       });
+      // Remit fee to company via Paystack immediately. If this fails, throw to rollback transaction.
+      if (Number(fee) > 0) {
+        await this.remitEscrowFee(Number(fee), generateTxReference());
+      }
       return c;
     });
 
@@ -235,6 +272,9 @@ export class EscrowService {
       await tx.escrow_contracts.update({
         where: { id: escrow.id }, data: { status: 'completed', released_at: new Date() },
       });
+      if (Number(escrow.fee) > 0) {
+        await this.remitEscrowFee(Number(escrow.fee), generateTxReference());
+      }
     });
   }
 
