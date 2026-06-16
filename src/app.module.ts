@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { BullModule } from '@nestjs/bull';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
 import { RedisModule } from './common/redis.module';
@@ -35,6 +36,25 @@ import { EscrowModule } from './escrow/escrow.module';
       isGlobal: true,
       envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],
       ignoreEnvFile: false,
+    }),
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (cfg: ConfigService) => {
+        const redisUrl = cfg.get<string>('REDIS_URL');
+        if (!redisUrl) {
+          throw new Error('REDIS_URL is required for Bull queue processing');
+        }
+        return {
+          redis: {
+            url: redisUrl,
+          },
+          defaultJobOptions: {
+            removeOnComplete: true,
+            removeOnFail: false,
+          },
+        };
+      },
     }),
     DatabaseModule,
     PrismaModule,
