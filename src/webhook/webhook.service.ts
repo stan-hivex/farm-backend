@@ -432,8 +432,15 @@ export class WebhookService {
     const depositPending = !!deposit && deposit.status === 'PENDING';
     const depositComplete = !!deposit && deposit.status === 'SUCCESS';
     const isDeposit = !!transaction && transaction.transaction_type?.toLowerCase() === 'deposit';
-    const txPending = isDeposit && transaction.status?.toLowerCase() !== 'completed';
-    const txComplete = isDeposit && transaction.status?.toLowerCase() === 'completed';
+    const txStatus = transaction?.status?.toLowerCase();
+    const txPending = isDeposit && ['pending', 'processing'].includes(txStatus ?? '');
+    const txComplete = isDeposit && txStatus === 'completed';
+    const txFailed = isDeposit && ['failed', 'cancelled', 'reversed'].includes(txStatus ?? '');
+
+    if (txFailed) {
+      this.logger.warn(`finalizeDeposit: transaction ${reference} status=${transaction?.status} - not crediting wallet`);
+      return false;
+    }
 
     if (depositComplete && txComplete) {
       this.logger.log(`finalizeDeposit: already completed for ${reference}`);
@@ -1007,6 +1014,8 @@ export class WebhookService {
         await this.withdrawService.markAsSuccess(reference);
       } else if (['transfer.failed', 'transfer.reversed'].includes(event)) {
         await this.withdrawService.rejectWithdrawal(reference, payload.data?.reason);
+      } else if (['charge.failed', 'payment.failed', 'transaction.failed', 'charge.cancelled', 'payment.cancelled', 'transaction.cancelled', 'cancelled'].includes(event)) {
+        await this.depositService.failDeposit(reference, payload.data?.gateway_response || payload.data?.failure_message || payload.data?.message || 'Payment failed or cancelled');
       }
     } catch (error) {
       this.logger.error(`Error processing Paystack webhook: ${error instanceof Error ? error.message : String(error)}`);
@@ -1079,7 +1088,9 @@ export class WebhookService {
         await this.finalizeDeposit(reference);
       } else if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
         await this.finalizeWithdrawal(reference, true);
-      } else if (['payment.failed', 'transaction.failed', 'withdrawal.failed', 'failed'].includes(event)) {
+      } else if (['payment.failed', 'transaction.failed', 'failed'].includes(event)) {
+        await this.depositService.failDeposit(reference, payload.data?.reason || payload.message || 'Payment failed');
+      } else if (['withdrawal.failed'].includes(event)) {
         await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
       }
     } catch (error) {

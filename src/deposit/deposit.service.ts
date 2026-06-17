@@ -169,8 +169,15 @@ export class DepositService {
     const depositPending = !!deposit && deposit.status === 'PENDING';
     const depositComplete = !!deposit && deposit.status === 'SUCCESS';
     const isDeposit = transaction.transaction_type?.toLowerCase() === 'deposit';
-    const txPending = isDeposit && transaction.status?.toLowerCase() !== 'completed';
-    const txComplete = isDeposit && transaction.status?.toLowerCase() === 'completed';
+    const txStatus = transaction.status?.toLowerCase();
+    const txPending = isDeposit && ['pending', 'processing'].includes(txStatus ?? '');
+    const txComplete = isDeposit && txStatus === 'completed';
+    const txFailed = isDeposit && ['failed', 'cancelled', 'reversed'].includes(txStatus ?? '');
+
+    if (txFailed) {
+      this.logger.warn(`finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} - not crediting wallet`);
+      return false;
+    }
 
     if (depositComplete && txComplete) {
       this.logger.log(`finalizeSuccessfulDeposit: already completed for ${reference}`);
@@ -198,6 +205,42 @@ export class DepositService {
     }
 
     return depositComplete || txComplete;
+  }
+
+  async failDeposit(reference: string, reason?: string) {
+    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+
+    if (!deposit && !transaction) {
+      this.logger.warn(`failDeposit: no deposit or transaction found for reference=${reference}`);
+      return false;
+    }
+
+    const metadata = (transaction?.metadata as any) ?? {};
+    const failureMetadata = {
+      ...metadata,
+      failure_reason: reason ?? metadata.failure_reason,
+    };
+
+    await this.prisma.$transaction(async (tx) => {
+      if (deposit && deposit.status === 'PENDING') {
+        await tx.deposit.update({ where: { id: deposit.id }, data: { status: 'FAILED' } });
+      }
+
+      if (transaction && !['failed', 'cancelled', 'completed'].includes(transaction.status?.toLowerCase() ?? '')) {
+        await tx.transactions.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'failed',
+            processed_at: new Date(),
+            metadata: failureMetadata,
+          },
+        });
+      }
+    });
+
+    this.logger.log(`failDeposit: marked ${reference} as failed${reason ? ` reason=${reason}` : ''}`);
+    return true;
   }
 
   private async finalizePendingDepositWithTransaction(reference: string, deposit: any, transaction: any) {
