@@ -3,6 +3,7 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class DepositService {
     private prisma: PrismaService,
     private paystack: PaystackService,
     private ivorypay: IvorypayService,
+    private websocket: WebsocketGateway,
   ) {}
 
   async createDeposit(userId: string, dto: any) {
@@ -240,6 +242,22 @@ export class DepositService {
     });
 
     this.logger.log(`failDeposit: marked ${reference} as failed${reason ? ` reason=${reason}` : ''}`);
+
+    // Emit websocket update so frontend clients can react in real-time
+    try {
+      const metadata2 = (transaction?.metadata as any) ?? {};
+      const userId = deposit?.userId ?? metadata2?.user_id;
+      if (userId) {
+        this.websocket.emitTransactionUpdate(userId, {
+          reference,
+          status: 'FAILED',
+          reason: failureMetadata.failure_reason ?? reason,
+        });
+      }
+    } catch (e) {
+      this.logger.debug('Failed to emit websocket update for failed deposit', e as any);
+    }
+
     return true;
   }
 
