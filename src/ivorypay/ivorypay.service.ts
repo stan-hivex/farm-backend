@@ -53,7 +53,14 @@ export class IvorypayService {
         throw new BadRequestException('Invalid Ivorypay response');
       }
 
-      const paymentLink = data.payment_link || data.checkout_url || data.url || data.link || data.checkout || data.page_url;
+      const paymentLink =
+        data.payment_link ||
+        data.checkout_url ||
+        data.url ||
+        data.link ||
+        data.checkout ||
+        data.page_url ||
+        data.collectionDetails?.checkoutUrl;
       if (!paymentLink) {
         this.logger.error('Ivorypay createPayment did not return a checkout URL', data);
         throw new BadRequestException('Ivorypay checkout URL not provided');
