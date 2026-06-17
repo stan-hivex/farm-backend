@@ -9,7 +9,8 @@ export class IvorypayService {
   private readonly apiKey: string | undefined;
 
   constructor(private readonly cfg: ConfigService) {
-    this.baseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io');
+    const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
+    this.baseUrl = rawBaseUrl.replace(/\/+$/, '');
     this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
   }
 
@@ -27,7 +28,7 @@ export class IvorypayService {
     try {
       this.logger.log(`Ivorypay: creating payment ${options.reference} via ${this.baseUrl}`);
       const response = await axios.post(
-        `${this.baseUrl}/v1/checkout`,
+        `${this.baseUrl}/v1/transactions`,
         {
           amount: options.amount,
           currency: options.currency,
@@ -38,7 +39,7 @@ export class IvorypayService {
         },
         {
           headers: {
-            Authorization: `Bearer ${this.apiKey}`,
+            Authorization: `${this.apiKey}`,
             'Content-Type': 'application/json',
           },
         },
