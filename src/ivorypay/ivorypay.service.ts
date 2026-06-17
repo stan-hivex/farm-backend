@@ -31,11 +31,13 @@ export class IvorypayService {
         `${this.baseUrl}/v1/transactions`,
         {
           amount: options.amount,
-          currency: options.currency,
           reference: options.reference,
           email: options.email,
-          description: options.description,
-          metadata: options.metadata ?? {},
+          type: 'CRYPTO',
+          mode: 'CHECKOUT',
+          baseFiat: 'KES',
+          crypto: 'USDT',
+          metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         },
         {
           headers: {
@@ -51,7 +53,7 @@ export class IvorypayService {
         throw new BadRequestException('Invalid Ivorypay response');
       }
 
-      const paymentLink = data.payment_link || data.checkout_url || data.url || data.link;
+      const paymentLink = data.payment_link || data.checkout_url || data.url || data.link || data.checkout || data.page_url;
       if (!paymentLink) {
         this.logger.error('Ivorypay createPayment did not return a checkout URL', data);
         throw new BadRequestException('Ivorypay checkout URL not provided');
@@ -65,19 +67,16 @@ export class IvorypayService {
     } catch (e: any) {
       const message = e.response?.data?.message || e.response?.data?.error || e.message;
       const statusCode = e.response?.status;
-      const endpoint = `${this.baseUrl}/v1/checkout`;
+      const endpoint = `${this.baseUrl}/v1/transactions`;
       
       this.logger.error(
         `Ivorypay createPayment error [${statusCode}] ${endpoint}: ${message}`,
       );
+      if (e.response?.data?.errors) {
+        this.logger.debug(`Ivorypay validation errors: ${JSON.stringify(e.response.data.errors)}`);
+      }
       if (e.response?.data) {
         this.logger.debug(`Ivorypay response body: ${JSON.stringify(e.response.data)}`);
-      }
-      if (e.response?.status === 404) {
-        this.logger.warn(
-          'Ivorypay endpoint returned 404. Verify IVORYPAY_BASE_URL and endpoint path. ' +
-          'Common endpoints: /v1/checkout, /v1/transactions/initialize, /transactions/create',
-        );
       }
       throw new BadRequestException(`Ivorypay integration failed: ${message}`);
     }
