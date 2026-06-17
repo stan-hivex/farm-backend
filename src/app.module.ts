@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, Logger } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { DatabaseModule } from './database/database.module';
@@ -43,10 +43,17 @@ import { EscrowModule } from './escrow/escrow.module';
       useFactory: async (cfg: ConfigService) => {
         const redisUrl = cfg.get<string>('REDIS_URL');
         if (!redisUrl) {
-          throw new Error('REDIS_URL is required for Bull queue processing');
+          const logger = new Logger('AppModule');
+          logger.warn(
+            'REDIS_URL not configured. Bull queue processing will attempt local Redis at 127.0.0.1:6379.',
+          );
         }
+
         return {
-          redis: redisUrl,
+          redis: redisUrl ?? {
+            host: '127.0.0.1',
+            port: 6379,
+          },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: false,
