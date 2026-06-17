@@ -92,9 +92,15 @@ export class DepositService {
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
     } else if (paymentMethod === 'CARD') {
-      // Card deposits should not use mobile-money Paystack flow; leave card handling
-      // to the client or a separate card-specific integration.
-      paymentUrl = null;
+      const init = await this.paystack.initializePayment({
+        email: dto.email || `${userId}@farm.app`,
+        amount: total,
+        reference,
+        currency: 'KES',
+        channels: ['card'],
+        metadata: { userId, depositId: deposit.id, paymentMethod },
+      });
+      paymentUrl = init.authorization_url || init.authorizationUrl;
     } else {
       throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
     }

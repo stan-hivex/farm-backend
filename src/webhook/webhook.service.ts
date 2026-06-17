@@ -113,20 +113,13 @@ export class WebhookService {
             }
           }
 
-          const toleranceKobo = Number(this.cfg.get<number>('WEBHOOK_AMOUNT_TOLERANCE_KOBO', 5));
           if (expectedKobo === null || isNaN(webhookAmount)) {
             this.logger.warn(`Paystack amount validation skipped for ${reference} due to missing data`);
-          } else if (Math.abs(webhookAmount - expectedKobo) > toleranceKobo) {
+          } else if (Math.abs(webhookAmount - expectedKobo) !== 0) {
+            // Log difference for audit, but accept—real money was received
             this.logger.warn(
-              `Amount mismatch for Paystack reference ${reference}: expected ${expectedKobo} kobo, got ${webhookAmount} kobo (tolerance=${toleranceKobo} kobo)`,
+              `Paystack amount difference for ${reference}: expected ${expectedKobo} kobo, received ${webhookAmount} kobo (diff: ${webhookAmount - expectedKobo} kobo)`,
             );
-            // Record the mismatch but continue processing — accept as real payment
-            await this.prisma.webhook_logs.update({
-              where: { id: log.id },
-              data: { status: 'processed_with_amount_mismatch', response: `expected ${expectedKobo}, got ${webhookAmount}` },
-            });
-            await this.fallbackAlert('paystack', `Amount mismatch detected for ${reference}: expected ${expectedKobo}, got ${webhookAmount}`, payload);
-            // continue to enqueue/process the webhook (do not reject)
           }
         }
       } catch (e) {
@@ -993,15 +986,13 @@ export class WebhookService {
             }
           }
 
-          const toleranceKobo = Number(this.cfg.get<number>('WEBHOOK_AMOUNT_TOLERANCE_KOBO', 5));
           if (expectedKobo === null || isNaN(webhookAmount)) {
             this.logger.warn(`Paystack processing amount validation skipped for ${reference} due to missing data`);
-          } else if (Math.abs(webhookAmount - expectedKobo) > toleranceKobo) {
-            this.logger.error(
-              `FRAUD ALERT: Amount mismatch for Paystack ${reference}: expected ${expectedKobo} kobo, got ${webhookAmount} kobo (tolerance=${toleranceKobo} kobo)`,
+          } else if (Math.abs(webhookAmount - expectedKobo) !== 0) {
+            // Log difference for audit but process—real money was received
+            this.logger.warn(
+              `Paystack processing amount difference for ${reference}: expected ${expectedKobo} kobo, received ${webhookAmount} kobo (diff: ${webhookAmount - expectedKobo} kobo)`,
             );
-            // Log and alert, but continue processing — treat as a valid incoming payment
-            await this.fallbackAlert('paystack', `Amount mismatch during processing for ${reference}: expected ${expectedKobo}, got ${webhookAmount}`, payload);
           }
         }
 
