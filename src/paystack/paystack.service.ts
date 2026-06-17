@@ -66,11 +66,19 @@ export class PaystackService {
         access_code: response.data.data.access_code,
       };
     } catch (e: any) {
-      const message = e.response?.data?.message || e.message;
+      const apiData = e.response?.data;
+      const message = apiData?.message || e.message;
       this.logger.error(`Paystack initialize error: ${message}`);
-      if (e.response?.data) {
-        this.logger.debug(`Paystack initialize error details: ${JSON.stringify(e.response.data)}`);
+      if (apiData) {
+        this.logger.debug(`Paystack initialize error details: ${JSON.stringify(apiData)}`);
       }
+
+      // Provide a clearer error when the merchant hasn't enabled the requested channel
+      if (apiData?.code === 'invalid_params' && typeof message === 'string' && message.toLowerCase().includes('no active channel')) {
+        const nextStep = apiData?.meta?.nextStep || 'Please enable the required channel in your Paystack dashboard or contact Paystack support.';
+        throw new BadRequestException(`Paystack channel unavailable: ${message}. ${nextStep}`);
+      }
+
       throw new BadRequestException(`Paystack integration failed: ${message}`);
     }
   }
