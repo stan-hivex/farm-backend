@@ -9,7 +9,7 @@ export class IvorypayService {
   private readonly apiKey: string | undefined;
 
   constructor(private readonly cfg: ConfigService) {
-    this.baseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
+    this.baseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io');
     this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
   }
 
@@ -27,7 +27,7 @@ export class IvorypayService {
     try {
       this.logger.log(`Ivorypay: creating payment ${options.reference} via ${this.baseUrl}`);
       const response = await axios.post(
-        `${this.baseUrl}/payments`,
+        `${this.baseUrl}/v1/checkout`,
         {
           amount: options.amount,
           currency: options.currency,
@@ -63,9 +63,20 @@ export class IvorypayService {
       };
     } catch (e: any) {
       const message = e.response?.data?.message || e.response?.data?.error || e.message;
-      this.logger.error(`Ivorypay createPayment error: ${message}`);
+      const statusCode = e.response?.status;
+      const endpoint = `${this.baseUrl}/v1/checkout`;
+      
+      this.logger.error(
+        `Ivorypay createPayment error [${statusCode}] ${endpoint}: ${message}`,
+      );
       if (e.response?.data) {
-        this.logger.debug(`Ivorypay createPayment response: ${JSON.stringify(e.response.data)}`);
+        this.logger.debug(`Ivorypay response body: ${JSON.stringify(e.response.data)}`);
+      }
+      if (e.response?.status === 404) {
+        this.logger.warn(
+          'Ivorypay endpoint returned 404. Verify IVORYPAY_BASE_URL and endpoint path. ' +
+          'Common endpoints: /v1/checkout, /v1/transactions/initialize, /transactions/create',
+        );
       }
       throw new BadRequestException(`Ivorypay integration failed: ${message}`);
     }
