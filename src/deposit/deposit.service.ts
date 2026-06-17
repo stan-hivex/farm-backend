@@ -93,13 +93,23 @@ export class DepositService {
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
-    } else if (paymentMethod === 'CARD') {
+    } else if (paymentMethod === 'APPLE_PAY' || paymentMethod === 'CARD') {
       const init = await this.paystack.initializePayment({
         email: dto.email || `${userId}@farm.app`,
         amount: total,
         reference,
         currency: 'KES',
         channels: ['card'],
+        metadata: { userId, depositId: deposit.id, paymentMethod },
+      });
+      paymentUrl = init.authorization_url || init.authorizationUrl;
+    } else if (paymentMethod === 'BANK_TRANSFER') {
+      const init = await this.paystack.initializePayment({
+        email: dto.email || `${userId}@farm.app`,
+        amount: total,
+        reference,
+        currency: 'KES',
+        channels: ['bank'],
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;

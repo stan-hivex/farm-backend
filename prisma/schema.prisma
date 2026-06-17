@@ -774,6 +774,8 @@ enum PaymentMethod {
   CARD
   MOBILE_MONEY
   CRYPTO
+  APPLE_PAY
+  BANK_TRANSFER
 }
 
 enum DepositStatus {

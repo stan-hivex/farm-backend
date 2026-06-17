@@ -13,7 +13,7 @@ import { Public } from '../common/decorators/public.decorator';
 class DepositDto {
   @IsNumber() @IsPositive() amount_fiat!: number;
   @IsNotEmpty() @IsString() currency!: string;
-  @IsOptional() @IsString() paymentMethod?: 'CARD' | 'MOBILE_MONEY' | 'CRYPTO';
+  @IsOptional() @IsString() paymentMethod?: 'CARD' | 'MOBILE_MONEY' | 'CRYPTO' | 'APPLE_PAY' | 'BANK_TRANSFER';
   @IsOptional() @IsString() phone?: string;
 }
 // WithdrawDto removed: use WithdrawService endpoints instead
@@ -29,7 +29,7 @@ export class PaymentsController {
   @Post('deposit')
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard, KycGuard)
-  @ApiOperation({ summary: 'Initiate a fiat deposit (CARD, MOBILE_MONEY, CRYPTO)' })
+  @ApiOperation({ summary: 'Initiate a fiat deposit (CARD, MOBILE_MONEY, CRYPTO, APPLE_PAY, BANK_TRANSFER)' })
   deposit(@CurrentUser() u: any, @Body() dto: DepositDto, @Req() req: Request) {
     // Prefer a signed device token to prevent spoofing
     let deviceRisk = 0;

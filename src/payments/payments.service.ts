@@ -230,29 +230,13 @@ export class PaymentsService {
       };
     }
 
-    if (paymentMethod !== 'CARD') {
-      throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
-    }
-
-    const response = await this.paystack.initializePayment({
-      email: user.email || `${user.phone}@farm.app`,
-      amount: dto.amount_fiat,
-      currency: dto.currency,
-      reference,
-      metadata: { user_id: userId },
-    });
-
-    const tx = await this.prisma.transactions.create({
-      data: {
-        transaction_reference: reference,
-        receiver_wallet_id: wallet?.id,
-        transaction_type: 'deposit',
-        status: 'pending',
-        amount: amount_farm,
-        fee: 0,
-        net_amount: amount_farm,
-        currency: 'FARM',
-        description: `Pending deposit via Paystack (${dto.currency} ${dto.amount_fiat})`,
+    if (paymentMethod === 'APPLE_PAY' || paymentMethod === 'CARD') {
+      const response = await this.paystack.initializePayment({
+        email: user.email || `${user.phone}@farm.app`,
+        amount: dto.amount_fiat,
+        currency: dto.currency,
+        reference,
+        channels: ['card'],
         metadata: {
           provider: 'paystack',
           amount_fiat: dto.amount_fiat,
@@ -261,49 +245,152 @@ export class PaymentsService {
           user_id: userId,
           device_risk: ctx?.deviceRisk ?? null,
           ip: ctx?.ip ?? null,
+          payment_method: paymentMethod,
         },
-      },
-    });
+      });
 
-    this.logger.log(`initiateDeposit: created transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+      const tx = await this.prisma.transactions.create({
+        data: {
+          transaction_reference: reference,
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'deposit',
+          status: 'pending',
+          amount: amount_farm,
+          fee: 0,
+          net_amount: amount_farm,
+          currency: 'FARM',
+          description: `Pending ${paymentMethod === 'APPLE_PAY' ? 'Apple Pay' : 'Card'} deposit via Paystack (${dto.currency} ${dto.amount_fiat})`,
+          metadata: {
+            provider: 'paystack',
+            amount_fiat: dto.amount_fiat,
+            currency_fiat: dto.currency,
+            exchange_rate: rate,
+            user_id: userId,
+            device_risk: ctx?.deviceRisk ?? null,
+            ip: ctx?.ip ?? null,
+            payment_method: paymentMethod,
+          },
+        },
+      });
 
-    await this.prisma.audit_logs.create({
-      data: {
-        user_id: userId,
-        action: 'deposit_initiated',
-        entity_type: 'transaction',
-        entity_id: tx.id,
-        new_values: { reference, amount_fiat: dto.amount_fiat, amount_farm },
-      },
-    });
+      this.logger.log(`initiateDeposit: created Paystack ${paymentMethod === 'APPLE_PAY' ? 'Apple Pay' : 'card'} transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
 
-    try {
-      const deposit = await this.prisma.deposit.create({
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'deposit_initiated',
+          entity_type: 'transaction',
+          entity_id: tx.id,
+          new_values: { reference, amount_fiat: dto.amount_fiat, amount_farm },
+        },
+      });
+
+      await this.prisma.deposit.create({
         data: {
           userId,
           amount: amount_farm,
           fee: 0,
           total: amount_farm,
           currency: 'FARM',
-          paymentMethod: 'CARD',
+          paymentMethod,
           provider: 'paystack',
           reference,
           status: 'PENDING',
         },
       });
-      this.logger.log(`initiateDeposit: created deposit id=${deposit.id} reference=${reference} amount_farm=${amount_farm}`);
-    } catch (err) {
-      this.logger.error(`initiateDeposit: failed to create deposit for reference=${reference}: ${err instanceof Error ? err.message : String(err)}`);
+
+      return {
+        data: {
+          provider: 'PAYSTACK',
+          reference,
+          payment_url: response.authorization_url || response.authorizationUrl,
+          authorization_url: response.authorization_url || response.authorizationUrl,
+        },
+        message: `${paymentMethod === 'APPLE_PAY' ? 'Apple Pay' : 'Card'} deposit initiated via Paystack checkout`,
+      };
     }
 
-    return {
-      data: {
-        payment_url: response.authorization_url,
+    if (paymentMethod === 'BANK_TRANSFER') {
+      const response = await this.paystack.initializePayment({
+        email: user.email || `${user.phone}@farm.app`,
+        amount: dto.amount_fiat,
+        currency: dto.currency,
         reference,
-        amount_farm: amount_farm.toFixed(4),
-      },
-      message: 'Deposit initiated',
-    };
+        channels: ['bank'],
+        metadata: {
+          provider: 'paystack',
+          amount_fiat: dto.amount_fiat,
+          currency_fiat: dto.currency,
+          exchange_rate: rate,
+          user_id: userId,
+          device_risk: ctx?.deviceRisk ?? null,
+          ip: ctx?.ip ?? null,
+          payment_method: paymentMethod,
+        },
+      });
+
+      const tx = await this.prisma.transactions.create({
+        data: {
+          transaction_reference: reference,
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'deposit',
+          status: 'pending',
+          amount: amount_farm,
+          fee: 0,
+          net_amount: amount_farm,
+          currency: 'FARM',
+          description: `Pending bank transfer deposit via Paystack (${dto.currency} ${dto.amount_fiat})`,
+          metadata: {
+            provider: 'paystack',
+            amount_fiat: dto.amount_fiat,
+            currency_fiat: dto.currency,
+            exchange_rate: rate,
+            user_id: userId,
+            device_risk: ctx?.deviceRisk ?? null,
+            ip: ctx?.ip ?? null,
+            payment_method: paymentMethod,
+          },
+        },
+      });
+
+      this.logger.log(`initiateDeposit: created Paystack bank transfer transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'deposit_initiated',
+          entity_type: 'transaction',
+          entity_id: tx.id,
+          new_values: { reference, amount_fiat: dto.amount_fiat, amount_farm },
+        },
+      });
+
+      await this.prisma.deposit.create({
+        data: {
+          userId,
+          amount: amount_farm,
+          fee: 0,
+          total: amount_farm,
+          currency: 'FARM',
+          paymentMethod,
+          provider: 'paystack',
+          reference,
+          status: 'PENDING',
+        },
+      });
+
+      return {
+        data: {
+          provider: 'PAYSTACK',
+          reference,
+          payment_url: response.authorization_url || response.authorizationUrl,
+          authorization_url: response.authorization_url || response.authorizationUrl,
+        },
+        message: 'Bank transfer deposit initiated via Paystack checkout',
+      };
+    }
+
+    throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
   }
 
   // `processSuccessfulPayment` removed: paystack webhook handling is centralized
