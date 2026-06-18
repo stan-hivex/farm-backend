@@ -154,6 +154,26 @@ export class DepositService {
       throw new BadRequestException(`Transaction not found for reference: ${reference}`);
     }
 
+    // Extra guard: verify provider's authoritative status for this reference
+    try {
+      const metadata = (transaction.metadata as any) ?? {};
+      const provider = (metadata?.provider?.toString()?.toLowerCase() || deposit?.provider?.toLowerCase() || 'unknown').trim();
+      if (provider === 'paystack') {
+        try {
+          const verified = await this.paystack.verifyTransaction(reference);
+          if (!verified || (verified.status ?? '').toString().toLowerCase() !== 'success') {
+            this.logger.warn(`finalizeSuccessfulDeposit: paystack verify indicates non-success for ${reference} status=${verified?.status ?? 'unknown'} - aborting credit`);
+            return false;
+          }
+        } catch (e) {
+          this.logger.warn(`finalizeSuccessfulDeposit: paystack verify failed for ${reference} - aborting credit`, e as any);
+          return false;
+        }
+      }
+    } catch (e) {
+      this.logger.debug('finalizeSuccessfulDeposit: provider verification skipped due to error', e as any);
+    }
+
     if (!deposit && transaction?.amount) {
       const metadata = transaction.metadata as any;
       const userId = metadata?.user_id;

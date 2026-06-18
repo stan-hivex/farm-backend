@@ -48,13 +48,14 @@ export class WebhookService {
         if (!ok) {
           this.logger.warn('Paystack signature verification failed during processing');
           await this.fallbackAlert('paystack', 'Signature verification failed during processing', payload);
-          await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Invalid signature');
+          // Include signature presence and a short sample for debugging (do not log full secret)
+          await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Invalid signature', { signaturePresent: !!signature, signatureSample: signature ? signature.slice(0, 12) : null });
           return { received: true };
         }
       } catch (e) {
         this.logger.error('Error verifying Paystack signature during processing', e as any);
         await this.fallbackAlert('paystack', 'Error verifying signature during processing', payload);
-        await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Signature verification error');
+        await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Signature verification error', { signaturePresent: !!signature });
         return { received: true };
       }
     }
@@ -307,9 +308,10 @@ export class WebhookService {
     });
   }
 
-  private async rejectWebhook(provider: string, event: string, payload: any, reason: string) {
+  private async rejectWebhook(provider: string, event: string, payload: any, reason: string, meta?: any) {
     this.logger.warn(`Rejecting webhook from ${provider}: ${reason}`);
-    return this.logWebhook(provider, event, payload, 'rejected', reason);
+    const response = typeof meta === 'object' && meta ? `${reason} | meta=${JSON.stringify(meta)}` : reason;
+    return this.logWebhook(provider, event, payload, 'rejected', response);
   }
   private verifyProviderPayload(provider: string, payload: any) {
     if (provider === 'paystack') {
