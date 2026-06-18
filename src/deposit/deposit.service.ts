@@ -184,9 +184,10 @@ export class DepositService {
     const txStatus = transaction.status?.toLowerCase();
     const txPending = isDeposit && ['pending', 'processing'].includes(txStatus ?? '');
     const txComplete = isDeposit && txStatus === 'completed';
-    const txFailed = isDeposit && ['failed', 'cancelled', 'reversed'].includes(txStatus ?? '');
+    const txFailed = isDeposit && ['failed', 'cancelled', 'reversed', 'abandoned', 'expired', 'incomplete', 'declined'].includes(txStatus ?? '');
+    const txUnknown = isDeposit && !['pending', 'processing', 'completed', 'failed', 'cancelled', 'reversed', 'abandoned', 'expired', 'incomplete', 'declined'].includes(txStatus ?? '');
 
-    if (txFailed) {
+    if (txFailed || txUnknown) {
       this.logger.warn(`finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} - not crediting wallet`);
       return false;
     }
@@ -212,11 +213,8 @@ export class DepositService {
       return this.creditPendingTransactionDeposit(reference);
     }
 
-    if (transaction.status?.toLowerCase() !== 'completed') {
-      return this.creditPendingTransactionDeposit(reference);
-    }
-
-    return depositComplete || txComplete;
+    this.logger.warn(`finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} is not eligible for wallet credit`);
+    return false;
   }
 
   async failDeposit(reference: string, reason?: string) {
@@ -341,8 +339,14 @@ export class DepositService {
       return false;
     }
 
-    if (transaction.status?.toLowerCase() === 'completed') {
+    const txStatus = transaction.status?.toLowerCase();
+    if (txStatus === 'completed') {
       return true;
+    }
+
+    if (!['pending', 'processing'].includes(txStatus ?? '')) {
+      this.logger.warn(`completePendingTransaction: transaction ${reference} status=${transaction.status} cannot be completed automatically`);
+      return false;
     }
 
     const updates: any = {
@@ -375,7 +379,12 @@ export class DepositService {
 
     const isDeposit = transaction.transaction_type?.toLowerCase() === 'deposit';
     if (!isDeposit) return false;
-    if (transaction.status?.toLowerCase() === 'completed') return true;
+    const txStatus = transaction.status?.toLowerCase();
+    if (txStatus === 'completed') return true;
+    if (!['pending', 'processing'].includes(txStatus ?? '')) {
+      this.logger.warn(`creditPendingTransactionDeposit: transaction ${reference} status=${transaction.status} is not eligible for credit`);
+      return false;
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
       let wallet: any = transaction.receiver_wallet_id

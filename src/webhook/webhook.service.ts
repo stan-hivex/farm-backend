@@ -435,9 +435,10 @@ export class WebhookService {
     const txStatus = transaction?.status?.toLowerCase();
     const txPending = isDeposit && ['pending', 'processing'].includes(txStatus ?? '');
     const txComplete = isDeposit && txStatus === 'completed';
-    const txFailed = isDeposit && ['failed', 'cancelled', 'reversed'].includes(txStatus ?? '');
+    const txFailed = isDeposit && ['failed', 'cancelled', 'reversed', 'abandoned', 'expired', 'incomplete', 'declined'].includes(txStatus ?? '');
+    const txUnknown = isDeposit && !['pending', 'processing', 'completed', 'failed', 'cancelled', 'reversed', 'abandoned', 'expired', 'incomplete', 'declined'].includes(txStatus ?? '');
 
-    if (txFailed) {
+    if (txFailed || txUnknown) {
       this.logger.warn(`finalizeDeposit: transaction ${reference} status=${transaction?.status} - not crediting wallet`);
       return false;
     }
@@ -468,10 +469,8 @@ export class WebhookService {
       return this.creditPendingTransactionDeposit(reference);
     }
 
-    if (transaction && transaction.status?.toLowerCase() !== 'completed') {
-      this.logger.log(`finalizeDeposit: transaction exists and not completed for ${reference}, crediting`);
-      await this.creditPendingTransactionDeposit(reference);
-    }
+    this.logger.warn(`finalizeDeposit: transaction ${reference} status=${transaction?.status} is not eligible for wallet credit`);
+    return false;
 
     this.logger.log(`finalizeDeposit: end for ${reference} returning ${depositComplete || txComplete}`);
     return depositComplete || txComplete;
@@ -623,7 +622,12 @@ export class WebhookService {
 
     const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
     if (!isDeposit) return false;
-    if (transaction.status?.toLowerCase() === 'completed') return true;
+    const txStatus = transaction.status?.toLowerCase();
+    if (txStatus === 'completed') return true;
+    if (!['pending', 'processing'].includes(txStatus ?? '')) {
+      this.logger.warn(`creditPendingTransactionDeposit: transaction ${reference} status=${transaction.status} is not eligible for credit`);
+      return false;
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
       let wallet: any = null;

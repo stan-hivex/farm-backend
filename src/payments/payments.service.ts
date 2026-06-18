@@ -4,7 +4,7 @@ import { PrismaService } from '../database/prisma.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { generateTxReference } from '../common/utils/reference.util';
-import { v4 as uuidv4 } from 'uuid';
+import { PaymentMethod } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -24,13 +24,19 @@ export class PaymentsService {
     dto: { amount_fiat: number; currency: string; paymentMethod?: string; phone?: string },
     ctx?: { deviceRisk?: number; ip?: string; country?: string },
   ) {
+    const supportedPaymentMethods: PaymentMethod[] = ['CARD', 'MOBILE_MONEY', 'CRYPTO', 'APPLE_PAY', 'BANK_TRANSFER'];
+    const rawPaymentMethod = (dto.paymentMethod || 'CARD').toUpperCase();
+    if (!supportedPaymentMethods.includes(rawPaymentMethod as PaymentMethod)) {
+      throw new BadRequestException(`Unsupported payment method ${dto.paymentMethod}`);
+    }
+    const paymentMethod = rawPaymentMethod as PaymentMethod;
+
     const user = await this.prisma.users.findUnique({
       where: { id: userId }, select: { email: true, phone: true },
     });
     if (!user) throw new NotFoundException('User not found');
 
     const reference = generateTxReference();
-    const paymentMethod = (dto.paymentMethod || 'CARD').toUpperCase();
     const rate = await this.getExchangeRate(dto.currency, 'FARM');
     const amount_farm = dto.amount_fiat / rate;
     const fee_fiat = dto.amount_fiat * 0.02;

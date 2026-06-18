@@ -73,10 +73,16 @@ export class PaystackService {
         this.logger.debug(`Paystack initialize error details: ${JSON.stringify(apiData)}`);
       }
 
-      // Provide a clearer error when the merchant hasn't enabled the requested channel
+      // Provide a clearer error when the merchant hasn't enabled the requested channel.
       if (apiData?.code === 'invalid_params' && typeof message === 'string' && message.toLowerCase().includes('no active channel')) {
         const nextStep = apiData?.meta?.nextStep || 'Please enable the required channel in your Paystack dashboard or contact Paystack support.';
-        throw new BadRequestException(`Paystack channel unavailable: ${message}. ${nextStep}`);
+        const channelHint = options.channels?.includes('bank')
+          ? 'Bank transfers are not enabled for this Paystack account. Enable bank transfer support in Paystack or use CARD/APPLE_PAY instead.'
+          : 'Please verify your Paystack channel configuration for the requested payment method.';
+
+        throw new BadRequestException(
+          `Paystack channel unavailable: ${message}. ${channelHint} ${nextStep}`,
+        );
       }
 
       throw new BadRequestException(`Paystack integration failed: ${message}`);
