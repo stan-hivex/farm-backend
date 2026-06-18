@@ -20,7 +20,7 @@ export class DepositService {
   async createDeposit(userId: string, dto: any) {
     const amount = Number(dto.amount_fiat);
     if (!Number.isFinite(amount) || amount < 10) {
-      throw new BadRequestException('Invalid deposit amount. Minimum deposit is KES 10');
+      throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
     }
 
     const reference = uuidv4();
@@ -30,13 +30,18 @@ export class DepositService {
     const fee = amount * feeRate;
     const total = amount + fee;
 
+    const depositCurrency = paymentMethod === 'CRYPTO' ? 'FARM' : dto.currency || 'KES';
+    const depositAmount = amount;
+    const depositFee = paymentMethod === 'CRYPTO' ? 0 : fee;
+    const depositTotal = paymentMethod === 'CRYPTO' ? amount : total;
+
     const deposit = await this.prisma.deposit.create({
       data: {
         userId,
-        amount,
-        fee,
-        total,
-        currency: dto.currency || 'KES',
+        amount: depositAmount,
+        fee: depositFee,
+        total: depositTotal,
+        currency: depositCurrency,
         paymentMethod,
         provider,
         reference,
@@ -45,39 +50,98 @@ export class DepositService {
       },
     });
 
-    // Create corresponding transaction record so webhook finalizer can find it
-    try {
+    const createdAmount = deposit.amount;
+    let paymentUrl: string | null = null;
+
+    if (paymentMethod !== 'CRYPTO') {
       await this.prisma.transactions.create({
         data: {
           transaction_reference: reference,
           transaction_type: 'deposit',
-          amount: total,
           status: 'pending',
+          amount: total,
+          fee: 0,
+          net_amount: total,
           currency: dto.currency || 'KES',
+          description: `Pending ${paymentMethod} deposit via ${provider.toUpperCase()} (${depositCurrency} ${total})`,
           metadata: {
-            user_id: userId,
             provider,
-            paymentMethod,
-            deposit_id: deposit.id,
             amount_fiat: amount,
+            currency_fiat: dto.currency || 'KES',
+            exchange_rate: 1,
+            user_id: userId,
+            payment_method: paymentMethod,
+            deposit_id: deposit.id,
           },
         },
       });
-    } catch (e) {
-      this.logger.error(`createDeposit: failed to create transaction for reference=${reference}`, e as any);
     }
 
-    let paymentUrl: string | null = null;
-
     if (paymentMethod === 'CRYPTO') {
+      const farmAmount = depositAmount;
+      const farmToUsdRate = 130;
+      const amountUsd = Number((farmAmount / farmToUsdRate).toFixed(2));
+
       const init = await this.ivorypay.createPayment({
-        amount: total,
-        currency: 'KES',
+        amount: amountUsd,
+        currency: 'USD',
         reference,
         email: dto.email || `${userId}@farm.app`,
-        description: `Farm deposit ${total} KES via crypto`,
+        description: `Farm deposit ${farmAmount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
+        baseFiat: 'USD',
+        metadata: {
+          provider: 'ivorypay',
+          amount_farm: farmAmount,
+          amount_usd: amountUsd,
+          farm_to_usd_rate: farmToUsdRate,
+          currency_fiat: 'USD',
+          user_id: userId,
+          payment_method: 'CRYPTO',
+        },
       });
       paymentUrl = init.data?.payment_link || init.payment_link || init.checkout_url;
+
+      await this.prisma.transactions.create({
+        data: {
+          transaction_reference: reference,
+          transaction_type: 'deposit',
+          status: 'pending',
+          amount: farmAmount,
+          fee: 0,
+          net_amount: farmAmount,
+          currency: 'FARM',
+          description: `Pending crypto deposit via Ivorypay (${farmAmount} FARM → ${amountUsd} USD)`,
+          metadata: {
+            provider: 'ivorypay',
+            amount_farm: farmAmount,
+            amount_usd: amountUsd,
+            farm_to_usd_rate: farmToUsdRate,
+            currency_fiat: 'USD',
+            user_id: userId,
+            payment_method: 'CRYPTO',
+          },
+        },
+      });
+
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'deposit_initiated',
+          entity_type: 'transaction',
+          entity_id: null,
+          new_values: { reference, amount_fiat: dto.amount_fiat, amount_farm: farmAmount },
+        },
+      });
+
+      return {
+        data: {
+          provider: 'IVORYPAY',
+          reference,
+          payment_url: init.data?.payment_link || init.payment_link,
+          authorization_url: init.data?.payment_link || init.payment_link,
+        },
+        message: 'Crypto deposit initiated via Ivorypay',
+      };
     } else if (paymentMethod === 'MOBILE_MONEY') {
       if (!dto.phone) {
         throw new BadRequestException('Phone number is required for mobile money deposits');

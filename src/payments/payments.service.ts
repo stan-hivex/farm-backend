@@ -167,11 +167,11 @@ export class PaymentsService {
     }
 
     if (paymentMethod === 'CRYPTO') {
-      // Convert FARM -> USD before creating Ivorypay payment to avoid double hops
-      // Assumption: 1 FARM == 1 KES, and 1 USD == 130 KES (therefore 130 FARM == 1 USD)
+      // Convert FARM -> USD before creating Ivorypay payment to avoid double hops.
+      // Assumption: 1 FARM == 1 KES, and 1 USD == 130 KES (therefore 130 FARM == 1 USD).
       const farmAmount = amount_farm; // amount in FARM
-      const farmToUsdRate = 130; // configurable later via env if needed
-      const amountUsd = Math.round((farmAmount / farmToUsdRate) * 100) / 100; // 2 decimal USD
+      const farmToUsdRate = Number(this.cfg.get<string>('IVORYPAY_FARM_TO_USD_RATE', '130')) || 130;
+      const amountUsd = Number((farmAmount / farmToUsdRate).toFixed(2));
 
       const payment = await this.ivorypay.createPayment({
         amount: amountUsd,
