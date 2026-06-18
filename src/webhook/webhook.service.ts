@@ -543,62 +543,65 @@ export class WebhookService {
       throw new BadRequestException(`Invalid transaction for deposit finalization: reference=${reference}`);
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      let wallet = await tx.wallets.findFirst({ where: { user_id: deposit.userId, is_active: true } });
-      if (!wallet) {
-        wallet = await tx.wallets.create({
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        let wallet = await tx.wallets.findFirst({ where: { user_id: deposit.userId, is_active: true } });
+        if (!wallet) {
+          wallet = await tx.wallets.create({
+            data: {
+              user_id: deposit.userId,
+              wallet_name: 'Main Wallet',
+              wallet_type: 'user',
+              wallet_address: uuidv4(),
+              currency: deposit.currency || 'FARM',
+            },
+          });
+        }
+
+        const updatedDeposit = await tx.deposit.updateMany({
+          where: { id: deposit.id, status: 'PENDING' },
+          data: { status: 'SUCCESS' },
+        });
+        if (updatedDeposit.count === 0) {
+          return { ok: false };
+        }
+
+        const amount = this.normalizeAmount(Number(deposit.amount));
+        const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
+
+        await tx.wallets.update({
+          where: { id: wallet.id },
+          data: { balance: { increment: amount } },
+        });
+
+        await tx.ledger_entries.create({
           data: {
-            user_id: deposit.userId,
-            wallet_name: 'Main Wallet',
-            wallet_type: 'user',
-            wallet_address: uuidv4(),
-            currency: deposit.currency || 'FARM',
+            transaction_id: transaction?.id ?? null,
+            wallet_id: wallet.id,
+            entry_type: 'credit',
+            amount,
+            balance_before: previousBalance,
+            balance_after: previousBalance + amount,
+            description: `Deposit completed — ref: ${reference}`,
           },
         });
-      }
 
-      const updatedDeposit = await tx.deposit.updateMany({
-        where: { id: deposit.id, status: 'PENDING' },
-        data: { status: 'SUCCESS' },
-      });
-      if (updatedDeposit.count === 0) {
-        return { ok: false };
-      }
+        const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
+        if (transaction && isDeposit && transaction.status?.toLowerCase() !== 'completed') {
+          await tx.transactions.update({
+            where: { id: transaction.id },
+            data: {
+              status: 'completed',
+              receiver_wallet_id: transaction.receiver_wallet_id ?? wallet.id,
+              processed_at: new Date(),
+            },
+          });
+        }
 
-      const amount = this.normalizeAmount(Number(deposit.amount));
-      const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
-
-      await tx.wallets.update({
-        where: { id: wallet.id },
-        data: { balance: { increment: amount } },
-      });
-
-      await tx.ledger_entries.create({
-        data: {
-          transaction_id: transaction?.id ?? null,
-          wallet_id: wallet.id,
-          entry_type: 'credit',
-          amount,
-          balance_before: previousBalance,
-          balance_after: previousBalance + amount,
-          description: `Deposit completed — ref: ${reference}`,
-        },
-      });
-
-      const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
-      if (transaction && isDeposit && transaction.status?.toLowerCase() !== 'completed') {
-        await tx.transactions.update({
-          where: { id: transaction.id },
-          data: {
-            status: 'completed',
-            receiver_wallet_id: transaction.receiver_wallet_id ?? wallet.id,
-            processed_at: new Date(),
-          },
-        });
-      }
-
-      return { ok: true, wallet, amount, previousBalance };
-    });
+        return { ok: true, wallet, amount, previousBalance };
+      },
+      { timeout: 10000 },
+    );
 
     if (!result.ok) {
       return false;
@@ -1131,14 +1134,23 @@ export class WebhookService {
         if (transaction) {
           const metadata = transaction.metadata as any ?? {};
           const webhookAmount = Number(payload.data?.amount ?? payload.amount);
-          const expected = metadata?.amount_fiat !== undefined && metadata?.amount_fiat !== null
-            ? Number(metadata.amount_fiat)
-            : Number(transaction.amount);
-          if (!isFinite(expected) || isNaN(webhookAmount)) {
+          // If metadata includes amount_usd, compare against it (we send USD to Ivorypay)
+          const expectedUsd = metadata?.amount_usd !== undefined && metadata?.amount_usd !== null
+            ? Number(metadata.amount_usd)
+            : null;
+          const expectedFarm = Number(transaction.amount);
+          if (expectedUsd !== null && isFinite(expectedUsd) && !isNaN(webhookAmount)) {
+            if (Math.abs(webhookAmount - expectedUsd) > 0.01) {
+              this.logger.error(`FRAUD ALERT: Ivorypay USD amount mismatch for ${reference}: expected ${expectedUsd}, got ${webhookAmount}`);
+              throw new BadRequestException(`Amount mismatch: expected ${expectedUsd}, got ${webhookAmount}`);
+            }
+          } else if (isFinite(expectedFarm) && !isNaN(webhookAmount)) {
+            // Fallback: compare webhook amount to farm amount (unlikely for Ivorypay)
+            if (Math.abs(webhookAmount - expectedFarm) > 0.01) {
+              this.logger.warn(`Ivorypay processing amount validation skipped/fallback for ${reference} due to missing USD metadata`);
+            }
+          } else {
             this.logger.warn(`Ivorypay processing amount validation skipped for ${reference} due to missing data`);
-          } else if (Math.abs(webhookAmount - expected) > 0.01) {
-            this.logger.error(`FRAUD ALERT: Amount mismatch for Ivorypay ${reference}: expected ${expected}, got ${webhookAmount}`);
-            throw new BadRequestException(`Amount mismatch: expected ${expected}, got ${webhookAmount}`);
           }
         }
       }

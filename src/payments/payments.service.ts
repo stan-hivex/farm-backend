@@ -24,7 +24,7 @@ export class PaymentsService {
     dto: { amount_fiat: number; currency: string; paymentMethod?: string; phone?: string },
     ctx?: { deviceRisk?: number; ip?: string; country?: string },
   ) {
-    const supportedPaymentMethods: PaymentMethod[] = ['CARD', 'MOBILE_MONEY', 'CRYPTO', 'APPLE_PAY', 'BANK_TRANSFER'];
+    const supportedPaymentMethods: PaymentMethod[] = ['CARD', 'MOBILE_MONEY', 'CRYPTO', 'BANK_TRANSFER'];
     const rawPaymentMethod = (dto.paymentMethod || 'CARD').toUpperCase();
     if (!supportedPaymentMethods.includes(rawPaymentMethod as PaymentMethod)) {
       throw new BadRequestException(`Unsupported payment method ${dto.paymentMethod}`);
@@ -167,12 +167,31 @@ export class PaymentsService {
     }
 
     if (paymentMethod === 'CRYPTO') {
+      // Convert FARM -> USD before creating Ivorypay payment to avoid double hops
+      // Assumption: 1 FARM == 1 KES, and 1 USD == 130 KES (therefore 130 FARM == 1 USD)
+      const farmAmount = amount_farm; // amount in FARM
+      const farmToUsdRate = 130; // configurable later via env if needed
+      const amountUsd = Math.round((farmAmount / farmToUsdRate) * 100) / 100; // 2 decimal USD
+
       const payment = await this.ivorypay.createPayment({
-        amount: dto.amount_fiat,
-        currency: dto.currency,
+        amount: amountUsd,
+        currency: 'USD',
         reference,
         email: user.email || `${user.phone}@farm.app`,
-        description: `Farm deposit - ${dto.amount_fiat} ${dto.currency} → ${amount_farm.toFixed(4)} FARM`,
+        description: `Farm deposit - ${farmAmount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
+        baseFiat: 'USD',
+        metadata: {
+          provider: 'ivorypay',
+          amount_farm: farmAmount,
+          amount_usd: amountUsd,
+          farm_to_usd_rate: farmToUsdRate,
+          currency_fiat: 'USD',
+          exchange_rate: rate,
+          user_id: userId,
+          device_risk: ctx?.deviceRisk ?? null,
+          ip: ctx?.ip ?? null,
+          payment_method: 'CRYPTO',
+        },
       });
 
       const tx = await this.prisma.transactions.create({
@@ -185,11 +204,13 @@ export class PaymentsService {
           fee: 0,
           net_amount: amount_farm,
           currency: 'FARM',
-          description: `Pending crypto deposit via Ivorypay (${dto.currency} ${dto.amount_fiat})`,
+          description: `Pending crypto deposit via Ivorypay (${farmAmount} FARM → ${amountUsd} USD)`,
           metadata: {
             provider: 'ivorypay',
-            amount_fiat: dto.amount_fiat,
-            currency_fiat: dto.currency,
+            amount_farm: farmAmount,
+            amount_usd: amountUsd,
+            farm_to_usd_rate: farmToUsdRate,
+            currency_fiat: 'USD',
             exchange_rate: rate,
             user_id: userId,
             device_risk: ctx?.deviceRisk ?? null,
@@ -236,7 +257,7 @@ export class PaymentsService {
       };
     }
 
-    if (paymentMethod === 'APPLE_PAY' || paymentMethod === 'CARD') {
+    if (paymentMethod === 'CARD') {
       const response = await this.paystack.initializePayment({
         email: user.email || `${user.phone}@farm.app`,
         amount: dto.amount_fiat,
@@ -265,7 +286,7 @@ export class PaymentsService {
           fee: 0,
           net_amount: amount_farm,
           currency: 'FARM',
-          description: `Pending ${paymentMethod === 'APPLE_PAY' ? 'Apple Pay' : 'Card'} deposit via Paystack (${dto.currency} ${dto.amount_fiat})`,
+          description: `Pending Card deposit via Paystack (${dto.currency} ${dto.amount_fiat})`,
           metadata: {
             provider: 'paystack',
             amount_fiat: dto.amount_fiat,
@@ -279,7 +300,7 @@ export class PaymentsService {
         },
       });
 
-      this.logger.log(`initiateDeposit: created Paystack ${paymentMethod === 'APPLE_PAY' ? 'Apple Pay' : 'card'} transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+      this.logger.log(`initiateDeposit: created Paystack card transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
 
       await this.prisma.audit_logs.create({
         data: {
@@ -312,7 +333,7 @@ export class PaymentsService {
           payment_url: response.authorization_url || response.authorizationUrl,
           authorization_url: response.authorization_url || response.authorizationUrl,
         },
-        message: `${paymentMethod === 'APPLE_PAY' ? 'Apple Pay' : 'Card'} deposit initiated via Paystack checkout`,
+        message: 'Card deposit initiated via Paystack checkout',
       };
     }
 

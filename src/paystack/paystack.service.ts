@@ -77,7 +77,7 @@ export class PaystackService {
       if (apiData?.code === 'invalid_params' && typeof message === 'string' && message.toLowerCase().includes('no active channel')) {
         const nextStep = apiData?.meta?.nextStep || 'Please enable the required channel in your Paystack dashboard or contact Paystack support.';
         const channelHint = options.channels?.includes('bank')
-          ? 'Bank transfers are not enabled for this Paystack account. Enable bank transfer support in Paystack or use CARD/APPLE_PAY instead.'
+          ? 'Bank transfers are not enabled for this Paystack account. Enable bank transfer support in Paystack or use CARD instead.'
           : 'Please verify your Paystack channel configuration for the requested payment method.';
 
         throw new BadRequestException(

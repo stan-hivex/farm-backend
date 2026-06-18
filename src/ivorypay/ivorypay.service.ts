@@ -35,9 +35,9 @@ export class IvorypayService {
           email: options.email,
           type: 'CRYPTO',
           mode: 'CHECKOUT',
-          baseFiat: 'KES',
-          crypto: 'USDT',
-          metadata: options.metadata ? JSON.stringify(options.metadata) : null,
+          baseFiat: options.baseFiat || 'KES',
+          crypto: options.crypto || 'USDT',
+          metadata: options.metadata ? (typeof options.metadata === 'string' ? options.metadata : JSON.stringify(options.metadata)) : null,
         },
         {
           headers: {
