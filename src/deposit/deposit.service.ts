@@ -173,7 +173,8 @@ export class DepositService {
         amount: total,
         reference,
         currency: 'KES',
-        channels: ['bank'],
+        // Prefer PESALink for Kenyan bank transfers where available
+        channels: ['pesalink'],
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;

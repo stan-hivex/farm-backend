@@ -343,7 +343,8 @@ export class PaymentsService {
         amount: dto.amount_fiat,
         currency: dto.currency,
         reference,
-        channels: ['bank'],
+        // Prefer PESALink for Kenyan bank transfers where available
+        channels: ['pesalink'],
         metadata: {
           provider: 'paystack',
           amount_fiat: dto.amount_fiat,

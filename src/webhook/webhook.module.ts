@@ -1,7 +1,12 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { ScheduleModule } from '@nestjs/schedule';
-import { WebhookController } from './webhook.controller';
+import {
+  WebhookController,
+  WebhookNoVersionController,
+  IvorypayWebhookAliasController,
+  IvorypayWebhookNoVersionController,
+} from './webhook.controller';
 import { WebhookService } from './webhook.service';
 import { WebhookProcessor } from './webhook.processor';
 import { PaymentProcessor } from './payment.processor';
@@ -26,7 +31,12 @@ import { QUEUES } from '../common/constants';
       name: QUEUES.WEBHOOKS,
     }),
   ],
-  controllers: [WebhookController],
+  controllers: [
+    WebhookController,
+    WebhookNoVersionController,
+    IvorypayWebhookAliasController,
+    IvorypayWebhookNoVersionController,
+  ],
   providers: [
     WebhookService,
     WebhookProcessor,
