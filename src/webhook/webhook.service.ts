@@ -30,6 +30,8 @@ export class WebhookService {
 
   async handlePaystackWebhook(payload: any, verified = false, rawBody?: string, signature?: string) {
     const event = payload.event;
+    const status = payload.data?.status ?? payload.data?.gateway_response ?? payload.data?.failure_message ?? 'unknown';
+    this.logger.log(`Paystack webhook received: event=${event ?? 'unknown'} reference=${payload?.data?.reference ?? 'missing'} status=${status}`);
     const eventId = this.getEventId('paystack', payload);
     if (eventId && (await this.isReplay('paystack', eventId))) {
       this.logger.warn(`Replay detected for paystack:${eventId}`);
@@ -66,6 +68,7 @@ export class WebhookService {
     }
 
     if (!this.verifyProviderPayload('paystack', payload)) {
+      this.logger.warn(`Paystack webhook rejected: invalid payload event=${event ?? 'unknown'} reference=${payload?.data?.reference ?? 'missing'} status=${payload?.data?.status ?? 'unknown'}`);
       await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Invalid Paystack payload');
       return { received: true };
     }
@@ -178,6 +181,8 @@ export class WebhookService {
 
   async handleIvorypayWebhook(payload: any, verified = false) {
     const event = payload.event ?? payload.status;
+    const status = payload.data?.status ?? payload.status ?? payload.data?.state ?? 'unknown';
+    this.logger.log(`Ivorypay webhook received: event=${event ?? 'unknown'} reference=${payload?.data?.reference ?? payload?.reference ?? 'missing'} status=${status}`);
     const eventId = this.getEventId('ivorypay', payload);
     if (eventId && (await this.isReplay('ivorypay', eventId))) {
       this.logger.warn(`Replay detected for ivorypay:${eventId}`);
@@ -308,12 +313,20 @@ export class WebhookService {
   }
   private verifyProviderPayload(provider: string, payload: any) {
     if (provider === 'paystack') {
-      // Require expected Paystack fields: event, data.reference and numeric amount
+      // Require expected Paystack fields: event and data.reference.
+      // For success events, require a numeric amount. For failure/cancel/expired
+      // events, the reference is enough to allow processing of the failure path.
       const hasEvent = !!payload?.event;
       const hasRef = !!payload?.data?.reference && typeof payload.data.reference === 'string';
       const amount = payload?.data?.amount ?? payload?.amount;
       const hasAmount = amount !== undefined && amount !== null && !isNaN(Number(amount));
-      return hasEvent && hasRef && hasAmount;
+
+      const successEvents = ['charge.success', 'payment.success', 'transaction.success'];
+      if (successEvents.includes(payload.event)) {
+        return hasEvent && hasRef && hasAmount;
+      }
+
+      return hasEvent && hasRef;
     }
 
     if (provider === 'ivorypay') {
@@ -491,9 +504,33 @@ export class WebhookService {
 
     for (const tx of stuck) {
       try {
-        await this.finalizeDeposit(tx.transaction_reference);
+        const deposit = await this.prisma.deposit.findFirst({ where: { reference: tx.transaction_reference } });
+        const metadata = (tx.metadata as any) ?? {};
+        const provider = (metadata.provider?.toString()?.toLowerCase() || deposit?.provider?.toLowerCase() || 'unknown').trim();
+
+        if (provider !== 'paystack') {
+          this.logger.log(`fixStuckDeposits: skipping ${tx.transaction_reference}, unsupported provider=${provider}`);
+          continue;
+        }
+
+        let verifiedTransaction: any = null;
+        try {
+          verifiedTransaction = await this.paystackService.verifyTransaction(tx.transaction_reference);
+        } catch (verifyError) {
+          this.logger.warn(`fixStuckDeposits: paystack verify failed for ${tx.transaction_reference}, leaving pending`, verifyError as any);
+          continue;
+        }
+
+        const status = (verifiedTransaction?.status ?? '').toString().toLowerCase();
+        if (status === 'success') {
+          await this.finalizeDeposit(tx.transaction_reference);
+        } else if (['failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'].includes(status)) {
+          await this.depositService.failDeposit(tx.transaction_reference, `Paystack verify indicates ${verifiedTransaction.status}`);
+        } else {
+          this.logger.log(`fixStuckDeposits: leaving ${tx.transaction_reference} pending, paystack status=${verifiedTransaction?.status ?? 'unknown'}`);
+        }
       } catch (err) {
-        this.logger.error(`fixStuckDeposits: failed to finalize ${tx.transaction_reference}`, err as any);
+        this.logger.error(`fixStuckDeposits: failed to process ${tx.transaction_reference}`, err as any);
       }
     }
   }
@@ -964,6 +1001,9 @@ export class WebhookService {
   async handlePaystackWebhookProcessing(payload: any) {
     const event = payload.event;
     const reference = payload.data?.reference;
+    const status = payload.data?.status ?? payload.data?.gateway_response ?? payload.data?.failure_message ?? 'unknown';
+
+    this.logger.log(`Paystack webhook processing start: event=${event} reference=${reference || 'missing'} status=${status}`);
 
     if (!reference) {
       this.logger.warn('Paystack webhook processing: missing reference');
@@ -1018,7 +1058,13 @@ export class WebhookService {
         await this.withdrawService.markAsSuccess(reference);
       } else if (['transfer.failed', 'transfer.reversed'].includes(event)) {
         await this.withdrawService.rejectWithdrawal(reference, payload.data?.reason);
-      } else if (['charge.failed', 'payment.failed', 'transaction.failed', 'charge.cancelled', 'payment.cancelled', 'transaction.cancelled', 'authorization.cancelled', 'authorization.expired', 'cancelled'].includes(event)) {
+      } else if (
+        ['charge.failed', 'payment.failed', 'transaction.failed', 'charge.cancelled', 'payment.cancelled', 'transaction.cancelled',
+         'charge.expired', 'payment.expired', 'transaction.expired', 'authorization.cancelled', 'authorization.expired', 'authorization.failed',
+         'cancelled', 'failed', 'expired'].includes(event) ||
+        /(?:failed|cancelled|expired)$/i.test(event)
+      ) {
+        this.logger.warn(`Paystack webhook failure/cancel event received: event=${event} reference=${reference} status=${status}`);
         await this.depositService.failDeposit(
           reference,
           payload.data?.gateway_response || payload.data?.failure_message || payload.data?.message || 'Payment failed or cancelled',
@@ -1067,6 +1113,9 @@ export class WebhookService {
   async handleIvorypayWebhookProcessing(payload: any) {
     const event = payload.event ?? payload.status;
     const reference = payload.data?.reference ?? payload.reference;
+    const status = payload.data?.status ?? payload.status ?? payload.data?.state ?? 'unknown';
+
+    this.logger.log(`Ivorypay webhook processing start: event=${event ?? 'unknown'} reference=${reference ?? 'missing'} status=${status}`);
 
     if (!reference) {
       this.logger.warn('Ivorypay webhook processing: missing reference');
@@ -1096,11 +1145,13 @@ export class WebhookService {
       } else if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
         await this.finalizeWithdrawal(reference, true);
       } else if (['payment.failed', 'transaction.failed', 'payment.cancelled', 'transaction.cancelled', 'cancelled', 'failed'].includes(event)) {
+        this.logger.warn(`Ivorypay webhook failure/cancel event received: event=${event} reference=${reference} status=${status}`);
         await this.depositService.failDeposit(
           reference,
           payload.data?.reason || payload.data?.message || payload.message || 'Payment failed or cancelled',
         );
       } else if (['withdrawal.failed'].includes(event)) {
+        this.logger.warn(`Ivorypay webhook withdrawal failure event: event=${event} reference=${reference} status=${status}`);
         await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
       }
     } catch (error) {

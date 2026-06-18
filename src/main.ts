@@ -98,20 +98,57 @@ async function bootstrap() {
 
   const port = Number(process.env.PORT || configService.get<number>('PORT') || 3000);
 
+  // Validate required environment variables
+  const requiredEnvVars = ['DATABASE_URL'];
+  const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
+
+  if (missingEnvVars.length > 0) {
+    Logger.warn(
+      `⚠️ Missing environment variables: ${missingEnvVars.join(', ')}`,
+      'Bootstrap',
+    );
+    Logger.warn(
+      'On Render.com: Connect a PostgreSQL database in the Render dashboard',
+      'Bootstrap',
+    );
+  }
+
   try {
     await app.listen(port);
+    Logger.log(
+      `✅ Application is running on: ${await app.getUrl()}`,
+      'Bootstrap',
+    );
+    Logger.log(
+      `🔗 API: ${await app.getUrl()}/api/v1`,
+      'Bootstrap',
+    );
+    Logger.log(
+      `💚 Health check: ${await app.getUrl()}/api/v1/health`,
+      'Bootstrap',
+    );
   } catch (error) {
     if ((error as any)?.code === 'EADDRINUSE') {
       const fallbackPort = port + 1;
       Logger.warn(`Port ${port} is already in use. Trying ${fallbackPort} instead.`, 'Bootstrap');
       await app.listen(fallbackPort);
+      Logger.log(
+        `✅ Application is running on: ${await app.getUrl()}`,
+        'Bootstrap',
+      );
     } else {
-      Logger.error('Failed to start application', error as any, 'Bootstrap');
+      Logger.error(
+        `❌ Failed to start application: ${error instanceof Error ? error.message : String(error)}`,
+        (error as any)?.stack,
+        'Bootstrap',
+      );
+      Logger.error(
+        'Debug info: Check DATABASE_URL, REDIS_URL, and other environment variables',
+        'Bootstrap',
+      );
       process.exit(1);
     }
   }
-
-  Logger.log(`Application is running on: ${await app.getUrl()}`, 'Bootstrap');
 }
 
 bootstrap();

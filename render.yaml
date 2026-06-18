@@ -16,6 +16,68 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      
+      - key: PORT
+        value: "3000"
+      
+      # Database connection - get from PostgreSQL service or external DB
+      - key: DATABASE_URL
+        fromDatabase:
+          name: farm-db
+          property: connectionString
+      
+      # Redis URL - get from Redis service or use external Redis
+      - key: REDIS_URL
+        sync: false
+      
+      # CORS configuration
       - key: CORS_ORIGINS
         # Replace with your Cloudflare origin(s), comma-separated if multiple.
-        value: https://*.algorandfarm686.workers.dev
+        value: https://*.algorandfarm686.workers.dev,http://localhost:3000,http://localhost:3001
+      
+      # Paystack Configuration
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      
+      # Ivorypay Configuration
+      - key: IVORYPAY_API_KEY
+        sync: false
+      
+      - key: IVORYPAY_BASE_URL
+        value: https://api.ivorypay.io
+      
+      # JWT Configuration
+      - key: JWT_SECRET
+        sync: false
+      
+      - key: JWT_EXPIRATION
+        value: 3600
+      
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      
+      - key: JWT_REFRESH_EXPIRATION
+        value: 604800
+      
+      # Cloudinary Configuration
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      
+      # AWS Secrets Manager (optional)
+      - key: AWS_REGION
+        value: us-east-1
+      
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
