@@ -147,6 +147,15 @@ export class PaystackService {
     return Math.round(value * 100);
   }
 
+  private formatPhoneForPaystack(phone: string | null): string {
+    if (!phone) return '';
+    const digits = phone.replace(/[^\d]/g, '');
+    if (digits.startsWith('254')) return '+' + digits;
+    if (digits.startsWith('0')) return '+254' + digits.substring(1);
+    if (digits.length >= 9 && !digits.startsWith('+')) return '+' + digits;
+    return phone;
+  }
+
   async initiateTransfer(payload: any) {
     if (!this.secretKey) {
       this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock transfer');
@@ -154,16 +163,22 @@ export class PaystackService {
     }
 
     try {
-      const transferPayload = {
+      const transferPayload: any = {
         ...payload,
         amount: this.toPaystackAmount(payload.amount),
       };
+
+      // If caller provided a phone_number, include recipient_phone for SMS routing
+      if (payload.phone_number) {
+        transferPayload.recipient_phone = this.formatPhoneForPaystack(payload.phone_number);
+      }
 
       this.logger.debug(`Paystack transfer payload: ${JSON.stringify({
         recipient: transferPayload.recipient,
         amount: transferPayload.amount,
         currency: transferPayload.currency,
         reference: transferPayload.reference,
+        recipient_phone: transferPayload.recipient_phone,
       })}`);
 
       const response = await axios.post(
@@ -182,32 +197,6 @@ export class PaystackService {
     } catch (e: any) {
       this.logger.error(`Paystack transfer error: ${e.response?.data?.message || e.message}`);
       throw new BadRequestException(`Paystack transfer failed: ${e.response?.data?.message || e.message}`);
-    }
-  }
-
-  async finalizeTransfer(transferCode: string, otp: string) {
-    if (!this.secretKey) {
-      this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock transfer finalization');
-      return { status: 'success', data: { transfer_code: transferCode, status: 'success' } };
-    }
-
-    try {
-      const response = await axios.post(
-        `${this.paystackBaseUrl}/transfer/finalize_transfer`,
-        { transfer_code: transferCode, otp },
-        {
-          headers: { Authorization: `Bearer ${this.secretKey}` },
-        },
-      );
-
-      if (!response.data.status) {
-        throw new BadRequestException('Failed to finalize transfer');
-      }
-
-      return response.data;
-    } catch (e: any) {
-      this.logger.error(`Paystack transfer finalize error: ${e.response?.data?.message || e.message}`);
-      throw new BadRequestException(`Paystack transfer finalize failed: ${e.response?.data?.message || e.message}`);
     }
   }
 }

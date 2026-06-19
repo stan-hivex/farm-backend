@@ -16,7 +16,6 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
-import { ConfirmWithdrawOtpDto } from './dto/confirm-withdraw-otp.dto';
 
 @Controller({
   path: 'withdraw',
@@ -43,15 +42,6 @@ export class WithdrawController {
       req.user.id,
       dto,
     );
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Post('confirm-otp')
-  async confirmOtp(
-    @CurrentUser() user: any,
-    @Body() dto: ConfirmWithdrawOtpDto,
-  ) {
-    return this.withdrawService.confirmWithdrawalOtp(user.id, dto.reference, dto.otp);
   }
 
   @UseGuards(JwtAuthGuard)
