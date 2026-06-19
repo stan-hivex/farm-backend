@@ -147,20 +147,6 @@ export class PaystackService {
     return Math.round(value * 100);
   }
 
-  private formatPhoneForPaystack(phone: string | null): string {
-    if (!phone) return '';
-    // Remove any non-digit characters
-    const digits = phone.replace(/[^\d]/g, '');
-    // Ensure it starts with country code or proper format
-    if (digits.startsWith('254')) {
-      return '+' + digits; // Add + prefix if needed
-    }
-    if (digits.startsWith('0')) {
-      return '+254' + digits.substring(1); // Convert 07xx to +25407xx
-    }
-    return phone; // Return as-is if already formatted
-  }
-
   async initiateTransfer(payload: any) {
     if (!this.secretKey) {
       this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock transfer');
@@ -168,24 +154,16 @@ export class PaystackService {
     }
 
     try {
-      const transferPayload: any = {
-        recipient: payload.recipient,
+      const transferPayload = {
+        ...payload,
         amount: this.toPaystackAmount(payload.amount),
-        reference: payload.reference,
       };
-
-      // Add optional fields if provided
-      if (payload.currency) transferPayload.currency = payload.currency;
-      if (payload.phone_number) {
-        transferPayload.recipient_phone = this.formatPhoneForPaystack(payload.phone_number);
-      }
 
       this.logger.debug(`Paystack transfer payload: ${JSON.stringify({
         recipient: transferPayload.recipient,
         amount: transferPayload.amount,
         currency: transferPayload.currency,
         reference: transferPayload.reference,
-        recipient_phone: transferPayload.recipient_phone,
       })}`);
 
       const response = await axios.post(

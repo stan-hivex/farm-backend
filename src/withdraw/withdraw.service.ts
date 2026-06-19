@@ -152,16 +152,11 @@ export class WithdrawService {
         throw new BadRequestException('Unsupported withdrawal method for transfer processing');
       }
 
-      // Fetch user details to get phone number for OTP SMS delivery
-      const user = await this.prisma.users.findUnique({ where: { id: withdrawal.userId } });
-      const userPhoneNumber = user?.phone || withdrawal.phoneNumber;
-
       const transferResponse = await this.paystack.initiateTransfer({
         amount: withdrawal.settlement,
         recipient: recipient.recipient_code,
         reference,
         currency: 'KES',
-        phone_number: userPhoneNumber, // Pass user phone for SMS OTP delivery
       });
 
       const transferData = transferResponse?.data ?? {};
