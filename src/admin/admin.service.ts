@@ -704,10 +704,15 @@ export class AdminService {
       },
     });
 
+    const hasPersonal = Boolean(doc.first_name && doc.last_name && (doc.date_of_birth || doc.phone || doc.email));
+    const hasDocument = Boolean(doc.document_type && (doc.document_number || doc.front_image || doc.back_image || doc.selfie_image));
+    const hasAddress = Boolean(doc.country && doc.county && doc.city && doc.physical_address && doc.postal_code);
+    const kycLevel = !hasPersonal ? 0 : !hasDocument ? 1 : !hasAddress ? 2 : 3;
+
     // Update user's kyc_status based on approval
     await this.prisma.users.update({
       where: { id: doc.user_id! },
-      data: { kyc_status: dto.status as any },
+      data: { kyc_status: dto.status as any, kyc_level: kycLevel },
     });
 
     // Log the action

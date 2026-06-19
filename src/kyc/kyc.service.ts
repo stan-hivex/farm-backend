@@ -7,15 +7,74 @@ import { paginationParams, paginate } from '../common/utils/pagination.util';
 export class KycService {
   constructor(private prisma: PrismaService) {}
 
+  private normalizeValue(value?: string) {
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  private computeKycLevel(data: any) {
+    const first_name = this.normalizeValue(data.first_name);
+    const last_name = this.normalizeValue(data.last_name);
+    const date_of_birth = this.normalizeValue(data.date_of_birth || data.dob);
+    const phone = this.normalizeValue(data.phone);
+    const email = this.normalizeValue(data.email);
+    const document_type = this.normalizeValue(data.document_type);
+    const document_number = this.normalizeValue(data.document_number);
+    const front_image = this.normalizeValue(data.front_image);
+    const back_image = this.normalizeValue(data.back_image);
+    const selfie_image = this.normalizeValue(data.selfie_image);
+    const country = this.normalizeValue(data.country);
+    const county = this.normalizeValue(data.county || data.state);
+    const city = this.normalizeValue(data.city);
+    const address = this.normalizeValue(data.physical_address || data.address);
+    const postal_code = this.normalizeValue(data.postal_code);
+
+    const hasPersonalInfo = Boolean(first_name && last_name && (date_of_birth || phone || email));
+    if (!hasPersonalInfo) return 0;
+
+    const hasDocumentVerification = Boolean(document_type && (document_number || front_image || back_image || selfie_image));
+    if (!hasDocumentVerification) return 1;
+
+    const hasAddressVerification = Boolean(country && county && city && address && postal_code);
+    if (!hasAddressVerification) return 2;
+
+    return 3;
+  }
+
+  private buildKycDocumentPayload(existing: any, dto: any, urls: { front?: string | null; back?: string | null; selfie?: string | null }) {
+    return {
+      document_type: dto.document_type ?? existing?.document_type,
+      document_number: dto.document_number ?? existing?.document_number,
+      front_image: dto.front_image ?? existing?.front_image,
+      back_image: dto.back_image ?? existing?.back_image,
+      selfie_image: dto.selfie_image ?? existing?.selfie_image,
+      front_image_url: dto.front_image ? urls.front : existing?.front_image_url ?? null,
+      back_image_url: dto.back_image ? urls.back : existing?.back_image_url ?? null,
+      selfie_image_url: dto.selfie_image ? urls.selfie : existing?.selfie_image_url ?? null,
+      first_name: dto.first_name ?? existing?.first_name,
+      last_name: dto.last_name ?? existing?.last_name,
+      date_of_birth: dto.dob ?? existing?.date_of_birth,
+      gender: dto.gender ?? existing?.gender,
+      nationality: dto.nationality ?? existing?.nationality,
+      phone: dto.phone ?? existing?.phone,
+      email: dto.email ?? existing?.email,
+      country: dto.country ?? existing?.country,
+      county: dto.state ?? existing?.county,
+      city: dto.city ?? existing?.city,
+      physical_address: dto.address ?? existing?.physical_address,
+      postal_code: dto.postal_code ?? existing?.postal_code,
+      status: 'pending' as any,
+    };
+  }
+
   async submit(userId: string, dto: {
-    document_type: string;
+    document_type?: string;
     document_number?: string;
-    front_image: string;
+    front_image?: string;
     back_image?: string;
     selfie_image?: string;
     first_name?: string;
     last_name?: string;
-    date_of_birth?: string;
+    dob?: string;
     gender?: string;
     nationality?: string;
     phone?: string;
@@ -33,74 +92,76 @@ export class KycService {
     const existingSubmission = await this.prisma.kyc_documents.findFirst({
       where: {
         user_id: userId,
-        status: { in: ['pending', 'under_review'] },
+        status: { in: ['pending', 'under_review', 'additional_info_required'] },
       },
     });
-    if (existingSubmission) {
-      throw new BadRequestException('You already have a KYC submission in progress');
-    }
 
-    // Upload images to Cloudinary (log and fail gracefully)
     let frontUrl: string | null = null;
     let backUrl: string | null = null;
     let selfieUrl: string | null = null;
     try {
       const cloud = new CloudinaryService();
-      frontUrl = await cloud.uploadBase64(dto.front_image, 'kyc');
-      backUrl = dto.back_image ? await cloud.uploadBase64(dto.back_image, 'kyc') : null;
-      selfieUrl = dto.selfie_image ? await cloud.uploadBase64(dto.selfie_image, 'kyc') : null;
+      if (dto.front_image) frontUrl = await cloud.uploadBase64(dto.front_image, 'kyc');
+      if (dto.back_image) backUrl = await cloud.uploadBase64(dto.back_image, 'kyc');
+      if (dto.selfie_image) selfieUrl = await cloud.uploadBase64(dto.selfie_image, 'kyc');
     } catch (e) {
-      // Log cloud upload error but continue to store base64 as fallback
-      // so users can still submit KYC while we investigate Cloudinary issues.
       // eslint-disable-next-line no-console
       console.error('KYC Cloudinary upload failed:', e instanceof Error ? e.stack || e.message : String(e));
     }
 
     let doc;
     try {
-      doc = await this.prisma.kyc_documents.create({
-        data: {
-          user_id: userId,
-          document_type: dto.document_type,
-          document_number: dto.document_number,
-
-          // NEW (production - Cloudinary URLs)
-          front_image_url: frontUrl,
-          back_image_url: backUrl,
-          selfie_image_url: selfieUrl,
-
-          // OLD (temporary fallback - base64)
-          front_image: dto.front_image,
-          back_image: dto.back_image,
-          selfie_image: dto.selfie_image,
-
-          status: 'pending',
-        },
-      });
+      if (existingSubmission) {
+        const updateData = this.buildKycDocumentPayload(existingSubmission, dto, {
+          front: frontUrl,
+          back: backUrl,
+          selfie: selfieUrl,
+        });
+        doc = await this.prisma.kyc_documents.update({
+          where: { id: existingSubmission.id },
+          data: updateData,
+        });
+      } else {
+        doc = await this.prisma.kyc_documents.create({
+          data: {
+            user_id: userId,
+            ...this.buildKycDocumentPayload(null, dto, {
+              front: frontUrl,
+              back: backUrl,
+              selfie: selfieUrl,
+            }),
+          },
+        });
+      }
     } catch (err) {
-      // Prisma/schema errors will surface here; log details and return 500
       // eslint-disable-next-line no-console
-      console.error('Prisma create kyc_documents failed:', err instanceof Error ? err.stack || err.message : String(err));
+      console.error('Prisma save kyc_documents failed:', err instanceof Error ? err.stack || err.message : String(err));
       throw new InternalServerErrorException('Failed to save KYC submission');
     }
 
-    const updateData: any = { kyc_status: 'pending' };
+    const mergedDocData = {
+      ...existingSubmission,
+      ...dto,
+      state: dto.state ?? existingSubmission?.county,
+      address: dto.address ?? existingSubmission?.physical_address,
+      date_of_birth: dto.dob ?? existingSubmission?.date_of_birth,
+    };
+    const kycLevel = this.computeKycLevel(mergedDocData);
+
+    const updateData: any = {
+      kyc_status: 'pending',
+      kyc_level: kycLevel,
+    };
     if (dto.first_name) updateData.first_name = dto.first_name;
     if (dto.last_name) updateData.last_name = dto.last_name;
-    if (dto.date_of_birth) updateData.date_of_birth = dto.date_of_birth;
     if (dto.country) updateData.country = dto.country;
     if (dto.city) updateData.city = dto.city;
     if (dto.address) updateData.address = dto.address;
 
-    if (Object.keys(updateData).length > 1) {
-      await this.prisma.users.update({
-        where: { id: userId }, data: updateData,
-      });
-    } else {
-      await this.prisma.users.update({
-        where: { id: userId }, data: { kyc_status: 'pending' },
-      });
-    }
+    await this.prisma.users.update({
+      where: { id: userId },
+      data: updateData,
+    });
 
     return { data: doc, message: 'KYC submitted. Your documents will be reviewed shortly.' };
   }
@@ -158,8 +219,14 @@ export class KycService {
         reviewed_at: new Date(),
       },
     });
+
+    const kycLevel = this.computeKycLevel(doc);
     await this.prisma.users.update({
-      where: { id: doc.user_id! }, data: { kyc_status: dto.status },
+      where: { id: doc.user_id! },
+      data: {
+        kyc_status: dto.status,
+        kyc_level: kycLevel,
+      },
     });
     return { message: `KYC ${dto.status}` };
   }

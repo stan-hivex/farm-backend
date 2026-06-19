@@ -9,9 +9,9 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from '../common/enums';
 
 class SubmitKycDto {
-  @IsNotEmpty() @IsString() document_type!: string;
+  @IsOptional() @IsString() document_type?: string;
   @IsOptional() @IsString() document_number?: string;
-  @IsNotEmpty() @IsString() front_image!: string;
+  @IsOptional() @IsString() front_image?: string;
   @IsOptional() @IsString() back_image?: string;
   @IsOptional() @IsString() selfie_image?: string;
   @IsOptional() @IsString() first_name?: string;

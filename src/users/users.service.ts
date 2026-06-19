@@ -12,7 +12,7 @@ export class UsersService {
       where: { id: userId },
       select: {
         id: true, first_name: true, last_name: true, username: true,
-        email: true, phone: true, role: true, kyc_status: true,
+        email: true, phone: true, role: true, kyc_status: true, kyc_level: true,
         phone_verified: true, email_verified: true, profile_image: true,
         bio: true, country: true, city: true, referral_code: true, created_at: true,
         wallets: { select: { wallet_address: true, balance: true, currency: true } },

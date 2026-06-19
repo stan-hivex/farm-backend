@@ -222,6 +222,7 @@ if (new Date() > expiryDate) {
           email: user.email,
           role: user.role,
           kyc_status: user.kyc_status,
+          kyc_level: user.kyc_level,
           phone_verified: user.phone_verified,
           has_pin: !!user.pin_hash,
           profile_image: user.profile_image,
