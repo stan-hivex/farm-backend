@@ -137,6 +137,7 @@ export class WithdrawService {
           type: 'mobile_money',
           name: 'FARM Mobile Money Withdrawal',
           phone: withdrawal.phoneNumber,
+          account_number: withdrawal.phoneNumber,
           currency: 'KES',
           provider: 'MPESA',
         });
