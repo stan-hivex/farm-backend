@@ -154,9 +154,21 @@ export class PaystackService {
     }
 
     try {
+      const transferPayload = {
+        ...payload,
+        amount: this.toPaystackAmount(payload.amount),
+      };
+
+      this.logger.debug(`Paystack transfer payload: ${JSON.stringify({
+        recipient: transferPayload.recipient,
+        amount: transferPayload.amount,
+        currency: transferPayload.currency,
+        reference: transferPayload.reference,
+      })}`);
+
       const response = await axios.post(
         `${this.paystackBaseUrl}/transfer`,
-        payload,
+        transferPayload,
         {
           headers: { Authorization: `Bearer ${this.secretKey}` },
         },
