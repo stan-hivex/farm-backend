@@ -135,11 +135,10 @@ export class WithdrawService {
       if (withdrawal.method === 'MOBILE_MONEY') {
         recipient = await this.paystack.createTransferRecipient({
           type: 'mobile_money',
-          name: 'FARM Mobile Money Withdrawal',
-          phone: withdrawal.phoneNumber,
-          account_number: withdrawal.phoneNumber,
+          name: withdrawal.accountName || 'FARM User',
+          account_number: this.formatMpesaNumber(withdrawal.phoneNumber),
+          bank_code: 'MPESA',
           currency: 'KES',
-          provider: 'MPESA',
         });
       } else if (withdrawal.method === 'BANK_TRANSFER') {
         recipient = await this.paystack.createTransferRecipient({
@@ -256,6 +255,14 @@ export class WithdrawService {
     });
 
     return true;
+  }
+
+  private formatMpesaNumber(phone: string | null) {
+    if (!phone) return phone || '';
+    if (phone.startsWith('+254')) {
+      return '0' + phone.substring(4);
+    }
+    return phone;
   }
 
   private resolveBankCode(bankName: string) {
