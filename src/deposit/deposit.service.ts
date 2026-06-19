@@ -192,8 +192,11 @@ export class DepositService {
   }
 
   async getUserDeposits(userId: string) {
+    // Return only successfully completed deposits to users.
+    // Failed, pending or processing deposits are intentionally hidden
+    // so the frontend shows only confirmed funds the webhook has validated.
     return this.prisma.deposit.findMany({
-      where: { userId },
+      where: { userId, status: 'SUCCESS' },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -205,8 +208,13 @@ export class DepositService {
     return { balance: wallet?.balance ?? 0, locked_balance: wallet?.locked_balance ?? 0 };
   }
 
-  async getDepositById(id: string) {
-    return this.prisma.deposit.findUnique({ where: { id } });
+  async getDepositById(id: string, userId?: string) {
+    const deposit = await this.prisma.deposit.findUnique({ where: { id } });
+    if (!deposit) return null;
+    // Only allow the owning user to view deposit details, and only if it's successful.
+    if (userId && deposit.userId !== userId) return null;
+    if (deposit.status !== 'SUCCESS') return null;
+    return deposit;
   }
 
   // Called ONLY from webhook

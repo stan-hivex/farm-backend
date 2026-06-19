@@ -66,7 +66,8 @@ export class DepositController {
   }
 
   @Get(':id')
-  async getOne(@Param('id') id: string) {
-    return this.depositService.getDepositById(id);
+  async getOne(@Param('id') id: string, @Req() req: any) {
+    const userId = req.user?.id;
+    return this.depositService.getDepositById(id, userId);
   }
 }
