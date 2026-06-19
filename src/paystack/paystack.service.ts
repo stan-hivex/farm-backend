@@ -184,4 +184,30 @@ export class PaystackService {
       throw new BadRequestException(`Paystack transfer failed: ${e.response?.data?.message || e.message}`);
     }
   }
+
+  async finalizeTransfer(transferCode: string, otp: string) {
+    if (!this.secretKey) {
+      this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock transfer finalization');
+      return { status: 'success', data: { transfer_code: transferCode, status: 'success' } };
+    }
+
+    try {
+      const response = await axios.post(
+        `${this.paystackBaseUrl}/transfer/finalize_transfer`,
+        { transfer_code: transferCode, otp },
+        {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+        },
+      );
+
+      if (!response.data.status) {
+        throw new BadRequestException('Failed to finalize transfer');
+      }
+
+      return response.data;
+    } catch (e: any) {
+      this.logger.error(`Paystack transfer finalize error: ${e.response?.data?.message || e.message}`);
+      throw new BadRequestException(`Paystack transfer finalize failed: ${e.response?.data?.message || e.message}`);
+    }
+  }
 }

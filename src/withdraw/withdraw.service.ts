@@ -152,12 +152,24 @@ export class WithdrawService {
         throw new BadRequestException('Unsupported withdrawal method for transfer processing');
       }
 
-      await this.paystack.initiateTransfer({
+      const transferResponse = await this.paystack.initiateTransfer({
         amount: withdrawal.settlement,
         recipient: recipient.recipient_code,
         reference,
         currency: 'KES',
       });
+
+      const transferData = transferResponse?.data ?? {};
+      if (transferData.transfer_code) {
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+        if (transaction) {
+          const metadata = (transaction.metadata as any) ?? {};
+          await this.prisma.transactions.update({
+            where: { id: transaction.id },
+            data: { metadata: { ...metadata, paystack_transfer_code: transferData.transfer_code } },
+          });
+        }
+      }
       // Do NOT mark success here – wait for webhook
     } catch (e: any) {
       await this.rejectWithdrawal(reference, e.message || 'Withdrawal transfer failed');
@@ -217,6 +229,35 @@ export class WithdrawService {
     });
 
     return true;
+  }
+
+  async confirmWithdrawalOtp(userId: string, reference: string, otp: string) {
+    const withdrawal = await this.prisma.withdrawal.findFirst({ where: { reference, userId } });
+    if (!withdrawal) throw new BadRequestException('Withdrawal not found');
+    if (withdrawal.status !== 'PROCESSING') {
+      throw new BadRequestException('Withdrawal is not awaiting OTP confirmation');
+    }
+
+    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    if (!transaction) throw new BadRequestException('Withdrawal transaction not found');
+
+    const metadata = (transaction.metadata as any) ?? {};
+    const transferCode = metadata.paystack_transfer_code;
+    if (!transferCode) {
+      throw new BadRequestException('No Paystack OTP challenge found for this withdrawal');
+    }
+
+    const result = await this.paystack.finalizeTransfer(transferCode, otp);
+    await this.prisma.transactions.update({
+      where: { id: transaction.id },
+      data: { metadata: { ...metadata, paystack_otp_confirmed: true } },
+    });
+
+    return {
+      success: true,
+      message: 'OTP submitted. Await webhook confirmation for final withdrawal settlement.',
+      status: result?.data?.status ?? 'pending',
+    };
   }
 
   async rejectWithdrawal(reference: string, reason: string) {
