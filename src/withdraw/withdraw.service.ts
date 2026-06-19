@@ -114,7 +114,7 @@ export class WithdrawService {
 
   async getUserWithdrawals(userId: string) {
     return this.prisma.withdrawal.findMany({
-      where: { userId },
+      where: { userId, status: { not: 'FAILED' } },
       orderBy: { createdAt: 'desc' },
     });
   }

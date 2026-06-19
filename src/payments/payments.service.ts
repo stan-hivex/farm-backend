@@ -562,7 +562,11 @@ export class PaymentsService {
   async getWithdrawalHistory(userId: string) {
   const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
   const items = await this.prisma.transactions.findMany({
-    where: { transaction_type: 'withdrawal', sender_wallet_id: wallet?.id },
+    where: {
+      transaction_type: 'withdrawal',
+      sender_wallet_id: wallet?.id,
+      status: { not: 'failed' },
+    },
     orderBy: { created_at: 'desc' },
   });
   return {
