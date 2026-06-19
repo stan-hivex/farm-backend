@@ -20,20 +20,48 @@ export class WithdrawService {
     await this.authService.verifyPin(userId, dto.pin);
 
     const amount = Number(dto.amount);
-    // ... validation (min/max, method, destination fields) same as before
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('Invalid withdrawal amount');
+    }
+    if (amount < 10) {
+      throw new BadRequestException('Minimum withdrawal amount is 10 FARM');
+    }
 
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
-    // balance check...
+    if (!wallet) {
+      throw new BadRequestException('Active wallet not found');
+    }
 
-    const feePercent = dto.method === 'MOBILE_MONEY' ? 0.02 : dto.method === 'CRYPTO' ? 0.005 : 0.015;
-    const fee = amount * feePercent;
-    const settlement = amount - fee;
+    const availableBalance = Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0);
+    if (availableBalance < amount) {
+      throw new BadRequestException('Insufficient balance for this withdrawal');
+    }
+
+    if (dto.method === 'MOBILE_MONEY') {
+      if (!dto.phoneNumber) {
+        throw new BadRequestException('Phone number is required for mobile money withdrawals');
+      }
+    } else if (dto.method === 'BANK_TRANSFER') {
+      if (!dto.accountName || !dto.accountNumber || !dto.bankName) {
+        throw new BadRequestException('Account name, account number and bank name are required for bank transfer withdrawals');
+      }
+    } else if (dto.method === 'CRYPTO') {
+      if (!dto.cryptoAddress || !dto.network) {
+        throw new BadRequestException('Crypto address and network are required for cryptocurrency withdrawals');
+      }
+      throw new BadRequestException('Crypto withdrawals are not supported yet');
+    } else {
+      throw new BadRequestException(`Unsupported withdrawal method: ${dto.method}`);
+    }
+
+    const feePercent = dto.method === 'MOBILE_MONEY' ? 0.02 : 0.015;
+    const fee = Number((amount * feePercent).toFixed(8));
+    const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
 
     const withdrawal = await this.prisma.$transaction(async (tx) => {
-      // Lock funds
       await tx.wallets.update({
-        where: { id: wallet!.id },
+        where: { id: wallet.id },
         data: { locked_balance: { increment: amount } },
       });
 
@@ -44,20 +72,23 @@ export class WithdrawService {
           fee,
           settlement,
           total: amount,
+          currency: 'FARM',
           method: dto.method,
+          accountName: dto.accountName,
+          accountNumber: dto.accountNumber,
+          bankName: dto.bankName,
+          phoneNumber: dto.phoneNumber,
+          cryptoAddress: dto.cryptoAddress,
+          network: dto.network,
           reference,
           status: 'PENDING',
-          // method-specific fields...
-          phoneNumber: dto.phoneNumber,
-          accountName: dto.accountName,
-          // etc.
         },
       });
 
       await tx.transactions.create({
         data: {
           transaction_reference: reference,
-          sender_wallet_id: wallet!.id,
+          sender_wallet_id: wallet.id,
           transaction_type: 'withdrawal',
           status: 'pending',
           amount,
@@ -76,8 +107,7 @@ export class WithdrawService {
       return created;
     });
 
-    // Fire-and-forget transfer initiation
-    setImmediate(() => this.processWithdrawal(reference).catch(console.error));
+    setImmediate(() => this.processWithdrawal(reference).catch((error) => this.logger.error(error?.message ?? error)));
 
     return { success: true, reference, withdrawal };
   }
@@ -105,29 +135,32 @@ export class WithdrawService {
       if (withdrawal.method === 'MOBILE_MONEY') {
         recipient = await this.paystack.createTransferRecipient({
           type: 'mobile_money',
-          name: 'M-Pesa User',
+          name: 'FARM Mobile Money Withdrawal',
           phone: withdrawal.phoneNumber,
+          currency: 'KES',
+          provider: 'MPESA',
         });
       } else if (withdrawal.method === 'BANK_TRANSFER') {
-        // resolve bankCode...
         recipient = await this.paystack.createTransferRecipient({
           type: 'nuban',
           name: withdrawal.accountName!,
-          accountNumber: withdrawal.accountNumber!,
-          bankCode: this.resolveBankCode(withdrawal.bankName!),
+          account_number: withdrawal.accountNumber!,
+          bank_code: this.resolveBankCode(withdrawal.bankName!),
+          currency: 'KES',
         });
       } else {
-        // CRYPTO via Ivorypay or other
+        throw new BadRequestException('Unsupported withdrawal method for transfer processing');
       }
 
       await this.paystack.initiateTransfer({
-        amount: withdrawal.settlement, // or full amount depending on fee handling
+        amount: withdrawal.settlement,
         recipient: recipient.recipient_code,
         reference,
+        currency: 'KES',
       });
       // Do NOT mark success here – wait for webhook
-    } catch (e) {
-      await this.rejectWithdrawal(reference, e.message);
+    } catch (e: any) {
+      await this.rejectWithdrawal(reference, e.message || 'Withdrawal transfer failed');
     }
   }
 
@@ -135,10 +168,52 @@ export class WithdrawService {
   async markAsSuccess(reference: string) {
     const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
     if (!withdrawal) return false;
+    if (withdrawal.status === 'COMPLETED') return true;
 
-    await this.prisma.withdrawal.update({
-      where: { reference },
-      data: { status: 'COMPLETED' },
+    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: withdrawal.userId, is_active: true } });
+    if (!wallet) return false;
+
+    const amount = Number(withdrawal.amount ?? 0);
+    const previousBalance = Number(wallet.balance ?? 0);
+    const previousLocked = Number(wallet.locked_balance ?? 0);
+    const unlockAmount = Math.min(previousLocked, amount);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.withdrawal.update({
+        where: { reference },
+        data: { status: 'COMPLETED' },
+      });
+
+      await tx.wallets.update({
+        where: { id: wallet.id },
+        data: {
+          balance: { decrement: amount },
+          locked_balance: { decrement: unlockAmount },
+        },
+      });
+
+      if (transaction) {
+        await tx.transactions.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'completed',
+            processed_at: new Date(),
+          },
+        });
+
+        await tx.ledger_entries.create({
+          data: {
+            transaction_id: transaction.id,
+            wallet_id: wallet.id,
+            entry_type: 'debit',
+            amount,
+            balance_before: previousBalance,
+            balance_after: previousBalance - amount,
+            description: `Withdrawal completed — ref: ${reference}`,
+          },
+        });
+      }
     });
 
     return true;
@@ -147,10 +222,36 @@ export class WithdrawService {
   async rejectWithdrawal(reference: string, reason: string) {
     const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
     if (!withdrawal) return false;
+    if (withdrawal.status === 'FAILED') return true;
 
-    await this.prisma.withdrawal.update({
-      where: { reference },
-      data: { status: 'FAILED' },
+    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: withdrawal.userId, is_active: true } });
+    if (!wallet) return false;
+
+    const amount = Number(withdrawal.amount ?? 0);
+    const previousLocked = Number(wallet.locked_balance ?? 0);
+    const unlockAmount = Math.min(previousLocked, amount);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.withdrawal.update({
+        where: { reference },
+        data: { status: 'FAILED', rejectionReason: reason },
+      });
+
+      await tx.wallets.update({
+        where: { id: wallet.id },
+        data: { locked_balance: { decrement: unlockAmount } },
+      });
+
+      if (transaction) {
+        await tx.transactions.update({
+          where: { id: transaction.id },
+          data: {
+            status: 'failed',
+            processed_at: new Date(),
+          },
+        });
+      }
     });
 
     return true;

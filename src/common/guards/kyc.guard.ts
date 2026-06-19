@@ -17,8 +17,14 @@ export class KycGuard implements CanActivate {
     });
     if (!dbUser) throw new UnauthorizedException('User not found');
 
-    const approvedPartial = dbUser.kyc_status === 'additional_info_required' && Number(dbUser.kyc_level || 0) >= 2;
-    const fullyVerified = dbUser.kyc_status === 'verified' && Number(dbUser.kyc_level || 0) >= 2;
+    const requestPath = request.url ?? request.originalUrl ?? '';
+    const isWithdrawCreate = request.method === 'POST' && requestPath.includes('/withdraw/create');
+    const hasLevel2 = Number(dbUser.kyc_level || 0) >= 2;
+
+    if (isWithdrawCreate && hasLevel2) return true;
+
+    const approvedPartial = dbUser.kyc_status === 'additional_info_required' && hasLevel2;
+    const fullyVerified = dbUser.kyc_status === 'verified' && hasLevel2;
     if (approvedPartial || fullyVerified) return true;
 
     throw new ForbiddenException('KYC approval required to perform this action');
