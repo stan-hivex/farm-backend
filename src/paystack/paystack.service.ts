@@ -182,12 +182,17 @@ export class PaystackService {
       const configuredMap = this.bankCodeMap[key] || {};
       const normalized = this.normalizeBankName(bankName);
       if (configuredMap[normalized]) {
+        this.logger.log(`Bank code resolved from map for '${bankName}' -> '${configuredMap[normalized]}'`);
         return configuredMap[normalized];
       }
 
-      const message = country.toUpperCase() === 'KE'
-        ? 'Paystack does not currently expose Kenyan bank codes via the /bank endpoint. Provide a PAYSTACK_BANK_CODE_MAP environment variable with Kenyan bank name → bank_code mappings, or use MOBILE_MONEY/CRYPTO instead.'
-        : `No Paystack bank list available for ${country}. Please verify the Paystack configuration and supported countries.`;
+      // For Kenya, fall back to using bank name as code if no mapping available
+      if (country.toUpperCase() === 'KE') {
+        this.logger.warn(`Paystack bank code not found for '${bankName}' in Kenya; using bank name as fallback code for Paystack recipient`);
+        return bankName;
+      }
+
+      const message = `No Paystack bank list available for ${country}. Please verify the Paystack configuration and supported countries.`;
       this.logger.error(message);
       throw new BadRequestException(message);
     }
@@ -207,7 +212,13 @@ export class PaystackService {
       }
     }
 
-    // No match — provide a helpful error listing candidates
+    // No match in bank list — for Kenya, fall back to bank name as code
+    if (country.toUpperCase() === 'KE') {
+      this.logger.warn(`Paystack bank '${bankName}' not found in Paystack bank list; using bank name as fallback code for recipient`);
+      return bankName;
+    }
+
+    // For other countries, provide a helpful error listing candidates
     const sample = banks.slice(0, 8).map((b: any) => `${b.name} (${b.code})`).join(', ');
     throw new BadRequestException(`Unknown bank name '${bankName}'. Paystack supported examples: ${sample}`);
   }
