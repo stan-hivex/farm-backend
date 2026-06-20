@@ -1062,7 +1062,15 @@ export class WebhookService {
       } else if (event === 'transfer.success') {
         await this.withdrawService.markAsSuccess(reference);
       } else if (['transfer.failed', 'transfer.reversed'].includes(event)) {
-        await this.withdrawService.rejectWithdrawal(reference, payload.data?.reason);
+        const failureDetail =
+          payload.data?.reason ||
+          payload.data?.failure_message ||
+          payload.data?.gateway_response ||
+          payload.data?.message ||
+          'unknown';
+        this.logger.warn(`Paystack transfer failure for ${reference}: ${failureDetail}`);
+        this.logger.debug(`Paystack transfer failure payload for ${reference}: ${JSON.stringify(payload.data)}`);
+        await this.withdrawService.rejectWithdrawal(reference, failureDetail);
       } else if (
         ['charge.failed', 'payment.failed', 'transaction.failed', 'charge.cancelled', 'payment.cancelled', 'transaction.cancelled',
          'charge.expired', 'payment.expired', 'transaction.expired', 'authorization.cancelled', 'authorization.expired', 'authorization.failed',

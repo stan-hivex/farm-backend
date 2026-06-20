@@ -266,6 +266,8 @@ export class PaystackService {
         },
       );
 
+      this.logger.debug(`Paystack transfer response: ${JSON.stringify(response.data)}`);
+
       if (!response.data.status) {
         throw new BadRequestException('Failed to initiate transfer');
       }
