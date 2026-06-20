@@ -8,6 +8,28 @@ export class PaystackService {
   private readonly secretKey: string | undefined;
   private readonly paystackBaseUrl = 'https://api.paystack.co';
   private readonly bankCodeMap: Record<string, Record<string, string>>;
+  private readonly kenyaBankCodeFallback: Record<string, string> = {
+    'i&m': 'IM',
+    'im': 'IM',
+    'co-operativebank': 'COOP',
+    'cooperativebank': 'COOP',
+    'cooperative bank': 'COOP',
+    'equity': 'EQB',
+    'kcb': 'KCB',
+    'stanbic': 'SBK',
+    'barclays': 'BAR',
+    'barclays bank': 'BAR',
+    'scbk': 'SCB',
+    'standardchartered': 'SCB',
+    'standard chartered': 'SCB',
+    'absa': 'ABSA',
+    'fnb': 'FNB',
+    'dfcu': 'DFCU',
+    'ncb': 'NCB',
+    'familybank': 'FBP',
+    'family bank': 'FBP',
+    'spencer': 'SCBK',
+  };
 
   constructor(private cfg: ConfigService) {
     this.secretKey = this.cfg.get<string>('PAYSTACK_SECRET_KEY');
@@ -178,25 +200,26 @@ export class PaystackService {
     }
 
     const banks = this.banksCache[key] || [];
+    const configuredMap = this.bankCodeMap[key] || {};
+    const normalized = this.normalizeBankName(bankName);
+
     if (!banks.length) {
-      const configuredMap = this.bankCodeMap[key] || {};
-      const normalized = this.normalizeBankName(bankName);
       if (configuredMap[normalized]) {
-        this.logger.log(`Bank code resolved from map for '${bankName}' -> '${configuredMap[normalized]}'`);
+        this.logger.log(`Bank code resolved from configured map for '${bankName}' -> '${configuredMap[normalized]}'`);
         return configuredMap[normalized];
       }
 
-      // For Kenya, fall back to using bank name as code if no mapping available
-      if (country.toUpperCase() === 'KE') {
-        this.logger.warn(`Paystack bank code not found for '${bankName}' in Kenya; using bank name as fallback code for Paystack recipient`);
-        return bankName;
+      if (country.toUpperCase() === 'KE' && this.kenyaBankCodeFallback[normalized]) {
+        this.logger.log(`Bank code resolved from built-in Kenya fallback for '${bankName}' -> '${this.kenyaBankCodeFallback[normalized]}'`);
+        return this.kenyaBankCodeFallback[normalized];
       }
 
-      const message = `No Paystack bank list available for ${country}. Please verify the Paystack configuration and supported countries.`;
+      const message = country.toUpperCase() === 'KE'
+        ? `Paystack bank code not available for '${bankName}' in Kenya. Configure PAYSTACK_BANK_CODE_MAP for Kenyan bank name → bank_code mappings or use MOBILE_MONEY/CRYPTO instead.`
+        : `No Paystack bank list available for ${country}. Please verify the Paystack configuration and supported countries.`;
       this.logger.error(message);
       throw new BadRequestException(message);
     }
-    const normalized = this.normalizeBankName(bankName);
 
     // Try exact match first
     for (const b of banks) {
@@ -212,13 +235,16 @@ export class PaystackService {
       }
     }
 
-    // No match in bank list — for Kenya, fall back to bank name as code
-    if (country.toUpperCase() === 'KE') {
-      this.logger.warn(`Paystack bank '${bankName}' not found in Paystack bank list; using bank name as fallback code for recipient`);
-      return bankName;
+    if (configuredMap[normalized]) {
+      this.logger.log(`Bank code resolved from configured map for '${bankName}' -> '${configuredMap[normalized]}'`);
+      return configuredMap[normalized];
     }
 
-    // For other countries, provide a helpful error listing candidates
+    if (country.toUpperCase() === 'KE' && this.kenyaBankCodeFallback[normalized]) {
+      this.logger.log(`Bank code resolved from built-in Kenya fallback for '${bankName}' -> '${this.kenyaBankCodeFallback[normalized]}'`);
+      return this.kenyaBankCodeFallback[normalized];
+    }
+
     const sample = banks.slice(0, 8).map((b: any) => `${b.name} (${b.code})`).join(', ');
     throw new BadRequestException(`Unknown bank name '${bankName}'. Paystack supported examples: ${sample}`);
   }
