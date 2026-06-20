@@ -4,6 +4,7 @@ import { WithdrawService } from './withdraw.service';
 import { DatabaseModule } from '../database/database.module';
 import { AuthModule } from '../auth/auth.module';
 import { PaystackModule } from '../paystack/paystack.module';
+import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { KycGuard } from '../common/guards/kyc.guard';
 
@@ -13,6 +14,7 @@ import { KycGuard } from '../common/guards/kyc.guard';
     AuthModule,
     forwardRef(() => PaystackModule),
     NotificationsModule,
+    IvorypayModule,
   ],
   controllers: [WithdrawController],
   providers: [WithdrawService, KycGuard],

@@ -3,6 +3,7 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { PaystackService } from '../paystack/paystack.service';
+import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -14,6 +15,7 @@ export class WithdrawService {
     private prisma: PrismaService,
     private authService: AuthService,
     private paystack: PaystackService,
+    private ivorypay: IvorypayService,
   ) {}
 
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
@@ -49,7 +51,6 @@ export class WithdrawService {
       if (!dto.cryptoAddress || !dto.network) {
         throw new BadRequestException('Crypto address and network are required for cryptocurrency withdrawals');
       }
-      throw new BadRequestException('Crypto withdrawals are not supported yet');
     } else {
       throw new BadRequestException(`Unsupported withdrawal method: ${dto.method}`);
     }
@@ -143,38 +144,71 @@ export class WithdrawService {
           currency: 'KES',
         });
       } else if (withdrawal.method === 'BANK_TRANSFER') {
+        const bankCode = await this.paystack.getBankCodeByName(withdrawal.bankName || '');
+        this.logger.log(`Resolved bank name='${withdrawal.bankName}' -> bank_code='${bankCode}'`);
         recipient = await this.paystack.createTransferRecipient({
           type: 'nuban',
           name: withdrawal.accountName!,
           account_number: withdrawal.accountNumber!,
-          bank_code: this.resolveBankCode(withdrawal.bankName!),
+          bank_code: bankCode,
           currency: 'KES',
         });
+      } else if (withdrawal.method === 'CRYPTO') {
+        // Off-chain crypto withdrawal via Ivorypay (or mock)
+        await this.processCryptoWithdrawal(withdrawal, reference);
       } else {
         throw new BadRequestException('Unsupported withdrawal method for transfer processing');
       }
 
-      const transferResponse = await this.paystack.initiateTransfer({
-        amount: withdrawal.settlement,
-        recipient: recipient.recipient_code,
-        reference,
-        currency: 'KES',
-      });
+      if (recipient) {
+        const transferResponse = await this.paystack.initiateTransfer({
+          amount: withdrawal.settlement,
+          recipient: recipient.recipient_code,
+          reference,
+          currency: 'KES',
+        });
 
-      const transferData = transferResponse?.data ?? {};
-      if (transferData.transfer_code) {
-        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
-        if (transaction) {
-          const metadata = (transaction.metadata as any) ?? {};
-          await this.prisma.transactions.update({
-            where: { id: transaction.id },
-            data: { metadata: { ...metadata, paystack_transfer_code: transferData.transfer_code } },
-          });
+        const transferData = transferResponse?.data ?? {};
+        if (transferData.transfer_code) {
+          const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+          if (transaction) {
+            const metadata = (transaction.metadata as any) ?? {};
+            await this.prisma.transactions.update({
+              where: { id: transaction.id },
+              data: { metadata: { ...metadata, paystack_transfer_code: transferData.transfer_code } },
+            });
+          }
         }
       }
-      // Do NOT mark success here – wait for webhook
+      // Do NOT mark success here – wait for webhook or provider callback
     } catch (e: any) {
       await this.rejectWithdrawal(reference, e.message || 'Withdrawal transfer failed');
+    }
+  }
+
+  // Support crypto withdrawal processing using Ivorypay (or a stub if not configured)
+  private async processCryptoWithdrawal(withdrawal: any, reference: string) {
+    try {
+      const opts: any = {
+        reference,
+        amount: withdrawal.settlement,
+        crypto: withdrawal.network || 'USDT',
+        to_address: withdrawal.cryptoAddress,
+        metadata: { user_id: withdrawal.userId, reference },
+      };
+
+      const resp = await this.ivorypay.createWithdrawal(opts);
+      const withdrawalId = resp?.data?.id || resp?.id || null;
+
+      // Save provider withdrawal id into transaction metadata
+      const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+      if (transaction) {
+        const metadata = (transaction.metadata as any) ?? {};
+        await this.prisma.transactions.update({ where: { id: transaction.id }, data: { metadata: { ...metadata, ivorypay_withdrawal_id: withdrawalId } } });
+      }
+      // Leave finalization to webhook or manual reconciliation
+    } catch (e: any) {
+      await this.rejectWithdrawal(reference, e.message || 'Crypto withdrawal failed');
     }
   }
 

@@ -139,6 +139,54 @@ export class PaystackService {
     }
   }
 
+  // Fetch Paystack supported banks for a country and attempt to match a bank name
+  private banksCache: Record<string, any[]> = {};
+
+  async getBankCodeByName(bankName: string, country = 'KE') {
+    if (!this.secretKey) {
+      // In non-production/testing without keys, return the provided value
+      return bankName;
+    }
+
+    const key = country.toUpperCase();
+    if (!this.banksCache[key]) {
+      try {
+        const resp = await axios.get(`${this.paystackBaseUrl}/bank?country=${country}`, {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+        });
+        this.banksCache[key] = resp.data.data || [];
+      } catch (e: any) {
+        this.logger.error(`Failed to fetch Paystack banks for ${country}: ${e?.message || e}`);
+        this.banksCache[key] = [];
+      }
+    }
+
+    const banks = this.banksCache[key] || [];
+    if (!banks.length) {
+      this.logger.warn(`No Paystack bank list available for ${country}; falling back to provided bankName as code.`);
+      return (bankName || '').toUpperCase();
+    }
+    const normalized = (bankName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Try exact match first
+    for (const b of banks) {
+      if ((b.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') === normalized) {
+        return b.code;
+      }
+    }
+
+    // Try contains match
+    for (const b of banks) {
+      if ((b.name || '').toLowerCase().includes(bankName.toLowerCase())) {
+        return b.code;
+      }
+    }
+
+    // No match — provide a helpful error listing candidates
+    const sample = banks.slice(0, 8).map((b: any) => `${b.name} (${b.code})`).join(', ');
+    throw new BadRequestException(`Unknown bank name '${bankName}'. Paystack supported examples: ${sample}`);
+  }
+
   private toPaystackAmount(amount: number | string) {
     const value = Number(amount);
     if (Number.isNaN(value)) {

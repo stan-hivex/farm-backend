@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
+import { TransferWithdrawDto } from './dto/transfer-withdraw.dto';
 
 @Controller({
   path: 'withdraw',
@@ -42,6 +43,27 @@ export class WithdrawController {
       req.user.id,
       dto,
     );
+  }
+
+  @UseGuards(JwtAuthGuard, KycGuard)
+  @Throttle({
+    default: {
+      limit: 10,
+      ttl: 60000,
+    },
+  })
+  @Post('transfer')
+  async transfer(@Req() req, @Body() dto: TransferWithdrawDto) {
+    // Normalize to existing CreateWithdrawDto shape expected by service
+    const createDto: any = {
+      amount: dto.amount,
+      method: 'MOBILE_MONEY',
+      phoneNumber: dto.phoneNumber,
+      accountName: dto.accountName,
+      pin: dto.pin,
+    };
+
+    return this.withdrawService.createWithdrawal(req.user.id, createDto);
   }
 
   @UseGuards(JwtAuthGuard)
