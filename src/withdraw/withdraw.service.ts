@@ -187,6 +187,7 @@ export class WithdrawService {
           account_number: withdrawal.accountNumber!,
           bank_code: bankCode,
           currency: 'KES',
+          country: 'KE',
         });
       } else if (withdrawal.method === 'CRYPTO') {
         // Off-chain crypto withdrawal via Ivorypay (or mock)

@@ -154,6 +154,7 @@ export class PaystackService {
     }
 
     try {
+      this.logger.debug(`Paystack transfer recipient payload: ${JSON.stringify(payload)}`);
       const response = await axios.post(
         `${this.paystackBaseUrl}/transferrecipient`,
         payload,
@@ -162,14 +163,19 @@ export class PaystackService {
         },
       );
 
+      this.logger.debug(`Paystack transfer recipient response: ${JSON.stringify(response.data)}`);
       if (!response.data.status) {
         throw new BadRequestException('Failed to create transfer recipient');
       }
 
       return response.data.data;
     } catch (e: any) {
-      this.logger.error(`Paystack recipient creation error: ${e.response?.data?.message || e.message}`);
-      throw new BadRequestException(`Paystack recipient failed: ${e.response?.data?.message || e.message}`);
+      const responseData = e.response?.data;
+      this.logger.error(`Paystack recipient creation error: ${responseData?.message || e.message}`);
+      if (responseData) {
+        this.logger.debug(`Paystack recipient creation error payload: ${JSON.stringify(responseData)}`);
+      }
+      throw new BadRequestException(`Paystack recipient failed: ${responseData?.message || e.message}`);
     }
   }
 
