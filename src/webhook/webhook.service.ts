@@ -204,8 +204,9 @@ export class WebhookService {
       return { received: true };
     }
 
-    // Strict routing: Ivorypay webhooks must be for crypto channel
-    if (payload.channel !== 'crypto') {
+    // Strict routing: Ivorypay webhooks should be for crypto channel, but allow nested data.channel.
+    const channel = payload.channel ?? payload.data?.channel;
+    if (channel && channel !== 'crypto') {
       await this.rejectWebhook('ivorypay', event ?? 'unknown', payload, 'Ivorypay webhook routed to wrong provider (non-crypto)');
       return { received: true };
     }
@@ -223,8 +224,9 @@ export class WebhookService {
       return { received: true };
     }
 
+    const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);
     // Amount validation (anti-fraud): verify webhook amount matches transaction amount
-    if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
+    if (isSuccessEvent) {
       try {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
@@ -341,6 +343,22 @@ export class WebhookService {
     }
 
     return false;
+  }
+
+  private isIvorypaySuccessEvent(event: string, status: string) {
+    const normalizedEvent = event?.toString()?.toLowerCase() ?? '';
+    const normalizedStatus = status?.toString()?.toLowerCase() ?? '';
+    const successEvents = ['payment.success', 'transaction.completed', 'success', 'payment.completed', 'transaction.success', 'completed'];
+    const successStatuses = ['success', 'completed'];
+    return successEvents.includes(normalizedEvent) || successStatuses.includes(normalizedStatus);
+  }
+
+  private isIvorypayFailureEvent(event: string, status: string) {
+    const normalizedEvent = event?.toString()?.toLowerCase() ?? '';
+    const normalizedStatus = status?.toString()?.toLowerCase() ?? '';
+    const failureEvents = ['payment.failed', 'transaction.failed', 'payment.cancelled', 'transaction.cancelled', 'cancelled', 'failed', 'withdrawal.failed'];
+    const failureStatuses = ['failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'];
+    return failureEvents.includes(normalizedEvent) || failureStatuses.includes(normalizedStatus);
   }
 
   private async fallbackAlert(provider: string, reason: string, payload: any) {
@@ -571,7 +589,7 @@ export class WebhookService {
           return { ok: false };
         }
 
-        const amount = this.normalizeAmount(Number(deposit.amount));
+        const amount = this.getFarmAmountForCredit(transaction, deposit);
         const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
 
         await tx.wallets.update({
@@ -703,7 +721,7 @@ export class WebhookService {
       if (!wallet) return { ok: false };
 
       const prev = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const amt = this.normalizeAmount(Number(transaction.amount));
+      const amt = this.getFarmAmountForCredit(transaction);
 
       const updated = await tx.transactions.updateMany({
         where: { id: transaction.id, status: { not: 'completed' } },
@@ -801,7 +819,7 @@ export class WebhookService {
       }
 
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const creditAmount = this.normalizeAmount(Number(deposit.amount));
+      const creditAmount = this.getFarmAmountForCredit(transaction, deposit);
 
       // WALLET CREDIT: This is the ONLY authorized place to credit wallets on deposit success
       await tx.wallets.update({
@@ -1003,6 +1021,40 @@ export class WebhookService {
     return Math.round(n * 100) / 100;
   }
 
+  private getFarmAmountForCredit(transaction: any, deposit?: any): number {
+    const metadata = (transaction?.metadata as any) ?? {};
+    const depositMetadata = (deposit?.metadata as any) ?? {};
+    const farmToUsdRate = Number(metadata?.farm_to_usd_rate ?? depositMetadata?.farm_to_usd_rate ?? this.cfg.get<string>('IVORYPAY_FARM_TO_USD_RATE', '130')) || 130;
+    const transactionCurrency = transaction?.currency?.toString?.().toUpperCase?.() ?? '';
+    const depositCurrency = deposit?.currency?.toString?.().toUpperCase?.() ?? '';
+
+    if ((transactionCurrency === 'USD' || depositCurrency === 'USD') && metadata?.amount_usd !== undefined) {
+      return this.normalizeAmount(Number(metadata.amount_usd) * farmToUsdRate);
+    }
+
+    if (metadata?.amount_farm !== undefined && isFinite(Number(metadata.amount_farm))) {
+      return this.normalizeAmount(Number(metadata.amount_farm));
+    }
+
+    if (transactionCurrency === 'USD' && isFinite(Number(transaction?.amount))) {
+      return this.normalizeAmount(Number(transaction.amount) * farmToUsdRate);
+    }
+
+    if (depositCurrency === 'USD' && isFinite(Number(deposit?.amount))) {
+      return this.normalizeAmount(Number(deposit.amount) * farmToUsdRate);
+    }
+
+    if (isFinite(Number(transaction?.amount))) {
+      return this.normalizeAmount(Number(transaction.amount));
+    }
+
+    if (isFinite(Number(deposit?.amount))) {
+      return this.normalizeAmount(Number(deposit.amount));
+    }
+
+    return 0;
+  }
+
   /**
    * Process a Paystack webhook from the queue.
    * This is called by the WebhookProcessor after the event has been queued to Redis.
@@ -1141,8 +1193,11 @@ export class WebhookService {
     }
 
     try {
+      const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);
+      const isFailureEvent = this.isIvorypayFailureEvent(event, status);
+
       // Amount validation before processing (defense-in-depth)
-      if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
+      if (isSuccessEvent) {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
           const metadata = transaction.metadata as any ?? {};
@@ -1167,11 +1222,12 @@ export class WebhookService {
           }
         }
       }
-      if (['payment.success', 'transaction.completed', 'success'].includes(event)) {
+
+      if (isSuccessEvent) {
         await this.finalizeDeposit(reference);
       } else if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
         await this.finalizeWithdrawal(reference, true);
-      } else if (['payment.failed', 'transaction.failed', 'payment.cancelled', 'transaction.cancelled', 'cancelled', 'failed'].includes(event)) {
+      } else if (isFailureEvent) {
         this.logger.warn(`Ivorypay webhook failure/cancel event received: event=${event} reference=${reference} status=${status}`);
         await this.depositService.failDeposit(
           reference,

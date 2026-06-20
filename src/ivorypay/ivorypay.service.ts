@@ -7,11 +7,13 @@ export class IvorypayService {
   private readonly logger = new Logger(IvorypayService.name);
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
+  private readonly callbackUrl: string;
 
   constructor(private readonly cfg: ConfigService) {
     const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
     this.baseUrl = rawBaseUrl.replace(/\/+$/, '');
     this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
+    this.callbackUrl = this.cfg.get<string>('IVORYPAY_CALLBACK_URL', 'https://royal-wood-789.algorandfarm686.workers.dev');
   }
 
   async createPayment(options: any) {
@@ -37,6 +39,7 @@ export class IvorypayService {
           mode: 'CHECKOUT',
           baseFiat: options.baseFiat || 'KES',
           crypto: options.crypto || 'USDT',
+          callback_url: options.callbackUrl || this.callbackUrl,
           metadata: options.metadata ? (typeof options.metadata === 'string' ? options.metadata : JSON.stringify(options.metadata)) : null,
         },
         {
