@@ -7,9 +7,21 @@ export class PaystackService {
   private readonly logger = new Logger(PaystackService.name);
   private readonly secretKey: string | undefined;
   private readonly paystackBaseUrl = 'https://api.paystack.co';
+  private readonly bankCodeMap: Record<string, Record<string, string>>;
 
   constructor(private cfg: ConfigService) {
     this.secretKey = this.cfg.get<string>('PAYSTACK_SECRET_KEY');
+    const rawBankMap = this.cfg.get<string>('PAYSTACK_BANK_CODE_MAP');
+    if (rawBankMap) {
+      try {
+        this.bankCodeMap = JSON.parse(rawBankMap);
+      } catch (e) {
+        this.logger.warn('PAYSTACK_BANK_CODE_MAP is not valid JSON. Ignoring configured bank mapping.');
+        this.bankCodeMap = {};
+      }
+    } else {
+      this.bankCodeMap = {};
+    }
   }
 
   async initializePayment(options: any) {
@@ -155,18 +167,31 @@ export class PaystackService {
           headers: { Authorization: `Bearer ${this.secretKey}` },
         });
         this.banksCache[key] = resp.data.data || [];
+        this.logger.debug(`Paystack bank list for ${country}: ${JSON.stringify(this.banksCache[key].slice(0, 5))}`);
       } catch (e: any) {
         this.logger.error(`Failed to fetch Paystack banks for ${country}: ${e?.message || e}`);
+        if (e.response?.data) {
+          this.logger.debug(`Paystack banks error data: ${JSON.stringify(e.response.data)}`);
+        }
         this.banksCache[key] = [];
       }
     }
 
     const banks = this.banksCache[key] || [];
     if (!banks.length) {
-      this.logger.warn(`No Paystack bank list available for ${country}; falling back to provided bankName as code.`);
-      return (bankName || '').toUpperCase();
+      const configuredMap = this.bankCodeMap[key] || {};
+      const normalized = this.normalizeBankName(bankName);
+      if (configuredMap[normalized]) {
+        return configuredMap[normalized];
+      }
+
+      const message = country.toUpperCase() === 'KE'
+        ? 'Paystack does not currently expose Kenyan bank codes via the /bank endpoint. Provide a PAYSTACK_BANK_CODE_MAP environment variable with Kenyan bank name → bank_code mappings, or use MOBILE_MONEY/CRYPTO instead.'
+        : `No Paystack bank list available for ${country}. Please verify the Paystack configuration and supported countries.`;
+      this.logger.error(message);
+      throw new BadRequestException(message);
     }
-    const normalized = (bankName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normalized = this.normalizeBankName(bankName);
 
     // Try exact match first
     for (const b of banks) {
@@ -185,6 +210,10 @@ export class PaystackService {
     // No match — provide a helpful error listing candidates
     const sample = banks.slice(0, 8).map((b: any) => `${b.name} (${b.code})`).join(', ');
     throw new BadRequestException(`Unknown bank name '${bankName}'. Paystack supported examples: ${sample}`);
+  }
+
+  private normalizeBankName(bankName: string) {
+    return (bankName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
   private toPaystackAmount(amount: number | string) {
