@@ -29,19 +29,30 @@ export class IvorypayService {
 
     try {
       this.logger.log(`Ivorypay: creating payment ${options.reference} via ${this.baseUrl}`);
-      const response = await axios.post(
-        `${this.baseUrl}/v1/transactions`,
-        {
-          amount: options.amount,
-          reference: options.reference,
-          email: options.email,
-          type: 'CRYPTO',
-          mode: 'CHECKOUT',
-          baseFiat: options.baseFiat || 'KES',
-          crypto: options.crypto || 'USDT',
-          callback_url: options.callbackUrl || this.callbackUrl,
-          metadata: options.metadata ? (typeof options.metadata === 'string' ? options.metadata : JSON.stringify(options.metadata)) : null,
-        },
+      // Build request body. Some Ivorypay environments reject unknown fields like
+      // `callback_url`. Only include a return URL when explicitly enabled via
+      // `IVORYPAY_USE_RETURN_URL` to avoid validation errors seen in production.
+      const body: any = {
+        amount: options.amount,
+        reference: options.reference,
+        email: options.email,
+        type: 'CRYPTO',
+        mode: 'CHECKOUT',
+        baseFiat: options.baseFiat || 'KES',
+        crypto: options.crypto || 'USDT',
+        metadata: options.metadata ? (typeof options.metadata === 'string' ? options.metadata : JSON.stringify(options.metadata)) : null,
+      };
+
+      const useReturn = this.cfg.get<string>('IVORYPAY_USE_RETURN_URL', 'true').toString().toLowerCase() === 'true';
+      if (useReturn) {
+        // Use `return_url` (if supported) instead of `callback_url`. This is opt-in.
+        body.return_url = options.returnUrl || this.callbackUrl;
+        this.logger.log('Ivorypay: including return_url in payment request (opt-in)');
+      } else {
+        this.logger.debug('Ivorypay: not sending return_url (disabled by IVORYPAY_USE_RETURN_URL)');
+      }
+
+      const response = await axios.post(`${this.baseUrl}/v1/transactions`, body,
         {
           headers: {
             Authorization: `${this.apiKey}`,
