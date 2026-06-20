@@ -134,17 +134,13 @@ export class WithdrawService {
       let recipient: any;
 
       if (withdrawal.method === 'MOBILE_MONEY') {
-        // For Paystack mobile money recipients, do NOT provide `account_number`.
-        // Send a properly formatted E.164 mobile number (e.g. +2547...) in
-        // `mobile_number` and include provider/currency. Supplying
-        // `account_number` causes Paystack to validate as a bank account and
-        // may return "Account number is invalid" for phone numbers.
-        const mobileNumber = this.formatPhoneForPaystack(withdrawal.phoneNumber);
         recipient = await this.paystack.createTransferRecipient({
           type: 'mobile_money',
           name: withdrawal.accountName || 'FARM User',
-          mobile_number: mobileNumber,
+          account_number: this.formatMpesaNumber(withdrawal.phoneNumber),
+          mobile_number: this.formatMpesaNumber(withdrawal.phoneNumber),
           provider: 'MPESA',
+          bank_code: 'MPESA',
           currency: 'KES',
         });
       } else if (withdrawal.method === 'BANK_TRANSFER') {
@@ -214,16 +210,6 @@ export class WithdrawService {
     } catch (e: any) {
       await this.rejectWithdrawal(reference, e.message || 'Crypto withdrawal failed');
     }
-  }
-
-  // Normalize phone numbers to E.164 for Paystack (e.g. +2547xxxxxxxx)
-  private formatPhoneForPaystack(phone: string | null): string {
-    if (!phone) return '';
-    const digits = phone.replace(/[^0-9]/g, '');
-    if (digits.startsWith('254')) return '+' + digits;
-    if (digits.startsWith('0')) return '+254' + digits.substring(1);
-    if (!digits.startsWith('+') && digits.length >= 9) return '+' + digits;
-    return phone;
   }
 
   // Called from webhook
