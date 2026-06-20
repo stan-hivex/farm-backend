@@ -75,6 +75,16 @@ export class WithdrawController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('status/:reference')
+  async getStatus(@Req() req, @Param('reference') reference: string) {
+    const status = await this.withdrawService.getWithdrawalStatus(reference, req.user.id);
+    if (!status) {
+      return { success: false, message: 'Withdrawal not found' };
+    }
+    return { success: true, status };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
   async getOne(@Param('id') id: string) {
     return this.withdrawService.getWithdrawal(id);

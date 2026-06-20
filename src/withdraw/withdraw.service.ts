@@ -124,6 +124,41 @@ export class WithdrawService {
     return this.prisma.withdrawal.findUnique({ where: { id } });
   }
 
+  async getWithdrawalStatus(reference: string, userId: string) {
+    const withdrawal = await this.prisma.withdrawal.findFirst({
+      where: { reference, userId },
+    });
+    if (!withdrawal) {
+      return null;
+    }
+
+    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const metadata = (transaction?.metadata as any) ?? {};
+    const statusResult: any = {
+      reference,
+      withdrawal_status: withdrawal.status,
+      method: withdrawal.method,
+      amount: withdrawal.amount,
+      currency: withdrawal.currency,
+      rejection_reason: withdrawal.rejectionReason,
+      paystack_transfer_code: metadata.paystack_transfer_code,
+      paystack_transfer_status: metadata.paystack_transfer_status,
+      paystack_failure_reason: metadata.paystack_failure_reason,
+    };
+
+    if (metadata.paystack_transfer_code) {
+      try {
+        const transferStatus = await this.paystack.getTransferStatus(metadata.paystack_transfer_code);
+        statusResult.paystack_transfer_details = transferStatus;
+        statusResult.paystack_transfer_status = transferStatus.status || statusResult.paystack_transfer_status;
+      } catch (e: any) {
+        statusResult.paystack_transfer_status_error = e.message || 'Unable to query paystack transfer status';
+      }
+    }
+
+    return statusResult;
+  }
+
   private async processWithdrawal(reference: string) {
     const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
     if (!withdrawal || withdrawal.status !== 'PENDING') return;
@@ -169,15 +204,19 @@ export class WithdrawService {
         });
 
         const transferData = transferResponse?.data ?? {};
-        if (transferData.transfer_code) {
-          const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
-          if (transaction) {
-            const metadata = (transaction.metadata as any) ?? {};
-            await this.prisma.transactions.update({
-              where: { id: transaction.id },
-              data: { metadata: { ...metadata, paystack_transfer_code: transferData.transfer_code } },
-            });
-          }
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+        if (transaction) {
+          const metadata = (transaction.metadata as any) ?? {};
+          const updatedMetadata = {
+            ...metadata,
+            paystack_transfer_code: transferData.transfer_code || transferData.id || metadata.paystack_transfer_code,
+            paystack_transfer_status: transferData.status || metadata.paystack_transfer_status || 'pending',
+            paystack_transfer_initiated_at: new Date().toISOString(),
+          };
+          await this.prisma.transactions.update({
+            where: { id: transaction.id },
+            data: { metadata: updatedMetadata },
+          });
         }
       }
       // Do NOT mark success here – wait for webhook or provider callback
@@ -292,11 +331,17 @@ export class WithdrawService {
       });
 
       if (transaction) {
+        const metadata = (transaction.metadata as any) ?? {};
         await tx.transactions.update({
           where: { id: transaction.id },
           data: {
             status: 'failed',
             processed_at: new Date(),
+            metadata: {
+              ...metadata,
+              paystack_failure_reason: reason,
+              paystack_transfer_status: 'failed',
+            },
           },
         });
       }

@@ -278,4 +278,27 @@ export class PaystackService {
       throw new BadRequestException(`Paystack transfer failed: ${e.response?.data?.message || e.message}`);
     }
   }
+
+  async getTransferStatus(transferCode: string) {
+    if (!this.secretKey) {
+      this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock transfer status');
+      return { transfer_code: transferCode, status: 'success' };
+    }
+
+    try {
+      const response = await axios.get(`${this.paystackBaseUrl}/transfer/${encodeURIComponent(transferCode)}`, {
+        headers: { Authorization: `Bearer ${this.secretKey}` },
+      });
+
+      if (!response.data.status) {
+        throw new BadRequestException('Failed to retrieve transfer status from Paystack');
+      }
+
+      this.logger.log(`Paystack transfer status fetched for ${transferCode}`);
+      return response.data.data;
+    } catch (e: any) {
+      this.logger.error(`Paystack transfer status error: ${e.response?.data?.message || e.message}`);
+      throw new BadRequestException(`Paystack transfer status lookup failed: ${e.response?.data?.message || e.message}`);
+    }
+  }
 }
