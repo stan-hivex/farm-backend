@@ -6,6 +6,7 @@ import { PrismaService } from '../database/prisma.service';
 import { DepositService } from '../deposit/deposit.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { PaystackService } from '../paystack/paystack.service';
+import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { QUEUES } from '../common/constants';
@@ -24,6 +25,7 @@ export class WebhookService {
     private readonly websocket: WebsocketGateway,
     private readonly cfg: ConfigService,
     private readonly paystackService: PaystackService,
+    private readonly ivorypayService: IvorypayService,
     @InjectQueue(QUEUES.WEBHOOKS) private readonly webhookQueue: Queue,
     @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
   ) {}
@@ -510,26 +512,29 @@ export class WebhookService {
         const metadata = (tx.metadata as any) ?? {};
         const provider = (metadata.provider?.toString()?.toLowerCase() || deposit?.provider?.toLowerCase() || 'unknown').trim();
 
-        if (provider !== 'paystack') {
-          this.logger.log(`fixStuckDeposits: skipping ${tx.transaction_reference}, unsupported provider=${provider}`);
-          continue;
-        }
-
         let verifiedTransaction: any = null;
         try {
-          verifiedTransaction = await this.paystackService.verifyTransaction(tx.transaction_reference);
+          if (provider === 'paystack') {
+            verifiedTransaction = await this.paystackService.verifyTransaction(tx.transaction_reference);
+          } else if (provider === 'ivorypay') {
+            verifiedTransaction = await this.ivorypayService.verifyTransaction(tx.transaction_reference);
+          } else {
+            this.logger.log(`fixStuckDeposits: skipping ${tx.transaction_reference}, unsupported provider=${provider}`);
+            continue;
+          }
         } catch (verifyError) {
-          this.logger.warn(`fixStuckDeposits: paystack verify failed for ${tx.transaction_reference}, leaving pending`, verifyError as any);
+          this.logger.warn(`fixStuckDeposits: ${provider} verify failed for ${tx.transaction_reference}, leaving pending`, verifyError as any);
           continue;
         }
 
         const status = (verifiedTransaction?.status ?? '').toString().toLowerCase();
-        if (status === 'success') {
+        if (['success', 'completed'].includes(status)) {
           await this.finalizeDeposit(tx.transaction_reference);
         } else if (['failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'].includes(status)) {
-          await this.depositService.failDeposit(tx.transaction_reference, `Paystack verify indicates ${verifiedTransaction.status}`);
+          const providerLabel = provider === 'paystack' ? 'Paystack' : 'Ivorypay';
+          await this.depositService.failDeposit(tx.transaction_reference, `${providerLabel} verify indicates ${verifiedTransaction.status}`);
         } else {
-          this.logger.log(`fixStuckDeposits: leaving ${tx.transaction_reference} pending, paystack status=${verifiedTransaction?.status ?? 'unknown'}`);
+          this.logger.log(`fixStuckDeposits: leaving ${tx.transaction_reference} pending, ${provider} status=${verifiedTransaction?.status ?? 'unknown'}`);
         }
       } catch (err) {
         this.logger.error(`fixStuckDeposits: failed to process ${tx.transaction_reference}`, err as any);

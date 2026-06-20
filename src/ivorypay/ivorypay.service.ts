@@ -89,6 +89,47 @@ export class IvorypayService {
     }
   }
 
+  async verifyTransaction(reference: string) {
+    if (!this.apiKey) {
+      this.logger.warn('IVORYPAY_API_KEY not configured, returning mock verify');
+      return { status: 'completed', reference };
+    }
+
+    try {
+      this.logger.log(`Ivorypay: verifying transaction ${reference}`);
+      const response = await axios.get(
+        `${this.baseUrl}/v1/transactions/${encodeURIComponent(reference)}`,
+        {
+          headers: {
+            Authorization: `${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      if (!response.data || response.data.success === false) {
+        throw new BadRequestException('Ivorypay verification failed');
+      }
+
+      const verifiedData = response.data.data ?? response.data;
+      const status = verifiedData?.status ?? response.data?.status;
+      if (!status) {
+        this.logger.warn(`Ivorypay verify response for ${reference} missing status field: ${JSON.stringify(response.data)}`);
+        throw new BadRequestException('Ivorypay verification failed: missing status field');
+      }
+
+      this.logger.log(`Ivorypay: verified ${reference}, status=${status}`);
+      return verifiedData;
+    } catch (e: any) {
+      const message = e.response?.data?.message || e.response?.data?.error || e.message;
+      this.logger.error(`Ivorypay verify error: ${message}`);
+      if (e.response?.data) {
+        this.logger.debug(`Ivorypay verify response body: ${JSON.stringify(e.response.data)}`);
+      }
+      throw new BadRequestException(`Ivorypay verification failed: ${message}`);
+    }
+  }
+
   async createWithdrawal(options: any) {
     this.logger.log(`Mock Ivorypay create withdrawal ${options.reference}`);
     return { data: { id: 'WD_123456' }, id: 'WD_123456' };
