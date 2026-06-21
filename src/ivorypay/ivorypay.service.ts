@@ -66,10 +66,26 @@ export class IvorypayService {
         throw new BadRequestException('Ivorypay checkout URL not provided');
       }
 
+      const providerReference =
+        data?.id ||
+        data?.transaction_id ||
+        data?.transactionId ||
+        data?.txn_id ||
+        data?.txnId ||
+        data?.payment_id ||
+        data?.paymentId ||
+        data?.invoice_id ||
+        data?.invoiceId ||
+        data?.tx_ref ||
+        data?.trxId ||
+        data?.reference ||
+        options.reference;
+
       return {
         data,
         payment_link: paymentLink,
         checkout_url: paymentLink,
+        providerReference,
       };
     } catch (e: any) {
       const message = e.response?.data?.message || e.response?.data?.error || e.message;

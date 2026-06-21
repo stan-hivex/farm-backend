@@ -194,6 +194,12 @@ export class PaymentsService {
         },
       });
 
+      const providerRef =
+        (payment as any).providerReference ??
+        (payment as any).data?.id ??
+        (payment as any).data?.reference ??
+        reference;
+
       const tx = await this.prisma.transactions.create({
         data: {
           transaction_reference: reference,
@@ -207,6 +213,7 @@ export class PaymentsService {
           description: `Pending crypto deposit via Ivorypay (${farmAmount} FARM → ${amountUsd} USD)`,
           metadata: {
             provider: 'ivorypay',
+            provider_ref: providerRef,
             amount_farm: farmAmount,
             amount_usd: amountUsd,
             farm_to_usd_rate: farmToUsdRate,
@@ -242,6 +249,7 @@ export class PaymentsService {
           paymentMethod: 'CRYPTO',
           provider: 'ivorypay',
           reference,
+          providerRef,
           status: 'PENDING',
         },
       });

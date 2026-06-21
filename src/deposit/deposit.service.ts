@@ -100,7 +100,7 @@ export class DepositService {
           payment_method: 'CRYPTO',
         },
       });
-      providerRef = init.data?.id || init.data?.reference || reference;
+      providerRef = init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
       if (providerRef !== reference) {
         await this.prisma.deposit.update({ where: { id: deposit.id }, data: { providerRef } });
       }

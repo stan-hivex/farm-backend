@@ -533,6 +533,8 @@ export class WebhookService {
           ? (metadata.provider_ref ?? deposit?.providerRef ?? tx.transaction_reference)?.toString()
           : tx.transaction_reference;
 
+        this.logger.log(`fixStuckDeposits: Ivorypay verify lookup for ${tx.transaction_reference} using providerTransactionId=${providerTransactionId}`);
+
         let verifiedTransaction: any = null;
         try {
           if (provider === 'paystack') {
