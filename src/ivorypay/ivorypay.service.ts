@@ -89,16 +89,17 @@ export class IvorypayService {
     }
   }
 
-  async verifyTransaction(reference: string) {
+  async verifyTransaction(reference: string, providerReference?: string) {
     if (!this.apiKey) {
       this.logger.warn('IVORYPAY_API_KEY not configured, returning mock verify');
       return { status: 'completed', reference };
     }
 
+    const lookupReference = providerReference?.toString()?.trim() || reference;
     try {
-      this.logger.log(`Ivorypay: verifying transaction ${reference}`);
+      this.logger.log(`Ivorypay: verifying transaction ${lookupReference} (internal reference=${reference})`);
       const response = await axios.get(
-        `${this.baseUrl}/v1/transactions/${encodeURIComponent(reference)}`,
+        `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupReference)}`,
         {
           headers: {
             Authorization: `${this.apiKey}`,
@@ -114,11 +115,12 @@ export class IvorypayService {
       const verifiedData = response.data.data ?? response.data;
       const status = verifiedData?.status ?? response.data?.status;
       if (!status) {
-        this.logger.warn(`Ivorypay verify response for ${reference} missing status field: ${JSON.stringify(response.data)}`);
+        this.logger.warn(`Ivorypay verify response for ${lookupReference} missing status field: ${JSON.stringify(response.data)}`);
         throw new BadRequestException('Ivorypay verification failed: missing status field');
       }
 
-      this.logger.log(`Ivorypay: verified ${reference}, status=${status}`);
+      verifiedData.reference = verifiedData.reference ?? reference;
+      this.logger.log(`Ivorypay: verified ${lookupReference}, status=${status}`);
       return verifiedData;
     } catch (e: any) {
       const message = e.response?.data?.message || e.response?.data?.error || e.message;

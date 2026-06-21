@@ -529,13 +529,16 @@ export class WebhookService {
         const deposit = await this.prisma.deposit.findFirst({ where: { reference: tx.transaction_reference } });
         const metadata = (tx.metadata as any) ?? {};
         const provider = (metadata.provider?.toString()?.toLowerCase() || deposit?.provider?.toLowerCase() || 'unknown').trim();
+        const providerTransactionId = provider === 'ivorypay'
+          ? (metadata.provider_ref ?? deposit?.providerRef ?? tx.transaction_reference)?.toString()
+          : tx.transaction_reference;
 
         let verifiedTransaction: any = null;
         try {
           if (provider === 'paystack') {
             verifiedTransaction = await this.paystackService.verifyTransaction(tx.transaction_reference);
           } else if (provider === 'ivorypay') {
-            verifiedTransaction = await this.ivorypayService.verifyTransaction(tx.transaction_reference);
+            verifiedTransaction = await this.ivorypayService.verifyTransaction(tx.transaction_reference, providerTransactionId);
           } else {
             this.logger.log(`fixStuckDeposits: skipping ${tx.transaction_reference}, unsupported provider=${provider}`);
             continue;
@@ -556,6 +559,76 @@ export class WebhookService {
         }
       } catch (err) {
         this.logger.error(`fixStuckDeposits: failed to process ${tx.transaction_reference}`, err as any);
+      }
+    }
+
+    await this.cleanupStaleFailedDeposits();
+  }
+
+  private async cleanupStaleFailedDeposits() {
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000);
+    const staleTxs = await this.prisma.transactions.findMany({
+      where: {
+        transaction_type: 'deposit',
+        status: { in: ['failed', 'cancelled', 'reversed'] },
+        updated_at: { lt: cutoff },
+      },
+      select: {
+        id: true,
+        transaction_reference: true,
+      },
+    });
+
+    if (staleTxs.length) {
+      this.logger.log(`cleanupStaleFailedDeposits: found ${staleTxs.length} stale failed deposit transaction(s)`);
+
+      for (const tx of staleTxs) {
+        try {
+          const deposit = await this.prisma.deposit.findFirst({
+            where: {
+              reference: tx.transaction_reference,
+              status: 'PENDING',
+            },
+          });
+
+          if (!deposit) {
+            continue;
+          }
+
+          await this.prisma.$transaction(async (txDb) => {
+            await txDb.deposit.delete({ where: { id: deposit.id } });
+            await txDb.transactions.delete({ where: { id: tx.id } });
+          });
+
+          this.logger.log(`cleanupStaleFailedDeposits: deleted stale deposit ${deposit.reference} and transaction ${tx.id}`);
+        } catch (err) {
+          this.logger.error(`cleanupStaleFailedDeposits: failed to delete stale deposit for transaction ${tx.transaction_reference}`, err as any);
+        }
+      }
+    }
+
+    const staleFailedDeposits = await this.prisma.deposit.findMany({
+      where: {
+        status: 'FAILED',
+        updatedAt: { lt: cutoff },
+      },
+      select: {
+        id: true,
+        reference: true,
+      },
+    });
+
+    if (!staleFailedDeposits.length) {
+      return;
+    }
+
+    this.logger.log(`cleanupStaleFailedDeposits: found ${staleFailedDeposits.length} stale FAILED deposit record(s)`);
+    for (const deposit of staleFailedDeposits) {
+      try {
+        await this.prisma.deposit.delete({ where: { id: deposit.id } });
+        this.logger.log(`cleanupStaleFailedDeposits: deleted stale FAILED deposit ${deposit.reference}`);
+      } catch (err) {
+        this.logger.error(`cleanupStaleFailedDeposits: failed to delete stale FAILED deposit ${deposit.reference}`, err as any);
       }
     }
   }
