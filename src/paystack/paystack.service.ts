@@ -11,6 +11,9 @@ export class PaystackService {
   private readonly kenyaBankCodeFallback: Record<string, string> = {
     'i&m': 'IM',
     'im': 'IM',
+    'imbank': 'IM',
+    'iandm': 'IM',
+    'iandmbank': 'IM',
     'co-operativebank': 'COOP',
     'cooperativebank': 'COOP',
     'cooperative bank': 'COOP',
