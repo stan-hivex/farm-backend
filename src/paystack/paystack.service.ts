@@ -19,19 +19,27 @@ export class PaystackService {
     'cooperative bank': 'COOP',
     'equity': 'EQB',
     'kcb': 'KCB',
+    'kenya commercial bank': 'KCB',
     'stanbic': 'SBK',
     'barclays': 'BAR',
     'barclays bank': 'BAR',
-    'scbk': 'SCB',
     'standardchartered': 'SCB',
     'standard chartered': 'SCB',
+    'scbk': 'SCB',
     'absa': 'ABSA',
     'fnb': 'FNB',
     'dfcu': 'DFCU',
     'ncb': 'NCB',
+    'ncba': 'NCB',
     'familybank': 'FBP',
     'family bank': 'FBP',
     'spencer': 'SCBK',
+    'postbank': 'POSTA',
+    'stanchart': 'SCB',
+    'icbd': 'ICBD',
+    'diamond trust bank': 'DTB',
+    'dtb': 'DTB',
+    'swift': 'SWIFT'
   };
 
   constructor(private cfg: ConfigService) {
@@ -174,11 +182,40 @@ export class PaystackService {
       return response.data.data;
     } catch (e: any) {
       const responseData = e.response?.data;
-      this.logger.error(`Paystack recipient creation error: ${responseData?.message || e.message}`);
+      const apiMessage = responseData?.message || e.message;
+      this.logger.error(`Paystack recipient creation error: ${apiMessage}`);
       if (responseData) {
         this.logger.debug(`Paystack recipient creation error payload: ${JSON.stringify(responseData)}`);
       }
-      throw new BadRequestException(`Paystack recipient failed: ${responseData?.message || e.message}`);
+
+      // Provide actionable guidance for common bank code problems
+      if (responseData?.code === 'invalid_bank_code' || (typeof apiMessage === 'string' && apiMessage.toLowerCase().includes('bank is invalid'))) {
+        const suggested = (() => {
+          try {
+            const normalized = this.normalizeBankName(payload?.bank_name || payload?.name || '');
+            const cfgMap = this.bankCodeMap['KE'] || {};
+            if (cfgMap[normalized]) return cfgMap[normalized];
+            if (this.kenyaBankCodeFallback[normalized]) return this.kenyaBankCodeFallback[normalized];
+            return null;
+          } catch { return null; }
+        })();
+
+        const hintParts = [
+          `Paystack rejected the bank code for '${payload?.bank_name || payload?.name || ''}'.`,
+          "This usually means your Paystack account doesn't have Kenyan bank payouts enabled or the bank code is incorrect.",
+          "Enable Kenyan bank transfers in your Paystack dashboard or use the List Banks endpoint to fetch official bank codes.",
+        ];
+
+        if (suggested) {
+          hintParts.push(`Suggested bank_code based on local mapping: '${suggested}'. Verify this in Paystack before retrying.`);
+        } else {
+          hintParts.push("To fix quickly, add a mapping to PAYSTACK_BANK_CODE_MAP in your .env.production for the bank name -> bank_code.");
+        }
+
+        throw new BadRequestException(`Paystack recipient failed: ${apiMessage}. ${hintParts.join(' ')}`);
+      }
+
+      throw new BadRequestException(`Paystack recipient failed: ${apiMessage}`);
     }
   }
 
