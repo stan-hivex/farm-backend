@@ -7,13 +7,11 @@ export class IvorypayService {
   private readonly logger = new Logger(IvorypayService.name);
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
-  private readonly callbackUrl: string;
 
   constructor(private readonly cfg: ConfigService) {
     const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
     this.baseUrl = rawBaseUrl.replace(/\/+$/, '');
     this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
-    this.callbackUrl = this.cfg.get<string>('IVORYPAY_CALLBACK_URL', 'https://royal-wood-789.algorandfarm686.workers.dev');
   }
 
   async createPayment(options: any) {
@@ -29,9 +27,6 @@ export class IvorypayService {
 
     try {
       this.logger.log(`Ivorypay: creating payment ${options.reference} via ${this.baseUrl}`);
-      // Build request body. Some Ivorypay environments reject unknown fields like
-      // `callback_url`. Only include a return URL when explicitly enabled via
-      // `IVORYPAY_USE_RETURN_URL` to avoid validation errors seen in production.
       const body: any = {
         amount: options.amount,
         reference: options.reference,
@@ -42,15 +37,6 @@ export class IvorypayService {
         crypto: options.crypto || 'USDT',
         metadata: options.metadata ? (typeof options.metadata === 'string' ? options.metadata : JSON.stringify(options.metadata)) : null,
       };
-
-      const useReturn = this.cfg.get<string>('IVORYPAY_USE_RETURN_URL', 'true').toString().toLowerCase() === 'true';
-      if (useReturn) {
-        // Use `return_url` (if supported) instead of `callback_url`. This is opt-in.
-        body.return_url = options.returnUrl || this.callbackUrl;
-        this.logger.log('Ivorypay: including return_url in payment request (opt-in)');
-      } else {
-        this.logger.debug('Ivorypay: not sending return_url (disabled by IVORYPAY_USE_RETURN_URL)');
-      }
 
       const response = await axios.post(`${this.baseUrl}/v1/transactions`, body,
         {
