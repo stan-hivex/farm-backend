@@ -528,16 +528,26 @@ export class WebhookService {
       try {
         const deposit = await this.prisma.deposit.findFirst({ where: { reference: tx.transaction_reference } });
         const metadata = (tx.metadata as any) ?? {};
-        // Prefer the deposit.record's provider when available (authoritative for the deposit),
-        // otherwise fall back to the transaction metadata provider.
         const metaProvider = (metadata.provider?.toString()?.toLowerCase() || '').trim();
         const depositProvider = (deposit?.provider?.toString()?.toLowerCase() || '').trim();
-        let provider = depositProvider || metaProvider || 'unknown';
+        const paymentMethod = (deposit?.paymentMethod?.toString()?.toUpperCase() || '').trim();
 
-        // Ensure Ivorypay verification is only attempted for crypto deposits (Ivorypay handles crypto).
-        if (provider === 'ivorypay' && deposit && deposit.paymentMethod !== 'CRYPTO') {
-          this.logger.warn(`fixStuckDeposits: deposit ${tx.transaction_reference} has provider='ivorypay' but paymentMethod='${deposit.paymentMethod}'. Skipping Ivorypay verification to avoid cross-provider interference.`);
-          provider = depositProvider || metaProvider || 'unknown';
+        let provider = 'unknown';
+        if (paymentMethod === 'CRYPTO') {
+          provider = 'ivorypay';
+        } else if (paymentMethod) {
+          provider = 'paystack';
+        } else if (depositProvider) {
+          provider = depositProvider;
+        } else if (metaProvider) {
+          provider = metaProvider;
+        }
+
+        this.logger.log(`fixStuckDeposits: deposit provider=${depositProvider} paymentMethod=${paymentMethod} metadata.provider=${metaProvider} resolved provider=${provider}`);
+
+        if (provider === 'ivorypay' && paymentMethod !== 'CRYPTO') {
+          this.logger.warn(`fixStuckDeposits: deposit ${tx.transaction_reference} has provider='ivorypay' but paymentMethod='${deposit?.paymentMethod}'. Overriding to paystack verification.`);
+          provider = 'paystack';
         }
 
         const providerTransactionId = provider === 'ivorypay'
