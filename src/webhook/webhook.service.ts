@@ -528,12 +528,23 @@ export class WebhookService {
       try {
         const deposit = await this.prisma.deposit.findFirst({ where: { reference: tx.transaction_reference } });
         const metadata = (tx.metadata as any) ?? {};
-        const provider = (metadata.provider?.toString()?.toLowerCase() || deposit?.provider?.toLowerCase() || 'unknown').trim();
+        // Prefer the deposit.record's provider when available (authoritative for the deposit),
+        // otherwise fall back to the transaction metadata provider.
+        const metaProvider = (metadata.provider?.toString()?.toLowerCase() || '').trim();
+        const depositProvider = (deposit?.provider?.toString()?.toLowerCase() || '').trim();
+        let provider = depositProvider || metaProvider || 'unknown';
+
+        // Ensure Ivorypay verification is only attempted for crypto deposits (Ivorypay handles crypto).
+        if (provider === 'ivorypay' && deposit && deposit.paymentMethod !== 'CRYPTO') {
+          this.logger.warn(`fixStuckDeposits: deposit ${tx.transaction_reference} has provider='ivorypay' but paymentMethod='${deposit.paymentMethod}'. Skipping Ivorypay verification to avoid cross-provider interference.`);
+          provider = depositProvider || metaProvider || 'unknown';
+        }
+
         const providerTransactionId = provider === 'ivorypay'
           ? (metadata.provider_ref ?? deposit?.providerRef ?? tx.transaction_reference)?.toString()
           : tx.transaction_reference;
 
-        this.logger.log(`fixStuckDeposits: Ivorypay verify lookup for ${tx.transaction_reference} using providerTransactionId=${providerTransactionId}`);
+        this.logger.log(`fixStuckDeposits: ${provider} verify lookup for ${tx.transaction_reference} using providerTransactionId=${providerTransactionId}`);
 
         let verifiedTransaction: any = null;
         try {
