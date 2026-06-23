@@ -24,8 +24,26 @@ export class UsersService {
 
   async updateProfile(userId: string, dto: {
     first_name?: string; last_name?: string;
+    username?: string;
     bio?: string; country?: string; city?: string;
   }) {
+    if (dto.username != null) {
+      const normalized = dto.username.trim().toLowerCase();
+      if (normalized.length < 3) {
+        throw new BadRequestException('Username must be at least 3 characters');
+      }
+      const existing = await this.prisma.users.findFirst({
+        where: {
+          username: normalized,
+          NOT: { id: userId },
+        },
+      });
+      if (existing) {
+        throw new ConflictException('Username taken');
+      }
+      dto.username = normalized;
+    }
+
     const user = await this.prisma.users.update({
       where: { id: userId },
       data: dto,

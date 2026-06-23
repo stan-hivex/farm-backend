@@ -38,6 +38,10 @@ class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsString()
   bio?: string;
 
   @IsOptional()
