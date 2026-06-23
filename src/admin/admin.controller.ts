@@ -98,8 +98,23 @@ export class AdminController {
     return { message: 'Withdrawal processed (marked completed)' };
   }
 
+  // ── Superadmin Wallet ────────────────────────────────────────────────────────
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @Get('wallet')
+  async getSuperadminWallet(@CurrentUser() u: any) {
+    return this.svc.getSuperadminWallet(u.id);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @Post('wallet/withdraw')
+  async withdrawSuperadminFunds(@CurrentUser() u: any, @Body() dto: any) {
+    return this.svc.superadminWithdraw(u.id, dto);
+  }
+
   // ── Superadmin Management ────────────────────────────────────────────────────
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Post('superadmin/create')
   createSuperadmin(@Body() dto: CreateSuperadminDto, @CurrentUser() u: any) {
     return this.svc.createSuperadmin(dto, u.id);

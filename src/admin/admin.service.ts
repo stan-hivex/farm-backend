@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { WithdrawService } from '../withdraw/withdraw.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
 @Injectable()
@@ -10,6 +11,7 @@ export class AdminService {
     private prisma: PrismaService,
     private escrowService: EscrowService,
     private notifications: NotificationsService,
+    private withdrawService: WithdrawService,
   ) {}
 
   async getDashboardStats() {
@@ -1029,5 +1031,78 @@ export class AdminService {
         suspicious_activities: suspiciousActivities,
       },
     };
+  }
+  // -- Superadmin Wallet Management ---------------------------------------------
+  async getSuperadminWallet(userId: string) {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+    if (!user || user.role !== 'super_admin') throw new NotFoundException('Superadmin not found');
+
+    const wallet = user.wallets[0];
+    if (!wallet) throw new NotFoundException('Superadmin wallet not found');
+
+    // Get pending withdrawals
+    const pendingWithdrawals = await this.prisma.withdrawal.aggregate({
+      where: { userId, status: 'PENDING' },
+      _sum: { amount: true },
+    });
+
+    // Get total withdrawn
+    const totalWithdrawn = await this.prisma.withdrawal.aggregate({
+      where: { userId, status: 'COMPLETED' },
+      _sum: { settlement: true },
+    });
+
+    return {
+      data: {
+        balance: Number(wallet.balance ?? 0),
+        pending_withdrawals: Number(pendingWithdrawals._sum.amount ?? 0),
+        total_withdrawn: Number(totalWithdrawn._sum.settlement ?? 0),
+        currency: wallet.currency,
+        wallet_address: wallet.wallet_address,
+      },
+    };
+  }
+
+  async superadminWithdraw(userId: string, dto: any) {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+    if (!user || user.role !== 'super_admin') throw new NotFoundException('Superadmin not found');
+
+    const wallet = user.wallets[0];
+    if (!wallet) throw new NotFoundException('Superadmin wallet not found');
+
+    // Use the withdrawal service to process the withdrawal
+    const result = await this.withdrawService.createWithdrawal(userId, {
+      amount: dto.amount,
+      method: dto.method,
+      phoneNumber: dto.phoneNumber,
+      accountName: dto.accountName,
+      accountNumber: dto.accountNumber,
+      bankName: dto.bankName,
+      cryptoAddress: dto.cryptoAddress,
+      network: dto.network,
+      pin: dto.pin,
+    });
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: userId,
+        action: 'SUPERADMIN_WITHDRAWAL',
+        entity_type: 'withdrawal',
+        entity_id: result.withdrawal.id,
+        new_values: {
+          amount: dto.amount,
+          method: dto.method,
+          reference: result.reference,
+        } as any,
+      },
+    });
+
+    return result;
   }
 }
