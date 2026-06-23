@@ -81,12 +81,7 @@ export class EscrowService {
     if (!seller?.wallets[0]) throw new NotFoundException('Seller not found');
     if (seller.id === buyerId) throw new BadRequestException('Cannot create escrow with yourself');
 
-    const feeCfg = await this.prisma.fee_configurations.findFirst({
-      where: { transaction_type: 'escrow_lock', is_active: true },
-    });
-    const fee = feeCfg
-      ? dto.amount * (Number(feeCfg.percentage_fee) / 100) + Number(feeCfg.flat_fee)
-      : 0;
+    const fee = Number((dto.amount * 0.015).toFixed(2)); // fixed 1.5% escrow creation fee
     const totalRequired = dto.amount + fee;
     const available = Number(buyer.wallets[0].balance) - Number(buyer.wallets[0].locked_balance);
     if (available < totalRequired)
@@ -114,7 +109,10 @@ export class EscrowService {
       });
       await tx.wallets.update({
         where: { id: buyer.wallets[0].id },
-        data: { locked_balance: { increment: totalRequired } },
+        data: {
+          balance: { decrement: fee },
+          locked_balance: { increment: dto.amount },
+        },
       });
       await tx.escrow_contracts.update({
         where: { id: c.id },
@@ -249,15 +247,15 @@ export class EscrowService {
   }
 
   async executeRelease(escrow: any) {
-    const releaseFee = Number(escrow.amount) * 0.015; // 1.5% release fee
+    const releaseFee = Number((Number(escrow.amount) * 0.015).toFixed(2)); // 1.5% release fee
     const amountToSeller = Number(escrow.amount) - releaseFee;
-    const totalFromBuyer = Number(escrow.amount) + Number(escrow.fee);
+    const amountLocked = Number(escrow.amount);
 
     await this.prisma.$transaction(async (tx) => {
-      // Deduct from buyer's locked and total balance
+      // Deduct only the locked escrow amount from buyer's wallet. The creation fee was already charged at escrow creation.
       await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
-        data: { locked_balance: { decrement: totalFromBuyer }, balance: { decrement: totalFromBuyer } },
+        data: { locked_balance: { decrement: amountLocked }, balance: { decrement: amountLocked } },
       });
       // Credit seller's wallet with amount minus release fee
       await tx.wallets.update({
@@ -283,7 +281,7 @@ export class EscrowService {
         data: [
           {
             transaction_id: txn.id, wallet_id: escrow.buyer_wallet_id,
-            entry_type: 'debit', amount: totalFromBuyer,
+            entry_type: 'debit', amount: amountLocked,
             description: `Escrow release ${escrow.reference_code}`,
           },
           {
@@ -308,11 +306,11 @@ export class EscrowService {
   }
 
   async executeRefund(escrow: any) {
-    const total = Number(escrow.amount) + Number(escrow.fee);
+    const amount = Number(escrow.amount);
     await this.prisma.$transaction(async (tx) => {
       await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
-        data: { locked_balance: { decrement: total } },
+        data: { locked_balance: { decrement: amount } },
       });
       await tx.transactions.create({
         data: {
@@ -320,9 +318,9 @@ export class EscrowService {
           receiver_wallet_id: escrow.buyer_wallet_id,
           transaction_type: 'escrow_refund',
           status: 'completed',
-          amount: Number(escrow.amount),
+          amount,
           fee: 0,
-          net_amount: Number(escrow.amount),
+          net_amount: amount,
           description: `Escrow refund: ${escrow.title}`,
           metadata: { user_id: escrow.buyer_id, escrow_id: escrow.id },
           processed_at: new Date(),
