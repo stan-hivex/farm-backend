@@ -425,6 +425,43 @@ export class AdminService {
     };
   }
 
+  async getExchangeRates() {
+    const rates = await this.prisma.exchange_rates.findMany({
+      orderBy: [{ base_currency: 'asc' }, { target_currency: 'asc' }],
+    });
+    return { data: rates };
+  }
+
+  async updateExchangeRates(rates: { base_currency: string; target_currency: string; rate: number }[], adminId: string): Promise<{ data: any[]; message: string }> {
+    const upserted = [] as any[];
+    for (const rate of rates) {
+      const base = rate.base_currency.toUpperCase();
+      const target = rate.target_currency.toUpperCase();
+      const existing = await this.prisma.exchange_rates.findFirst({
+        where: { base_currency: base, target_currency: target },
+        orderBy: { fetched_at: 'desc' },
+      });
+      if (existing) {
+        const entry = await this.prisma.exchange_rates.update({
+          where: { id: existing.id },
+          data: { rate: rate.rate, fetched_at: new Date() },
+        });
+        upserted.push(entry as any);
+      } else {
+        const entry = await this.prisma.exchange_rates.create({
+          data: {
+            base_currency: base,
+            target_currency: target,
+            rate: rate.rate,
+            fetched_at: new Date(),
+          },
+        });
+        upserted.push(entry as any);
+      }
+    }
+    return { data: upserted, message: 'Exchange rates updated' };
+  }
+
   async updateSetting(key: string, value: string, adminId: string) {
     const setting = await this.prisma.system_settings.upsert({
       where: { setting_key: key },

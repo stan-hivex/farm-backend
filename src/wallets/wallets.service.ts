@@ -16,6 +16,23 @@ export class WalletsService {
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const available = Number(wallet.balance) - Number(wallet.locked_balance);
+    let farmToKesRate = 1;
+    const directRate = await this.prisma.exchange_rates.findFirst({
+      where: { base_currency: 'FARM', target_currency: 'KES' },
+      orderBy: { fetched_at: 'desc' },
+    });
+    if (directRate) {
+      farmToKesRate = Number(directRate.rate);
+    } else {
+      const reverseRate = await this.prisma.exchange_rates.findFirst({
+        where: { base_currency: 'KES', target_currency: 'FARM' },
+        orderBy: { fetched_at: 'desc' },
+      });
+      if (reverseRate && Number(reverseRate.rate) != 0) {
+        farmToKesRate = 1 / Number(reverseRate.rate);
+      }
+    }
+
     return {
       data: {
         id: wallet.id,
@@ -27,6 +44,7 @@ export class WalletsService {
         currency: wallet.currency,
         blockchain_address: wallet.blockchain_address,
         is_frozen: wallet.is_frozen,
+        kes_equivalent: Number((Number(wallet.balance) * farmToKesRate).toFixed(2)),
       },
     };
   }

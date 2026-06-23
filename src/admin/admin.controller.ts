@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Patch, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, IsBoolean } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsBoolean, IsNumber, IsNotEmpty } from 'class-validator';
 import { AdminService } from './admin.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { NotFoundException } from '@nestjs/common';
@@ -14,6 +14,16 @@ class UserStatusDto { @IsOptional() @IsBoolean() is_active?: boolean; @IsOptiona
 class ResolveDto { @IsIn(['buyer','seller']) winner!: 'buyer'|'seller'; @IsString() note!: string; }
 class MerchantDecisionDto { @IsIn(['approved','rejected']) status!: 'approved'|'rejected'; @IsOptional() @IsString() rejection_reason?: string; }
 class SettingDto { @IsString() value!: string; }
+
+class ExchangeRateDto {
+  @IsString() base_currency!: string;
+  @IsString() target_currency!: string;
+  @IsNumber() rate!: number;
+}
+
+class ExchangeRatesDto {
+  @IsNotEmpty() rates!: ExchangeRateDto[];
+}
 
 class CreateSuperadminDto {
   @IsString() first_name!: string;
@@ -74,6 +84,8 @@ export class AdminController {
   @Get('analytics')               analytics() { return this.svc.getAdminAnalytics(); }
   @Get('settings')                settings() { return this.svc.getSettings(); }
   @Put('settings/:key')           updateSetting(@Param('key') key: string, @Body() dto: SettingDto, @CurrentUser() u: any) { return this.svc.updateSetting(key, dto.value, u.id); }
+  @Get('exchange-rates')          getExchangeRates() { return this.svc.getExchangeRates(); }
+  @Put('exchange-rates')          updateExchangeRates(@Body() dto: ExchangeRatesDto, @CurrentUser() u: any) { return this.svc.updateExchangeRates(dto.rates, u.id); }
   @Get('audit-logs')              auditLogs(@Query() q: any) { return this.svc.getAuditLogs(q); }
   @Post('investments')            createProject(@CurrentUser() u: any, @Body() dto: any) { return this.svc.createProject(u.id, dto); }
   @Put('investments/:id')         updateProject(@Param('id') id: string, @Body() dto: any) { return this.svc.updateProject(id, dto); }

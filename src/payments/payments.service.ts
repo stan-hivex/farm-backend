@@ -439,18 +439,23 @@ export class PaymentsService {
   async getExchangeRate(from: string, to: string): Promise<number> {
     const fromCode = from.toUpperCase();
     const toCode = to.toUpperCase();
-    if (
-      (fromCode === 'FARM' && toCode === 'KES') ||
-      (fromCode === 'KES' && toCode === 'FARM')
-    ) {
-      return 1;
-    }
+    if (fromCode === toCode) return 1;
 
-    const rate = await this.prisma.exchange_rates.findFirst({
+    const directRate = await this.prisma.exchange_rates.findFirst({
       where: { base_currency: fromCode, target_currency: toCode },
       orderBy: { fetched_at: 'desc' },
     });
-    return rate ? Number(rate.rate) : 1;
+    if (directRate) return Number(directRate.rate);
+
+    const reverseRate = await this.prisma.exchange_rates.findFirst({
+      where: { base_currency: toCode, target_currency: fromCode },
+      orderBy: { fetched_at: 'desc' },
+    });
+    if (reverseRate && Number(reverseRate.rate) !== 0) {
+      return 1 / Number(reverseRate.rate);
+    }
+
+    return 1;
   }
 
   // Simple fraud assessment: velocity and amount thresholds.
