@@ -1077,12 +1077,19 @@ export class AdminService {
       _sum: { settlement: true },
     });
 
+    const availableBalance = Math.max(
+      0,
+      Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0),
+    );
+
     return {
       data: {
         balance: Number(wallet.balance ?? 0),
+        available_balance: availableBalance,
+        locked_balance: Number(wallet.locked_balance ?? 0),
         pending_withdrawals: Number(pendingWithdrawals._sum.amount ?? 0),
         total_withdrawn: Number(totalWithdrawn._sum.settlement ?? 0),
-        currency: wallet.currency,
+        currency: wallet.currency ?? 'FARM',
         wallet_address: wallet.wallet_address,
       },
     };
