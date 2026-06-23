@@ -10,8 +10,6 @@ import { paginationParams, paginate } from '../common/utils/pagination.util';
 @Injectable()
 export class EscrowService {
   private readonly logger = new Logger(EscrowService.name);
-  private readonly paystackPaybill = '4084333';
-  private readonly paystackAccount = '85365';
 
   constructor(
     private prisma: PrismaService,
@@ -19,29 +17,44 @@ export class EscrowService {
     private paystack: PaystackService,
   ) {}
 
-  private async remitEscrowFee(amount: number, reference: string) {
+  private async getSuperadminWallet() {
+    const superadmin = await this.prisma.users.findFirst({
+      where: { role: 'super_admin', is_deleted: false },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+    if (!superadmin?.wallets[0]) {
+      throw new NotFoundException('Superadmin wallet not found');
+    }
+    return superadmin.wallets[0];
+  }
+
+  private async getSuperadminWalletInTx(tx: any) {
+    const superadmin = await tx.users.findFirst({
+      where: { role: 'super_admin', is_deleted: false },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+    if (!superadmin?.wallets[0]) {
+      throw new NotFoundException('Superadmin wallet not found');
+    }
+    return superadmin.wallets[0];
+  }
+
+  private async creditSuperadminWalletInTx(tx: any, amount: number, description: string) {
     if (amount <= 0) return;
+    
+    const wallet = await this.getSuperadminWalletInTx(tx);
+    await tx.wallets.update({
+      where: { id: wallet.id },
+      data: { balance: { increment: amount } },
+    });
 
-    const payload = {
-      type: 'mobile_money',
-      name: 'FARM Platform',
-      currency: 'KES',
-      provider: 'MPESA',
-      phone: this.paystackPaybill,
-      account_number: this.paystackAccount,
-      metadata: {
-        purpose: 'escrow_fee',
-        reference,
+    await tx.ledger_entries.create({
+      data: {
+        wallet_id: wallet.id,
+        entry_type: 'credit',
+        amount,
+        description,
       },
-    };
-
-    const recipient = await this.paystack.createTransferRecipient(payload);
-
-    await this.paystack.initiateTransfer({
-      amount,
-      recipient: recipient.recipient_code,
-      reference,
-      currency: 'KES',
     });
   }
 
@@ -121,9 +134,13 @@ export class EscrowService {
           processed_at: new Date(),
         },
       });
-      // Remit fee to company via Paystack immediately. If this fails, throw to rollback transaction.
+      // Credit escrow fee to superadmin wallet
       if (Number(fee) > 0) {
-        await this.remitEscrowFee(Number(fee), generateTxReference());
+        await this.creditSuperadminWalletInTx(
+          tx,
+          Number(fee),
+          `Escrow creation fee from ${buyer.username}: ${dto.title}`,
+        );
       }
       return c;
     });
@@ -232,15 +249,20 @@ export class EscrowService {
   }
 
   async executeRelease(escrow: any) {
-    const total = Number(escrow.amount) + Number(escrow.fee);
+    const releaseFee = Number(escrow.amount) * 0.015; // 1.5% release fee
+    const amountToSeller = Number(escrow.amount) - releaseFee;
+    const totalFromBuyer = Number(escrow.amount) + Number(escrow.fee);
+
     await this.prisma.$transaction(async (tx) => {
+      // Deduct from buyer's locked and total balance
       await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
-        data: { locked_balance: { decrement: total }, balance: { decrement: total } },
+        data: { locked_balance: { decrement: totalFromBuyer }, balance: { decrement: totalFromBuyer } },
       });
+      // Credit seller's wallet with amount minus release fee
       await tx.wallets.update({
         where: { id: escrow.seller_wallet_id },
-        data: { balance: { increment: Number(escrow.amount) } },
+        data: { balance: { increment: amountToSeller } },
       });
       const txn = await tx.transactions.create({
         data: {
@@ -250,8 +272,8 @@ export class EscrowService {
           transaction_type: 'escrow_release',
           status: 'completed',
           amount: Number(escrow.amount),
-          fee: Number(escrow.fee),
-          net_amount: Number(escrow.amount),
+          fee: releaseFee,
+          net_amount: amountToSeller,
           description: `Escrow release: ${escrow.title}`,
           metadata: { user_id: escrow.buyer_id, escrow_id: escrow.id },
           processed_at: new Date(),
@@ -261,21 +283,26 @@ export class EscrowService {
         data: [
           {
             transaction_id: txn.id, wallet_id: escrow.buyer_wallet_id,
-            entry_type: 'debit', amount: total,
+            entry_type: 'debit', amount: totalFromBuyer,
             description: `Escrow release ${escrow.reference_code}`,
           },
           {
             transaction_id: txn.id, wallet_id: escrow.seller_wallet_id,
-            entry_type: 'credit', amount: Number(escrow.amount),
-            description: `Escrow release ${escrow.reference_code}`,
+            entry_type: 'credit', amount: amountToSeller,
+            description: `Escrow release ${escrow.reference_code} (after 1.5% fee)`,
           },
         ],
       });
       await tx.escrow_contracts.update({
         where: { id: escrow.id }, data: { status: 'completed', released_at: new Date() },
       });
-      if (Number(escrow.fee) > 0) {
-        await this.remitEscrowFee(Number(escrow.fee), generateTxReference());
+      // Credit release fee to superadmin wallet
+      if (releaseFee > 0) {
+        await this.creditSuperadminWalletInTx(
+          tx,
+          releaseFee,
+          `Escrow release fee: ${escrow.title}`,
+        );
       }
     });
   }
