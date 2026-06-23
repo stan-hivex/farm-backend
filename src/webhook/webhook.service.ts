@@ -185,7 +185,18 @@ export class WebhookService {
   async handleIvorypayWebhook(payload: any, verified = false) {
     const event = payload.event ?? payload.status;
     const status = payload.data?.status ?? payload.status ?? payload.data?.state ?? 'unknown';
-    this.logger.log(`Ivorypay webhook received: event=${event ?? 'unknown'} reference=${payload?.data?.reference ?? payload?.reference ?? 'missing'} status=${status}`);
+    const candidateRefs = {
+      topLevelReference: payload?.reference ?? null,
+      topLevelId: payload?.id ?? null,
+      dataReference: payload?.data?.reference ?? null,
+      dataTxRef: payload?.data?.tx_ref ?? null,
+      dataTrxRef: payload?.data?.trxref ?? null,
+      dataTransactionReference: payload?.data?.transaction_reference ?? null,
+      dataTransactionReferenceAlt: payload?.data?.transactionReference ?? null,
+    };
+    const foundReference = this.getIvorypayReference(payload);
+    this.logger.log(`Ivorypay webhook received: event=${event ?? 'unknown'} resolvedReference=${foundReference ?? 'missing'} status=${status}`);
+    this.logger.debug(`Ivorypay webhook candidate refs: ${JSON.stringify(candidateRefs)}`);
     const eventId = this.getEventId('ivorypay', payload);
     if (eventId && (await this.isReplay('ivorypay', eventId))) {
       this.logger.warn(`Replay detected for ivorypay:${eventId}`);
@@ -217,7 +228,7 @@ export class WebhookService {
     }
 
     const log = await this.logWebhook('ivorypay', event, payload);
-    const reference = payload.data?.reference ?? payload.reference;
+    const reference = this.getIvorypayReference(payload);
     if (!reference) {
       this.logger.warn('Ivorypay webhook received without a reference');
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Missing reference' } });
@@ -337,12 +348,39 @@ export class WebhookService {
 
     if (provider === 'ivorypay') {
       // Ivorypay: prefer top-level reference or data.reference and some status/event
-      const hasRef = !!payload?.reference || !!payload?.data?.reference;
+      const hasRef = !!this.getIvorypayReference(payload);
       const hasEvent = !!payload?.event || !!payload?.status;
       return hasRef && hasEvent;
     }
 
     return false;
+  }
+
+  private getIvorypayReference(payload: any): string | null {
+    const ref = (
+      payload?.data?.reference ??
+      payload?.data?.tx_ref ??
+      payload?.data?.trxref ??
+      payload?.data?.transaction_reference ??
+      payload?.data?.transactionReference ??
+      payload?.data?.id ??
+      payload?.reference ??
+      payload?.id
+    );
+    return typeof ref === 'string' && ref.trim() ? ref.trim() : ref?.toString?.().trim() || null;
+  }
+
+  private async resolveIvorypayInternalReference(reference: string): Promise<string | null> {
+    const deposit = await this.prisma.deposit.findFirst({
+      where: {
+        OR: [
+          { reference },
+          { providerRef: reference },
+        ],
+      },
+      select: { reference: true },
+    });
+    return deposit?.reference ?? null;
   }
 
   private isIvorypaySuccessEvent(event: string, status: string) {
@@ -1278,15 +1316,29 @@ export class WebhookService {
    */
   async handleIvorypayWebhookProcessing(payload: any) {
     const event = payload.event ?? payload.status;
-    const reference = payload.data?.reference ?? payload.reference;
+    const rawReference = this.getIvorypayReference(payload);
     const status = payload.data?.status ?? payload.status ?? payload.data?.state ?? 'unknown';
 
-    this.logger.log(`Ivorypay webhook processing start: event=${event ?? 'unknown'} reference=${reference ?? 'missing'} status=${status}`);
+    this.logger.log(`Ivorypay webhook processing start: event=${event ?? 'unknown'} reference=${rawReference ?? 'missing'} status=${status}`);
 
-    if (!reference) {
+    if (!rawReference) {
       this.logger.warn('Ivorypay webhook processing: missing reference');
       return;
     }
+
+    const reference = await this.resolveIvorypayInternalReference(rawReference) ?? rawReference;
+    if (reference !== rawReference) {
+      this.logger.log(`Ivorypay webhook processing: resolved provider reference ${rawReference} to internal reference ${reference}`);
+    }
+    this.logger.debug(`Ivorypay webhook processing: rawReference=${rawReference} resolvedReference=${reference} candidateRefs=${JSON.stringify({
+      topLevelReference: payload?.reference ?? null,
+      topLevelId: payload?.id ?? null,
+      dataReference: payload?.data?.reference ?? null,
+      dataTxRef: payload?.data?.tx_ref ?? null,
+      dataTrxRef: payload?.data?.trxref ?? null,
+      dataTransactionReference: payload?.data?.transaction_reference ?? null,
+      dataTransactionReferenceAlt: payload?.data?.transactionReference ?? null,
+    })}`);
 
     try {
       const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);

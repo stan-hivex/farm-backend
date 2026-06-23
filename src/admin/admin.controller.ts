@@ -15,6 +15,16 @@ class ResolveDto { @IsIn(['buyer','seller']) winner!: 'buyer'|'seller'; @IsStrin
 class MerchantDecisionDto { @IsIn(['approved','rejected']) status!: 'approved'|'rejected'; @IsOptional() @IsString() rejection_reason?: string; }
 class SettingDto { @IsString() value!: string; }
 
+class CreateSuperadminDto {
+  @IsString() first_name!: string;
+  @IsString() last_name!: string;
+  @IsString() username!: string;
+  @IsString() phone!: string;
+  @IsString() email!: string;
+  @IsString() password!: string;
+  @IsString() country!: string;
+}
+
 class SendNotificationDto {
   @IsString() user_id!: string;
   @IsString() title!: string;
@@ -86,5 +96,49 @@ export class AdminController {
     // For admin-triggered processing we mark as success (webhook will normally confirm)
     await this.withdrawService.markAsSuccess(w.reference);
     return { message: 'Withdrawal processed (marked completed)' };
+  }
+
+  // ── Superadmin Management ────────────────────────────────────────────────────
+  @Roles(UserRole.ADMIN)
+  @Post('superadmin/create')
+  createSuperadmin(@Body() dto: CreateSuperadminDto, @CurrentUser() u: any) {
+    return this.svc.createSuperadmin(dto, u.id);
+  }
+
+  @Get('superadmin/list')
+  listSuperadmins(@Query() q: any) {
+    return this.svc.listSuperadmins(q);
+  }
+
+  @Get('superadmin/:id')
+  getSuperadmin(@Param('id') id: string) {
+    return this.svc.getSuperadmin(id);
+  }
+
+  @Patch('superadmin/:id')
+  @Roles(UserRole.ADMIN)
+  updateSuperadmin(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) {
+    return this.svc.updateSuperadmin(id, dto, u.id);
+  }
+
+  @Post('superadmin/:id/deactivate')
+  @Roles(UserRole.ADMIN)
+  deactivateSuperadmin(@Param('id') id: string, @CurrentUser() u: any) {
+    return this.svc.deactivateSuperadmin(id, u.id);
+  }
+}
+
+// ── Superadmin Controller ────────────────────────────────────────────────────
+@ApiTags('Superadmin')
+@ApiBearerAuth('JWT')
+@UseGuards(JwtGuard, RolesGuard)
+@Roles(UserRole.SUPER_ADMIN)
+@Controller({ path: 'superadmin', version: '1' })
+export class SuperadminController {
+  constructor(private readonly svc: AdminService) {}
+
+  @Get('dashboard')
+  superadminDashboard() {
+    return this.svc.getSuperadminDashboard();
   }
 }

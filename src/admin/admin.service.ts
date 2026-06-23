@@ -726,7 +726,245 @@ export class AdminService {
       },
     });
 
-    return { message: `KYC ${dto.status}`, data: { kyc_id: kycDocId, user_id: doc.user_id, status: dto.status } };
+    return { data: doc, message: 'KYC reviewed successfully' };
+  }
+
+  // ── Superadmin Management ────────────────────────────────────────────────────
+  async createSuperadmin(dto: any, adminId: string) {
+    const existing = await this.prisma.users.findFirst({
+      where: {
+        OR: [
+          { phone: dto.phone },
+          { username: dto.username.toLowerCase() },
+          { email: dto.email },
+        ],
+      },
+    });
+
+    if (existing) {
+      if (existing.phone === dto.phone) throw new BadRequestException('Phone already exists');
+      if (existing.username === dto.username.toLowerCase()) throw new BadRequestException('Username already taken');
+      throw new BadRequestException('Email already exists');
+    }
+
+    const bcrypt = require('bcrypt');
+    const password_hash = await bcrypt.hash(dto.password, 12);
+
+    const { generateReferralCode, generateWalletAddress } = require('../common/utils/reference.util');
+    const user = await this.prisma.$transaction(async (tx: any) => {
+      const u = await tx.users.create({
+        data: {
+          first_name: dto.first_name,
+          last_name: dto.last_name,
+          username: dto.username.toLowerCase(),
+          phone: dto.phone,
+          email: dto.email,
+          password_hash,
+          country: dto.country,
+          role: 'super_admin',
+          phone_verified: true,
+          email_verified: true,
+          referral_code: generateReferralCode(),
+        },
+      });
+
+      await tx.wallets.create({
+        data: {
+          user_id: u.id,
+          wallet_name: `${u.first_name}'s Wallet`,
+          wallet_type: 'user',
+          wallet_address: generateWalletAddress(u.id, process.env.QR_HMAC_SECRET || 'farm-secret'),
+          currency: 'FARM',
+        },
+      });
+
+      await tx.audit_logs.create({
+        data: {
+          user_id: adminId,
+          action: 'CREATE_SUPERADMIN',
+          entity_type: 'users',
+          entity_id: u.id,
+          new_values: { first_name: u.first_name, last_name: u.last_name, username: u.username, role: 'super_admin' } as any,
+        },
+      });
+
+      return u;
+    });
+
+    return {
+      data: {
+        id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        username: user.username,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+      },
+      message: 'Superadmin created successfully',
+    };
+  }
+
+  async listSuperadmins(query: any) {
+    const { skip, take } = paginationParams(query.page, query.limit);
+    const where: any = { role: 'super_admin', is_deleted: false };
+
+    if (query.search) {
+      where.OR = [
+        { username: { contains: query.search, mode: 'insensitive' } },
+        { email: { contains: query.search, mode: 'insensitive' } },
+        { first_name: { contains: query.search, mode: 'insensitive' } },
+        { last_name: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.users.findMany({
+        where,
+        skip,
+        take,
+        select: {
+          id: true,
+          first_name: true,
+          last_name: true,
+          username: true,
+          email: true,
+          phone: true,
+          role: true,
+          is_active: true,
+          created_at: true,
+          updated_at: true,
+        },
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.users.count({ where }),
+    ]);
+
+    return { data, total, page: query.page ?? 1, limit: query.limit ?? 10 };
+  }
+
+  async getSuperadmin(id: string) {
+    const user = await this.prisma.users.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        first_name: true,
+        last_name: true,
+        username: true,
+        email: true,
+        phone: true,
+        country: true,
+        role: true,
+        is_active: true,
+        phone_verified: true,
+        email_verified: true,
+        created_at: true,
+        updated_at: true,
+      },
+    });
+
+    if (!user || user.role !== 'super_admin') throw new NotFoundException('Superadmin not found');
+    return { data: user };
+  }
+
+  async updateSuperadmin(id: string, dto: any, adminId: string) {
+    const user = await this.prisma.users.findUnique({ where: { id } });
+    if (!user || user.role !== 'super_admin') throw new NotFoundException('Superadmin not found');
+
+    const updateData: any = {};
+    if (dto.first_name) updateData.first_name = dto.first_name;
+    if (dto.last_name) updateData.last_name = dto.last_name;
+    if (dto.email) updateData.email = dto.email;
+    if (dto.phone) updateData.phone = dto.phone;
+    if (dto.country) updateData.country = dto.country;
+    if (dto.is_active !== undefined) updateData.is_active = dto.is_active;
+
+    const updated = await this.prisma.users.update({
+      where: { id },
+      data: updateData,
+      select: { id: true, first_name: true, last_name: true, username: true, email: true, phone: true, role: true, is_active: true },
+    });
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: 'UPDATE_SUPERADMIN',
+        entity_type: 'users',
+        entity_id: id,
+        new_values: updateData as any,
+      },
+    });
+
+    return { data: updated, message: 'Superadmin updated successfully' };
+  }
+
+  async deactivateSuperadmin(id: string, adminId: string) {
+    const user = await this.prisma.users.findUnique({ where: { id } });
+    if (!user || user.role !== 'super_admin') throw new NotFoundException('Superadmin not found');
+
+    const updated = await this.prisma.users.update({
+      where: { id },
+      data: { is_active: false },
+      select: { id: true, first_name: true, last_name: true, username: true, role: true, is_active: true },
+    });
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: 'DEACTIVATE_SUPERADMIN',
+        entity_type: 'users',
+        entity_id: id,
+      },
+    });
+
+    return { data: updated, message: 'Superadmin deactivated successfully' };
+  }
+
+  async getSuperadminDashboard() {
+    const [totalUsers, totalTransactions, totalRevenue, activeTransactions, flaggedTx, supportTickets, pendingDisputes, pendingKyc] =
+      await Promise.all([
+        this.prisma.users.count({ where: { is_deleted: false } }),
+        this.prisma.transactions.count({ where: { status: 'completed' } }),
+        this.prisma.transactions.aggregate({
+          where: { status: 'completed' },
+          _sum: { amount: true },
+        }),
+        this.prisma.transactions.count({ where: { status: 'pending' } }),
+        this.prisma.transactions.count({ where: { status: { in: ['failed', 'cancelled', 'reversed'] } } }),
+        this.prisma.support_tickets?.count?.({ where: { status: 'open' } }) ?? Promise.resolve(0),
+        this.prisma.escrow_contracts.count({ where: { status: 'disputed' } }),
+        this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
+      ]);
+
+    const recentTx = await this.prisma.transactions.findMany({
+      take: 10,
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        transaction_type: true,
+        amount: true,
+        status: true,
+        created_at: true,
+      },
+    });
+
+    return {
+      data: {
+        total_users: totalUsers,
+        total_revenue: Number(totalRevenue._sum.amount ?? 0),
+        active_transactions: activeTransactions,
+        flagged_transactions: flaggedTx,
+        support_tickets: supportTickets,
+        pending_disputes: pendingDisputes,
+        pending_kyc: pendingKyc,
+        system_health: 99,
+        recent_activities: recentTx.map((tx: any) => ({
+          description: `${tx.transaction_type} transaction of $${tx.amount}`,
+          type: tx.transaction_type,
+          timestamp: tx.created_at,
+        })),
+      },
+    };
   }
 
   async getComplianceReport(query: any) {
