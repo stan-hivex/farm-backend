@@ -800,7 +800,7 @@ export class AdminService {
           email: dto.email,
           password_hash,
           country: dto.country,
-          role: 'super_admin',
+          role: 'admin',
           phone_verified: true,
           email_verified: true,
           referral_code: generateReferralCode(),
@@ -820,10 +820,10 @@ export class AdminService {
       await tx.audit_logs.create({
         data: {
           user_id: adminId,
-          action: 'CREATE_SUPERADMIN',
+          action: 'CREATE_ADMIN',
           entity_type: 'users',
           entity_id: u.id,
-          new_values: { first_name: u.first_name, last_name: u.last_name, username: u.username, role: 'super_admin' } as any,
+          new_values: { first_name: u.first_name, last_name: u.last_name, username: u.username, role: 'admin' } as any,
         },
       });
 
@@ -840,8 +840,55 @@ export class AdminService {
         email: user.email,
         role: user.role,
       },
-      message: 'Superadmin created successfully',
+      message: 'Admin created successfully',
     };
+  }
+
+  async updateUser(userId: string, dto: any, adminId: string) {
+    const user = await this.prisma.users.findUnique({ where: { id: userId } });
+    if (!user || user.is_deleted) throw new NotFoundException('User not found');
+
+    const updateData: any = {};
+    if (dto.first_name) updateData.first_name = dto.first_name;
+    if (dto.last_name) updateData.last_name = dto.last_name;
+    if (dto.username) updateData.username = dto.username.toLowerCase();
+    if (dto.phone) updateData.phone = dto.phone;
+    if (dto.email) updateData.email = dto.email;
+    if (dto.country) updateData.country = dto.country;
+    if (dto.role) updateData.role = dto.role;
+    if (dto.is_active !== undefined) updateData.is_active = dto.is_active;
+    if (dto.is_suspended !== undefined) updateData.is_suspended = dto.is_suspended;
+
+    const updated = await this.prisma.users.update({ where: { id: userId }, data: updateData });
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: 'UPDATE_USER',
+        entity_type: 'users',
+        entity_id: userId,
+        new_values: updateData as any,
+      },
+    });
+    return { data: updated, message: 'User updated successfully' };
+  }
+
+  async deleteUser(userId: string, adminId: string) {
+    const user = await this.prisma.users.findUnique({ where: { id: userId } });
+    if (!user || user.is_deleted) throw new NotFoundException('User not found');
+
+    const deleted = await this.prisma.users.update({
+      where: { id: userId },
+      data: { is_deleted: true },
+    });
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: 'DELETE_USER',
+        entity_type: 'users',
+        entity_id: userId,
+      },
+    });
+    return { data: deleted, message: 'User deleted successfully' };
   }
 
   async listSuperadmins(query: any) {

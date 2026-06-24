@@ -35,6 +35,18 @@ class CreateSuperadminDto {
   @IsString() country!: string;
 }
 
+class UpdateUserDto {
+  @IsOptional() @IsString() first_name?: string;
+  @IsOptional() @IsString() last_name?: string;
+  @IsOptional() @IsString() username?: string;
+  @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() email?: string;
+  @IsOptional() @IsString() country?: string;
+  @IsOptional() @IsString() role?: string;
+  @IsOptional() @IsBoolean() is_active?: boolean;
+  @IsOptional() @IsBoolean() is_suspended?: boolean;
+}
+
 class SendNotificationDto {
   @IsString() user_id!: string;
   @IsString() title!: string;
@@ -70,6 +82,8 @@ export class AdminController {
   @Get('users')                   users(@Query() q: any) { return this.svc.listUsers(q); }
   @Get('users/:id')               user(@Param('id') id: string) { return this.svc.getUserDetail(id); }
   @Patch('users/:id/status')      userStatus(@Param('id') id: string, @Body() dto: UserStatusDto, @CurrentUser() u: any) { return this.svc.updateUserStatus(id, dto, u.id); }
+  @Patch('users/:id')             updateUser(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser() u: any) { return this.svc.updateUser(id, dto, u.id); }
+  @Delete('users/:id')            deleteUser(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.deleteUser(id, u.id); }
   @Get('escrow')                  escrows(@Query() q: any) { return this.svc.listAllEscrows(q); }
   @Get('escrow/:id')              escrowDetail(@Param('id') id: string) { return this.svc.getEscrow(id); }
   @Post('escrow/:id/resolve')     resolve(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.resolveDispute(id, u.id, dto); }
