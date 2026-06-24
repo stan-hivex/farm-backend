@@ -81,6 +81,19 @@ export class EscrowService {
     if (!seller?.wallets[0]) throw new NotFoundException('Seller not found');
     if (seller.id === buyerId) throw new BadRequestException('Cannot create escrow with yourself');
 
+    const oneMinuteAgo = new Date(Date.now() - 60_000);
+    const recentDuplicate = await this.prisma.escrow_contracts.findFirst({
+      where: {
+        buyer_id: buyerId,
+        seller_id: seller.id,
+        amount: dto.amount,
+        created_at: { gte: oneMinuteAgo },
+      },
+    });
+    if (recentDuplicate) {
+      throw new BadRequestException('You can only create one escrow with the same seller and amount once every minute');
+    }
+
     const fee = Number((dto.amount * 0.015).toFixed(2)); // fixed 1.5% escrow creation fee
     const totalRequired = dto.amount + fee;
     const available = Number(buyer.wallets[0].balance) - Number(buyer.wallets[0].locked_balance);
@@ -207,8 +220,14 @@ export class EscrowService {
     if (query.status) where.status = query.status;
     const [items, total] = await Promise.all([
       this.prisma.escrow_contracts.findMany({
-        where, skip, take, orderBy: { created_at: 'desc' },
-        include: { escrow_messages: { orderBy: { created_at: 'asc' } } },
+        where,
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
+        include: {
+          escrow_messages: { orderBy: { created_at: 'asc' } },
+          users_escrow_contracts_seller_idTousers: true,
+        },
       }),
       this.prisma.escrow_contracts.count({ where }),
     ]);
