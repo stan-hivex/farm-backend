@@ -1,4 +1,5 @@
 import * as express from 'express';
+import helmet from 'helmet';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
@@ -17,6 +18,35 @@ async function bootstrap() {
   app.use(express.json({ verify: rawBodySaver }));
   app.use(express.urlencoded({ extended: true, verify: rawBodySaver }));
 
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  if (isProduction) {
+    const expressApp = app.getHttpAdapter().getInstance() as express.Express;
+    expressApp.set('trust proxy', true);
+    app.use(
+      helmet({
+        hsts: {
+          maxAge: 31536000,
+          includeSubDomains: true,
+          preload: true,
+        },
+      }),
+    );
+    app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const forwardedProto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim();
+      if (req.secure || forwardedProto === 'https') {
+        return next();
+      }
+      const host = req.headers.host;
+      if (!host) {
+        return next();
+      }
+      return res.redirect(301, `https://${host}${req.originalUrl}`);
+    });
+  } else {
+    app.use(helmet());
+  }
+
   app.setGlobalPrefix('api');
   app.enableVersioning({
     type: VersioningType.URI,
@@ -32,6 +62,13 @@ async function bootstrap() {
 
   const localhostCorsRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
+  if (isProduction && corsOrigins?.includes('*')) {
+    Logger.warn(
+      'CORS_ORIGINS contains "*" in production. Wildcard origins are disabled for security.',
+      'Bootstrap',
+    );
+  }
+
   const corsOriginMatches = (origin: string) => {
     if (!corsOrigins?.length) {
       return false;
@@ -39,7 +76,7 @@ async function bootstrap() {
 
     return corsOrigins.some((allowedOrigin) => {
       if (allowedOrigin === '*') {
-        return true;
+        return !isProduction;
       }
 
       if (allowedOrigin.startsWith('*.')) {

@@ -785,6 +785,15 @@ async resendOtp(userId: string) {
           ip_address: ip,
         },
       });
+
+      if (severity === 'medium' || severity === 'high' || severity === 'critical') {
+        const logMessage = `[SECURITY EVENT] ${severity.toUpperCase()} ${eventType} user=${userId} ip=${ip ?? 'unknown'} description=${description}`;
+        if (severity === 'critical') {
+          this.logger.error(logMessage, 'AuthService');
+        } else {
+          this.logger.warn(logMessage, 'AuthService');
+        }
+      }
     } catch (error: any) {
       // Don't fail the main operation if logging fails
       const message = error instanceof Error ? error.message : String(error);

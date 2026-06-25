@@ -1,6 +1,8 @@
 import { Module, Logger } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
 import { RedisModule } from './common/redis.module';
@@ -29,6 +31,8 @@ import { BlockchainModule } from './blockchain/blockchain.module';
 import { QrModule } from './qr/qr.module';
 import { WebsocketModule } from './websocket/websocket.module';
 import { EscrowModule } from './escrow/escrow.module';
+import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
+
 
 @Module({
   imports: [
@@ -36,6 +40,18 @@ import { EscrowModule } from './escrow/escrow.module';
       isGlobal: true,
       envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],
       ignoreEnvFile: false,
+    }),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        throttlers: [
+          {
+            limit: Number(cfg.get<string>('RATE_LIMIT')) || 20,
+            ttl: Number(cfg.get<string>('RATE_LIMIT_TTL')) || 60,
+          },
+        ],
+      }),
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -89,6 +105,13 @@ import { EscrowModule } from './escrow/escrow.module';
     QrModule,
     WebsocketModule,
     EscrowModule,
+    TransferRequestsModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

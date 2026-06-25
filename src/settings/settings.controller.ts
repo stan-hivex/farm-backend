@@ -27,4 +27,15 @@ export class SettingsController {
       body.language,
     );
   }
+
+  @Put('theme')
+  async updateTheme(
+    @Req() req,
+    @Body() body,
+  ) {
+    return this.settingsService.updateTheme(
+      req.user.id,
+      body.theme,
+    );
+  }
 }
