@@ -22,17 +22,17 @@ private readonly analyticsService: AnalyticsService,
 @UseGuards(JwtAuthGuard)
 @Get('growth-history')
 async getGrowthHistory(
-@Req() req,
-@Query('days') days?: string,
+  @Req() req,
+  @Query('days') days?: string,
+  @Query('period') period?: string,
 ) {
-const userId = req.user.id;
+  const userId = req.user.id;
+  const normalizedPeriod = period?.toString().trim().toLowerCase();
 
-
-return this.analyticsService.getUserGrowthHistory(
-  userId,
-  Number(days || 7),
-);
-
-
+  return this.analyticsService.getUserGrowthHistory(
+    userId,
+    Number(days || 7),
+    normalizedPeriod,
+  );
 }
 }

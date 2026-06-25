@@ -42,8 +42,44 @@ export class QrService {
 
   async validate(scannedPayload: string, customerId: string) {
     let parsed: any;
-    try { parsed = JSON.parse(scannedPayload); } catch {
-      throw new BadRequestException('Invalid QR payload');
+
+    try {
+      parsed = JSON.parse(scannedPayload);
+    } catch {
+      const identifier = scannedPayload.trim();
+      if (!identifier) throw new BadRequestException('Invalid QR payload');
+
+      const normalizedUsername = identifier.startsWith('@')
+        ? identifier.substring(1).trim().toLowerCase()
+        : identifier.toLowerCase();
+
+      const user = await this.prisma.users.findFirst({
+        where: {
+          OR: [
+            { username: normalizedUsername },
+            { phone: identifier },
+          ],
+        },
+        include: {
+          wallets: {
+            where: { is_active: true },
+            take: 1,
+          },
+        },
+      });
+
+      if (!user || !user.wallets?.length) {
+        throw new BadRequestException('User not found or wallet unavailable');
+      }
+
+      return {
+        data: {
+          valid: true,
+          type: 'peer',
+          wallet_address: user.wallets[0].wallet_address,
+          suggested_amount: null,
+        },
+      };
     }
 
     if (parsed.merchant_id) {

@@ -55,67 +55,128 @@ export class AnalyticsService {
     return { data: Object.values(byDay) };
   }
   async getUserGrowthHistory(
-userId: string,
-days = 7,
-) {
-const from = new Date();
-from.setDate(from.getDate() - days);
+    userId: string,
+    days = 7,
+    period = 'daily',
+  ) {
+    const normalizedPeriod = period?.toString().trim().toLowerCase() || 'daily';
 
-// Get user's wallets first
-const userWallets = await this.prisma.wallets.findMany({
-where: { user_id: userId },
-select: { id: true },
-});
+    const from = new Date();
+    if (normalizedPeriod === 'weekly') {
+      from.setDate(from.getDate() - 84);
+    } else if (normalizedPeriod === 'monthly') {
+      from.setFullYear(from.getFullYear() - 1);
+    } else if (normalizedPeriod === 'yearly') {
+      from.setFullYear(from.getFullYear() - 5);
+    } else {
+      from.setDate(from.getDate() - days);
+    }
 
-const walletIds = userWallets.map(w => w.id);
+    // Get user's wallets first
+    const userWallets = await this.prisma.wallets.findMany({
+      where: { user_id: userId },
+      select: { id: true },
+    });
 
-// Get transactions where user is sender or receiver
-const transactions =
-await this.prisma.transactions.findMany({
-where: {
-OR: [
-{ sender_wallet_id: { in: walletIds } },
-{ receiver_wallet_id: { in: walletIds } },
-],
-status: 'completed',
-created_at: {
-gte: from,
-},
-},
-select: {
-amount: true,
-created_at: true,
-},
-orderBy: {
-created_at: 'asc',
-},
-});
+    const walletIds = userWallets.map((w) => w.id);
 
-const grouped: Record<
-string,
-{ date: string; total: number }
+    // Get transactions where user is sender or receiver
+    const transactions = await this.prisma.transactions.findMany({
+      where: {
+        OR: [
+          { sender_wallet_id: { in: walletIds } },
+          { receiver_wallet_id: { in: walletIds } },
+        ],
+        status: 'completed',
+        created_at: {
+          gte: from,
+        },
+      },
+      select: {
+        amount: true,
+        created_at: true,
+      },
+      orderBy: {
+        created_at: 'asc',
+      },
+    });
 
-> = {};
+    const grouped: Record<
+      string,
+      { date: string; total: number; sortDate: Date }
+    > = {};
 
-for (const tx of transactions) {
-const day =
-tx.created_at!.toISOString().slice(0, 10);
+    const getPeriodLabel = (date: Date) => {
+      if (normalizedPeriod === 'weekly') {
+        const weekStart = new Date(date);
+        const dayOfWeek = (weekStart.getDay() + 6) % 7;
+        weekStart.setDate(weekStart.getDate() - dayOfWeek);
+        return `Week of ${weekStart.toISOString().slice(0, 10)}`;
+      }
 
-if (!grouped[day]) {
-  grouped[day] = {
-    date: day,
-    total: 0,
-  };
-}
+      if (normalizedPeriod === 'monthly') {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      }
 
-grouped[day].total += Number(tx.amount);
+      if (normalizedPeriod === 'yearly') {
+        return `${date.getFullYear()}`;
+      }
 
+      return date.toISOString().slice(0, 10);
+    };
 
-}
+    const getSortDate = (date: Date) => {
+      if (normalizedPeriod === 'weekly') {
+        const weekStart = new Date(date);
+        const dayOfWeek = (weekStart.getDay() + 6) % 7;
+        weekStart.setDate(weekStart.getDate() - dayOfWeek);
+        return weekStart;
+      }
 
-return {
-data: Object.values(grouped),
-};
-}
+      if (normalizedPeriod === 'monthly') {
+        return new Date(date.getFullYear(), date.getMonth(), 1);
+      }
+
+      if (normalizedPeriod === 'yearly') {
+        return new Date(date.getFullYear(), 0, 1);
+      }
+
+      return new Date(date.toISOString().slice(0, 10));
+    };
+
+    for (const tx of transactions) {
+      const txDate = tx.created_at!;
+      const label = getPeriodLabel(txDate);
+      const sortDate = getSortDate(txDate);
+
+      if (!grouped[label]) {
+        grouped[label] = {
+          date: label,
+          total: 0,
+          sortDate,
+        };
+      }
+
+      grouped[label].total += Number(tx.amount);
+    }
+
+    const sorted = Object.values(grouped).sort(
+      (a, b) => a.sortDate.getTime() - b.sortDate.getTime(),
+    );
+
+    const firstValue = sorted.length ? sorted[0].total : 0;
+    const lastValue = sorted.length ? sorted[sorted.length - 1].total : 0;
+    const growthPercentage = firstValue > 0
+      ? Number((((lastValue - firstValue) / firstValue) * 100).toFixed(1))
+      : lastValue > 0
+        ? 100
+        : 0;
+
+    return {
+      data: sorted.map((item) => ({ date: item.date, total: item.total })),
+      growth_percentage: growthPercentage,
+      period: normalizedPeriod,
+    };
+  }
 
 }
