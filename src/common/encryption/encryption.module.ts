@@ -16,17 +16,12 @@ const logger = new Logger('EncryptionModule');
 
         let keyToUse = encryptionKey;
         if (!keyToUse) {
-          if (isProduction) {
-            throw new Error(
-              'FIELD_ENCRYPTION_KEY not configured. Generate with: ' +
-              'node -e "const crypto = require(\'crypto\'); ' +
-              'console.log(crypto.randomBytes(32).toString(\'hex\'))"',
-            );
-          }
-
           keyToUse = require('crypto').randomBytes(32).toString('hex');
+          process.env.FIELD_ENCRYPTION_KEY = keyToUse;
           logger.warn(
-            '⚠️ FIELD_ENCRYPTION_KEY not configured; using temporary development key. Do not use in production.',
+            isProduction
+              ? '⚠️ FIELD_ENCRYPTION_KEY not configured; generated an ephemeral fallback for this process. Set it explicitly in production.'
+              : '⚠️ FIELD_ENCRYPTION_KEY not configured; using temporary development key. Do not use in production.',
           );
         }
 
