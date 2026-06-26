@@ -6,6 +6,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { v4 as uuidv4 } from 'uuid';
+import { assertResourceAccess } from '../common/utils/access-control.util';
 
 @Injectable()
 export class WithdrawService {
@@ -120,8 +121,14 @@ export class WithdrawService {
     });
   }
 
-  async getWithdrawal(id: string) {
-    return this.prisma.withdrawal.findUnique({ where: { id } });
+  async getWithdrawal(id: string, userId?: string) {
+    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { id } });
+    if (!withdrawal) {
+      return null;
+    }
+
+    assertResourceAccess(withdrawal.userId, userId, 'withdrawal');
+    return withdrawal;
   }
 
   async getWithdrawalStatus(reference: string, userId: string) {

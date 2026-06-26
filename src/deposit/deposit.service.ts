@@ -5,6 +5,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { v4 as uuidv4 } from 'uuid';
+import { assertResourceAccess } from '../common/utils/access-control.util';
 
 @Injectable()
 export class DepositService {
@@ -216,8 +217,7 @@ export class DepositService {
   async getDepositById(id: string, userId?: string) {
     const deposit = await this.prisma.deposit.findUnique({ where: { id } });
     if (!deposit) return null;
-    // Only allow the owning user to view deposit details, and only if it's successful.
-    if (userId && deposit.userId !== userId) return null;
+    assertResourceAccess(deposit.userId, userId, 'deposit');
     if (deposit.status !== 'SUCCESS') return null;
     return deposit;
   }

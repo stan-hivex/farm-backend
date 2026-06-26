@@ -86,7 +86,7 @@ export class WithdrawController {
 
   @UseGuards(JwtAuthGuard)
   @Get(':id')
-  async getOne(@Param('id') id: string) {
-    return this.withdrawService.getWithdrawal(id);
+  async getOne(@Param('id') id: string, @Req() req: any) {
+    return this.withdrawService.getWithdrawal(id, req.user?.id);
   }
 }
