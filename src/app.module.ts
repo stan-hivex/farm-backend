@@ -6,6 +6,8 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
 import { RedisModule } from './common/redis.module';
+import { EncryptionModule } from './common/encryption/encryption.module';
+import { AuditModule } from './common/audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { WalletsModule } from './wallets/wallets.module';
@@ -36,6 +38,8 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
 
 @Module({
   imports: [
+    EncryptionModule,
+    AuditModule,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],

@@ -4,8 +4,12 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { validateSecurityEnvironment } from './config/environment-validation';
 
 async function bootstrap() {
+  // SECURITY FIRST: Validate all security-critical environment variables
+  // This runs BEFORE creating the app to fail fast if secrets are missing
+  validateSecurityEnvironment();
   const app = await NestFactory.create(AppModule);
 
   const rawBodySaver = (req: express.Request, res: express.Response, buf: Buffer, encoding: string) => {

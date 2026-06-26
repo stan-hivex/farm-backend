@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../database/prisma.service';
+import { ApiKeyHashService } from '../security/api-key-hash.service';
 
 export const REQUIRE_API_KEY = 'requireApiKey';
 export const RequireApiKey = () => SetMetadata(REQUIRE_API_KEY, true);
@@ -23,15 +24,21 @@ export class ApiKeyGuard implements CanActivate {
 
     if (!apiKey) throw new UnauthorizedException('API key required');
 
+    // Security: Store and compare API key hash instead of plaintext
     const key = await this.prisma.api_keys.findFirst({
       where: {
-        api_key: apiKey,
         expires_at: { gt: new Date() },
       },
       include: { users: { select: { id: true, role: true, is_active: true } } },
     });
 
-    if (!key || !key.users?.is_active) {
+    if (!key || !key.users?.is_active || !key.api_key_hash) {
+      throw new UnauthorizedException('Invalid or expired API key');
+    }
+
+    // Compare incoming key hash with stored hash
+    const isValid = await ApiKeyHashService.compareKeys(apiKey, key.api_key_hash);
+    if (!isValid) {
       throw new UnauthorizedException('Invalid or expired API key');
     }
 

@@ -60,7 +60,12 @@ export class AuthService {
       if (referrer) referred_by = referrer.id;
     }
 
-    const qrSecret = this.cfg.get<string>('QR_HMAC_SECRET', 'farm-secret');
+    // QR_HMAC_SECRET must be set in environment (fail fast if missing)
+    const qrSecret = this.cfg.get<string>('QR_HMAC_SECRET');
+    if (!qrSecret) {
+      throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
+    }
+
     const user = await this.prisma.$transaction(async (tx) => {
       const u = await tx.users.create({
         data: {
@@ -473,7 +478,9 @@ throw new ForbiddenException(
 
 const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
 
-const pin_hash = await bcrypt.hash(dto.pin + userId, rounds);
+// Security fix: Do NOT concatenate userId with PIN
+// bcrypt generates its own salt - userId is public anyway
+const pin_hash = await bcrypt.hash(dto.pin, rounds);
 
 await this.prisma.users.update({
 where: { id: userId },
@@ -542,22 +549,16 @@ if (!user?.pin_hash) {
 throw new BadRequestException('No PIN found');
 }
 
-// Verify old PIN
-const validOldPin = await bcrypt.compare(
-dto.old_pin + userId,
-user.pin_hash,
-);
+// Security fix: Don't concatenate userId with PIN
+const validOldPin = await bcrypt.compare(dto.old_pin, user.pin_hash);
 
 if (!validOldPin) {
-throw new UnauthorizedException('Old PIN is incorrect');
+  throw new UnauthorizedException('Old PIN is incorrect');
 }
 
 const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
 
-const newHash = await bcrypt.hash(
-dto.new_pin + userId,
-rounds,
-);
+const newHash = await bcrypt.hash(dto.new_pin, rounds);
 
 await this.prisma.users.update({
 where: { id: userId },
@@ -624,10 +625,8 @@ async resetForgottenPin(
   const rounds =
     Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
 
-  const pin_hash = await bcrypt.hash(
-    dto.new_pin + userId,
-    rounds,
-  );
+  // Security fix: Don't concatenate userId with PIN
+  const pin_hash = await bcrypt.hash(dto.new_pin, rounds);
 
   await this.prisma.users.update({
     where: { id: userId },
@@ -717,8 +716,15 @@ async resendOtp(userId: string) {
 }
   // ── Private helpers ───────────────────────────────────────────────────────────
   private async issueTokens(userId: string, role: string, walletId?: string) {
-    const accessSecret = this.cfg.get<string>('JWT_ACCESS_SECRET') || 'secret';
-    const refreshSecret = this.cfg.get<string>('JWT_REFRESH_SECRET') || 'secret_refresh';
+    // Security: Secrets MUST be set in environment (no hardcoded fallbacks)
+    const accessSecret = this.cfg.get<string>('JWT_ACCESS_SECRET');
+    const refreshSecret = this.cfg.get<string>('JWT_REFRESH_SECRET');
+
+    if (!accessSecret || !refreshSecret) {
+      throw new Error(
+        'JWT secrets not configured. Set JWT_ACCESS_SECRET and JWT_REFRESH_SECRET in environment.',
+      );
+    }
     const jti = randomBytes(16).toString('hex');
     const payload = { sub: userId, role, wallet_id: walletId, jti };
     const [access_token, refresh_token] = await Promise.all([
