@@ -5,6 +5,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { validateSecurityEnvironment } from './config/environment-validation';
+import { SafeInputValidationPipe } from './common/pipes/safe-input.pipe';
 
 async function bootstrap() {
   // SECURITY FIRST: Validate all security-critical environment variables
@@ -131,6 +132,7 @@ async function bootstrap() {
   });
 
   app.useGlobalPipes(
+    new SafeInputValidationPipe(),
     new ValidationPipe({
       whitelist: true,
       transform: true,
