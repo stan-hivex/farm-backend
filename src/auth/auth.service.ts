@@ -149,9 +149,16 @@ if (new Date() > expiryDate) {
 
   // ── Login ────────────────────────────────────────────────────────────────────
   async login(dto: LoginDto, ip: string, userAgent: string) {
+    const normalizedIdentifier = dto.identifier.trim();
+    const normalizedPhone = normalizedIdentifier.replace(/\s+/g, '');
+
     const user = await this.prisma.users.findFirst({
       where: {
-        OR: [{ phone: dto.identifier }, { email: dto.identifier }, { username: dto.identifier }],
+        OR: [
+          { phone: normalizedPhone },
+          { email: { equals: normalizedIdentifier, mode: 'insensitive' } },
+          { username: { equals: normalizedIdentifier, mode: 'insensitive' } },
+        ],
         is_deleted: false,
       },
       include: { wallets: { where: { is_active: true }, take: 1 } },
