@@ -485,14 +485,41 @@ export class AdminService {
 
   async createProject(adminId: string, dto: any) {
     const project = await this.prisma.investment_projects.create({
-      data: { ...dto, created_by: adminId },
+      data: {
+        project_name: dto.project_name,
+        category: dto.category,
+        description: dto.description,
+        banner_image: dto.banner_image,
+        target_amount: dto.target_amount,
+        minimum_investment: dto.minimum_investment,
+        roi_percent: dto.roi_percent,
+        duration_months: dto.duration_months,
+        status: dto.status,
+        starts_at: dto.starts_at,
+        ends_at: dto.ends_at,
+        created_by: adminId,
+      },
     });
     return { data: project, message: 'Investment project created' };
   }
 
   async updateProject(id: string, dto: any) {
+    const updateData: any = {
+      project_name: dto.project_name,
+      category: dto.category,
+      description: dto.description,
+      banner_image: dto.banner_image,
+      target_amount: dto.target_amount,
+      minimum_investment: dto.minimum_investment,
+      roi_percent: dto.roi_percent,
+      duration_months: dto.duration_months,
+      status: dto.status,
+      starts_at: dto.starts_at,
+      ends_at: dto.ends_at,
+    };
+
     return {
-      data: await this.prisma.investment_projects.update({ where: { id }, data: dto }),
+      data: await this.prisma.investment_projects.update({ where: { id }, data: updateData }),
     };
   }
 

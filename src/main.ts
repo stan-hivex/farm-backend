@@ -135,7 +135,11 @@ async function bootstrap() {
     new SafeInputValidationPipe(),
     new ValidationPipe({
       whitelist: true,
+      forbidNonWhitelisted: true,
       transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
     }),
   );
 

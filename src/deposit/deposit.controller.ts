@@ -7,10 +7,33 @@
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 
 import { DepositService } from './deposit.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
+class CreateDepositDto {
+  @IsNotEmpty()
+  @IsNumber()
+  amount_fiat!: number;
+
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  email?: string;
+}
 
 @Controller({ path: 'deposit', version: '1' })
 @UseGuards(JwtAuthGuard)
@@ -28,7 +51,7 @@ export class DepositController {
   @Post('create')
   async create(
     @Req() req: any,
-    @Body() dto: any,
+    @Body() dto: CreateDepositDto,
   ) {
     const userId = req.user?.id;
     if (!userId) {

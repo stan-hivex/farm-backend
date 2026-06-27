@@ -41,26 +41,7 @@ export class KycController {
   constructor(private readonly svc: KycService) {}
 
   @Post('submit')
-  submit(@CurrentUser() u: any, @Body() body: any) {
-    const dto: SubmitKycDto = {
-      document_type: body.document_type || body.documentType,
-      document_number: body.document_number || body.documentNumber,
-      front_image: body.front_image || body.frontImage,
-      back_image: body.back_image || body.backImage,
-      selfie_image: body.selfie_image || body.selfieImage,
-      first_name: body.first_name || body.firstName,
-      last_name: body.last_name || body.lastName,
-      dob: body.dob || body.dateOfBirth || body.date_of_birth,
-      gender: body.gender,
-      nationality: body.nationality,
-      phone: body.phone,
-      email: body.email,
-      country: body.country,
-      state: body.state || body.county || body.county_state,
-      city: body.city,
-      address: body.address,
-      postal_code: body.postal_code || body.postalCode,
-    };
+  submit(@CurrentUser() u: any, @Body() dto: SubmitKycDto) {
     return this.svc.submit(u.id, dto);
   }
   @Get('my')           getMyKyc(@CurrentUser() u: any) { return this.svc.getMyKyc(u.id); }

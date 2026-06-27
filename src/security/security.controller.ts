@@ -1,8 +1,27 @@
 import { Controller, Get, Put, Post, Body, UseGuards, Logger, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { IsBoolean, IsString, IsOptional } from 'class-validator';
 import { SecurityService } from './security.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+
+class UpdateBiometricsDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsOptional()
+  @IsString()
+  deviceFingerprint?: string;
+
+  @IsOptional()
+  @IsString()
+  biometricType?: string;
+}
+
+class VerifyDeviceDto {
+  @IsString()
+  deviceFingerprint!: string;
+}
 
 @ApiTags('Security')
 @Controller({ path: 'security', version: '1' })
@@ -23,15 +42,15 @@ export class SecurityController {
   @ApiOperation({ summary: 'Enable or disable biometric authentication' })
   async updateBiometrics(
     @CurrentUser() user: any,
-    @Body() body: { enabled: boolean; deviceFingerprint?: string; biometricType?: string },
+    @Body() dto: UpdateBiometricsDto,
   ) {
-    this.logger.log(`Biometric update requested by user=${user?.id}, enabled=${body.enabled}`);
+    this.logger.log(`Biometric update requested by user=${user?.id}, enabled=${dto.enabled}`);
 
-    if (body.enabled) {
-      if (!body.deviceFingerprint) {
+    if (dto.enabled) {
+      if (!dto.deviceFingerprint) {
         throw new BadRequestException('deviceFingerprint is required when enabling biometrics');
       }
-      return this.svc.enableBiometrics(user.id, body.deviceFingerprint, body.biometricType);
+      return this.svc.enableBiometrics(user.id, dto.deviceFingerprint, dto.biometricType);
     } else {
       return this.svc.disableBiometrics(user.id);
     }
@@ -43,10 +62,10 @@ export class SecurityController {
   @ApiOperation({ summary: 'Verify device fingerprint on app resume' })
   async verifyDevice(
     @CurrentUser() user: any,
-    @Body() body: { deviceFingerprint: string },
+    @Body() dto: VerifyDeviceDto,
   ) {
     this.logger.log(`Device verification requested by user=${user?.id}`);
-    return this.svc.verifyDevice(user.id, body.deviceFingerprint);
+    return this.svc.verifyDevice(user.id, dto.deviceFingerprint);
   }
 
   @Get('biometrics')

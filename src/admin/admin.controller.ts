@@ -11,6 +11,55 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from '../common/enums';
 
 class UserStatusDto { @IsOptional() @IsBoolean() is_active?: boolean; @IsOptional() @IsBoolean() is_suspended?: boolean; }
+
+class CreateProjectDto {
+  @IsNotEmpty() @IsString() project_name!: string;
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsString() banner_image?: string;
+  @IsOptional() @IsNumber() target_amount?: number;
+  @IsOptional() @IsNumber() minimum_investment?: number;
+  @IsOptional() @IsNumber() roi_percent?: number;
+  @IsOptional() @IsNumber() duration_months?: number;
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() starts_at?: string;
+  @IsOptional() @IsString() ends_at?: string;
+}
+
+class UpdateProjectDto {
+  @IsOptional() @IsString() project_name?: string;
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsString() banner_image?: string;
+  @IsOptional() @IsNumber() target_amount?: number;
+  @IsOptional() @IsNumber() minimum_investment?: number;
+  @IsOptional() @IsNumber() roi_percent?: number;
+  @IsOptional() @IsNumber() duration_months?: number;
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() starts_at?: string;
+  @IsOptional() @IsString() ends_at?: string;
+}
+
+class SuperadminWithdrawDto {
+  @IsNotEmpty() @IsNumber() amount!: number;
+  @IsNotEmpty() @IsString() method!: string;
+  @IsOptional() @IsString() phoneNumber?: string;
+  @IsOptional() @IsString() accountName?: string;
+  @IsOptional() @IsString() accountNumber?: string;
+  @IsOptional() @IsString() bankName?: string;
+  @IsOptional() @IsString() cryptoAddress?: string;
+  @IsOptional() @IsString() network?: string;
+  @IsOptional() @IsString() pin?: string;
+}
+
+class UpdateSuperadminDto {
+  @IsOptional() @IsString() first_name?: string;
+  @IsOptional() @IsString() last_name?: string;
+  @IsOptional() @IsString() email?: string;
+  @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() country?: string;
+  @IsOptional() @IsBoolean() is_active?: boolean;
+}
 class ResolveDto { @IsIn(['buyer','seller']) winner!: 'buyer'|'seller'; @IsString() note!: string; }
 class MerchantDecisionDto { @IsIn(['approved','rejected']) status!: 'approved'|'rejected'; @IsOptional() @IsString() rejection_reason?: string; }
 class SettingDto { @IsString() value!: string; }
@@ -101,8 +150,8 @@ export class AdminController {
   @Get('exchange-rates')          getExchangeRates() { return this.svc.getExchangeRates(); }
   @Put('exchange-rates')          updateExchangeRates(@Body() dto: ExchangeRatesDto, @CurrentUser() u: any) { return this.svc.updateExchangeRates(dto.rates, u.id); }
   @Get('audit-logs')              auditLogs(@Query() q: any) { return this.svc.getAuditLogs(q); }
-  @Post('investments')            createProject(@CurrentUser() u: any, @Body() dto: any) { return this.svc.createProject(u.id, dto); }
-  @Put('investments/:id')         updateProject(@Param('id') id: string, @Body() dto: any) { return this.svc.updateProject(id, dto); }
+  @Post('investments')            createProject(@CurrentUser() u: any, @Body() dto: CreateProjectDto) { return this.svc.createProject(u.id, dto); }
+  @Put('investments/:id')         updateProject(@Param('id') id: string, @Body() dto: UpdateProjectDto) { return this.svc.updateProject(id, dto); }
 
   // ── Audit Dashboard ──────────────────────────────────────────────────────────
   @Get('audit/dashboard')         auditDashboard() { return this.svc.getAuditDashboard(); }
@@ -135,7 +184,7 @@ export class AdminController {
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
   @Post('wallet/withdraw')
-  async withdrawSuperadminFunds(@CurrentUser() u: any, @Body() dto: any) {
+  async withdrawSuperadminFunds(@CurrentUser() u: any, @Body() dto: SuperadminWithdrawDto) {
     return this.svc.superadminWithdraw(u.id, dto);
   }
 
@@ -158,7 +207,7 @@ export class AdminController {
 
   @Patch('superadmin/:id')
   @Roles(UserRole.ADMIN)
-  updateSuperadmin(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) {
+  updateSuperadmin(@Param('id') id: string, @Body() dto: UpdateSuperadminDto, @CurrentUser() u: any) {
     return this.svc.updateSuperadmin(id, dto, u.id);
   }
 
