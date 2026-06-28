@@ -29,6 +29,12 @@ services:
       # Redis URL - get from Redis service or use external Redis
       - key: REDIS_URL
         sync: false
+
+      - key: WEB_CONCURRENCY
+        value: "2"
+
+      - key: CACHE_TTL_SECONDS
+        value: "60"
       
       # CORS configuration
       - key: CORS_ORIGINS
