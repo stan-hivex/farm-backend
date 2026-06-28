@@ -10,16 +10,23 @@ import { UserRole } from '../common/enums';
 
 class SubmitKycDto {
   @IsOptional() @IsString() document_type?: string;
+  @IsOptional() @IsString() document_type_code?: string;
   @IsOptional() @IsString() document_number?: string;
+  // Accept either base64 image payloads (front_image) OR already-uploaded URLs (front_image_url)
   @IsOptional() @IsString() front_image?: string;
+  @IsOptional() @IsString() front_image_url?: string;
   @IsOptional() @IsString() back_image?: string;
+  @IsOptional() @IsString() back_image_url?: string;
   @IsOptional() @IsString() selfie_image?: string;
+  @IsOptional() @IsString() selfie_image_url?: string;
   @IsOptional() @IsString() first_name?: string;
   @IsOptional() @IsString() last_name?: string;
   @IsOptional() @IsString() dob?: string;
+  @IsOptional() @IsString() date_of_birth?: string;
   @IsOptional() @IsString() gender?: string;
   @IsOptional() @IsString() nationality?: string;
   @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() phone_number?: string;
   @IsOptional() @IsString() email?: string;
   @IsOptional() @IsString() country?: string;
   @IsOptional() @IsString() state?: string;
