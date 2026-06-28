@@ -12,6 +12,22 @@ export class SafeInputValidationPipe implements PipeTransform {
     /(?:\bor\b|\band\b)\s+\d+\s*=\s*\d+/i,
   ];
 
+  // Fields that are expected to contain encoded data/URLs and should not
+  // be subjected to aggressive SQL/comment injection detection.
+  private readonly allowRawStringFields = new Set([
+    'deviceFingerprint',
+    'device_fingerprint',
+    'frontImageUrl',
+    'front_image_url',
+    'backImageUrl',
+    'back_image_url',
+    'selfieImageUrl',
+    'selfie_image_url',
+    'paymentMethod',
+    'payment_method',
+    'method',
+  ]);
+
   transform(value: unknown, metadata: { type?: string; data?: string }) {
     if (value === null || value === undefined) {
       return value;
@@ -33,6 +49,15 @@ export class SafeInputValidationPipe implements PipeTransform {
     if (value && typeof value === 'object') {
       const result = value as Record<string, unknown>;
       for (const [key, entryValue] of Object.entries(result)) {
+        // If this is a known field that frequently contains encoded strings
+        // or URLs (e.g. device fingerprints, Cloudinary URLs), skip the
+        // aggressive suspicious payload checks for that value and accept
+        // it as-is when it's a string.
+        if (typeof entryValue === 'string' && this.allowRawStringFields.has(key)) {
+          result[key] = entryValue;
+          continue;
+        }
+
         result[key] = this.transform(entryValue, { ...metadata, data: key });
       }
       return result;
