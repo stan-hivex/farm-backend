@@ -5,42 +5,54 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class ProjectsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cacheService: CacheService,
+  ) {}
 
   // GET ALL PROJECTS
   async findAll() {
-    const projects = await this.prisma.investment_projects.findMany({
-      where: { status: 'active' },
-      orderBy: { created_at: 'desc' },
-    });
+    return this.cacheService.wrap(
+      'projects:all',
+      120,
+      async () => {
+        const projects = await this.prisma.investment_projects.findMany({
+          where: { status: 'active' },
+          orderBy: { created_at: 'desc' },
+        });
 
-    return {
-      data: projects.map((p) => ({
-        ...p,
-        total_value: Number((p as any).total_value),
-        token_price: Number((p as any).token_price),
-      })),
-    };
+        return {
+          data: projects.map((p) => ({
+            ...p,
+            total_value: Number((p as any).total_value),
+            token_price: Number((p as any).token_price),
+          })),
+        };
+      },
+    );
   }
 
   // SINGLE PROJECT
   async findOne(id: string) {
-    const project = await (this.prisma as any).projects.findUnique({
-      where: { id },
+    return this.cacheService.wrap(`projects:detail:${id}`, 120, async () => {
+      const project = await (this.prisma as any).projects.findUnique({
+        where: { id },
+      });
+
+      if (!project) throw new NotFoundException('Project not found');
+
+      return {
+        data: {
+          ...project,
+          total_value: Number((project as any).total_value),
+          token_price: Number((project as any).token_price),
+        },
+      };
     });
-
-    if (!project) throw new NotFoundException('Project not found');
-
-    return {
-      data: {
-        ...project,
-        total_value: Number((project as any).total_value),
-        token_price: Number((project as any).token_price),
-      },
-    };
   }
 
   // CREATE PROJECT (ADMIN ONLY LATER)
@@ -51,6 +63,9 @@ export class ProjectsService {
         available_tokens: dto.total_value / dto.token_price,
       },
     });
+
+    await this.cacheService.del('projects:all');
+    await this.cacheService.del(`projects:detail:${project.id}`);
 
     return {
       data: project,
@@ -76,7 +91,7 @@ export class ProjectsService {
       throw new BadRequestException('Not enough tokens available');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // 1. deduct available tokens
       await (tx as any).projects.update({
         where: { id: dto.project_id },
@@ -103,5 +118,10 @@ export class ProjectsService {
         message: 'Investment successful',
       };
     });
+
+    await this.cacheService.del('projects:all');
+    await this.cacheService.del(`projects:detail:${dto.project_id}`);
+
+    return result;
   }
 }

@@ -1,40 +1,50 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class AnalyticsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cacheService: CacheService,
+  ) {}
 
   async getPlatformStats(period: 'day' | 'week' | 'month' = 'month') {
-    const from = new Date();
-    if (period === 'day') from.setDate(from.getDate() - 1);
-    else if (period === 'week') from.setDate(from.getDate() - 7);
-    else from.setMonth(from.getMonth() - 1);
+    return this.cacheService.wrap(
+      `analytics:platform-stats:${period}`,
+      30,
+      async () => {
+        const from = new Date();
+        if (period === 'day') from.setDate(from.getDate() - 1);
+        else if (period === 'week') from.setDate(from.getDate() - 7);
+        else from.setMonth(from.getMonth() - 1);
 
-    const [txVolume, newUsers, activeEscrows, merchantPayments] = await Promise.all([
-      this.prisma.transactions.aggregate({
-        where: { status: 'completed', created_at: { gte: from } },
-        _sum: { amount: true }, _count: true,
-      }),
-      this.prisma.users.count({ where: { created_at: { gte: from }, is_deleted: false } }),
-      this.prisma.escrow_contracts.count({ where: { status: { in: ['active', 'disputed'] } } }),
-      this.prisma.transactions.aggregate({
-        where: { transaction_type: 'merchant_payment', status: 'completed', created_at: { gte: from } },
-        _sum: { amount: true }, _count: true,
-      }),
-    ]);
+        const [txVolume, newUsers, activeEscrows, merchantPayments] = await Promise.all([
+          this.prisma.transactions.aggregate({
+            where: { status: 'completed', created_at: { gte: from } },
+            _sum: { amount: true }, _count: true,
+          }),
+          this.prisma.users.count({ where: { created_at: { gte: from }, is_deleted: false } }),
+          this.prisma.escrow_contracts.count({ where: { status: { in: ['active', 'disputed'] } } }),
+          this.prisma.transactions.aggregate({
+            where: { transaction_type: 'merchant_payment', status: 'completed', created_at: { gte: from } },
+            _sum: { amount: true }, _count: true,
+          }),
+        ]);
 
-    return {
-      data: {
-        period,
-        transaction_volume: Number(txVolume._sum.amount || 0),
-        transaction_count: txVolume._count,
-        new_users: newUsers,
-        active_escrows: activeEscrows,
-        merchant_payment_volume: Number(merchantPayments._sum.amount || 0),
-        merchant_payment_count: merchantPayments._count,
+        return {
+          data: {
+            period,
+            transaction_volume: Number(txVolume._sum.amount || 0),
+            transaction_count: txVolume._count,
+            new_users: newUsers,
+            active_escrows: activeEscrows,
+            merchant_payment_volume: Number(merchantPayments._sum.amount || 0),
+            merchant_payment_count: merchantPayments._count,
+          },
+        };
       },
-    };
+    );
   }
 
   async getTransactionVolume(days = 30) {

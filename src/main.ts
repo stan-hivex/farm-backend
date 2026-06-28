@@ -1,3 +1,5 @@
+import cluster from 'cluster';
+import { cpus } from 'os';
 import * as express from 'express';
 import helmet from 'helmet';
 import { NestFactory } from '@nestjs/core';
@@ -198,4 +200,20 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
+  const workerCount = Number(process.env.WEB_CONCURRENCY) || cpus().length;
+  const logger = new Logger('Cluster');
+
+  logger.log(`Master process started. Forking ${workerCount} workers.`);
+
+  for (let i = 0; i < workerCount; i += 1) {
+    cluster.fork();
+  }
+
+  cluster.on('exit', (worker, code, signal) => {
+    logger.warn(`Worker ${worker.process.pid} exited with code ${code} signal ${signal}. Restarting...`);
+    cluster.fork();
+  });
+} else {
+  bootstrap();
+}

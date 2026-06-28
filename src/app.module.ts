@@ -1,11 +1,13 @@
 import { Module, Logger } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
 import { RedisModule } from './common/redis.module';
+import { CacheModule } from './common/cache/cache.module';
+import { CacheInterceptor } from './common/interceptors/cache.interceptor';
 import { EncryptionModule } from './common/encryption/encryption.module';
 import { AuditModule } from './common/audit/audit.module';
 import { AuthModule } from './auth/auth.module';
@@ -84,6 +86,7 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
     DatabaseModule,
     PrismaModule,
     RedisModule,
+    CacheModule,
     AuthModule,
     UsersModule,
     WalletsModule,
@@ -115,6 +118,10 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: CacheInterceptor,
     },
   ],
 })
