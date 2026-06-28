@@ -7,8 +7,24 @@ import { paginationParams, paginate } from '../common/utils/pagination.util';
 export class KycService {
   constructor(private prisma: PrismaService) {}
 
-  private normalizeValue(value?: string) {
+  private normalizeValue(value?: any) {
+    if (value instanceof Date) return value.toISOString();
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  private parseDateValue(value?: any): Date | undefined {
+    if (!value) return undefined;
+    if (value instanceof Date) return value;
+    if (typeof value !== 'string') return undefined;
+    const v = value.trim();
+    // Accept YYYY-MM-DD by adding midnight Z
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      const d = new Date(v + 'T00:00:00Z');
+      return isNaN(d.getTime()) ? undefined : d;
+    }
+    // Try parsing full ISO or other date strings
+    const parsed = new Date(v);
+    return isNaN(parsed.getTime()) ? undefined : parsed;
   }
 
   private computeKycLevel(data: any) {
@@ -54,7 +70,7 @@ export class KycService {
       selfie_image_url: dto.selfie_image ? urls.selfie : dto.selfie_image_url ?? existing?.selfie_image_url ?? null,
       first_name: dto.first_name ?? existing?.first_name,
       last_name: dto.last_name ?? existing?.last_name,
-      date_of_birth: dto.dob ?? dto.date_of_birth ?? existing?.date_of_birth,
+      date_of_birth: this.parseDateValue(dto.dob ?? dto.date_of_birth ?? existing?.date_of_birth) ?? existing?.date_of_birth,
       gender: dto.gender ?? existing?.gender,
       nationality: dto.nationality ?? existing?.nationality,
       phone: dto.phone ?? dto.phone_number ?? existing?.phone,
