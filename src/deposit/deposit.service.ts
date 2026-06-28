@@ -25,7 +25,15 @@ export class DepositService {
     }
 
     const reference = uuidv4();
-    const paymentMethod = (dto.paymentMethod || 'CARD').toUpperCase();
+    // Map frontend field names to backend: paymentMethod, payment_method, method, payment_channel, payment_provider, provider
+    const paymentMethod = (
+      dto.paymentMethod || 
+      dto.payment_method || 
+      dto.method || 
+      dto.payment_channel || 
+      dto.payment_provider || 
+      'CARD'
+    ).toUpperCase();
     const provider = paymentMethod === 'CRYPTO' ? 'ivorypay' : 'paystack';
     const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
     const fee = amount * feeRate;

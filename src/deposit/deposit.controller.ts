@@ -26,6 +26,27 @@ class CreateDepositDto {
   @IsString()
   paymentMethod?: string;
 
+  // Accept frontend field name variations
+  @IsOptional()
+  @IsString()
+  payment_method?: string;
+
+  @IsOptional()
+  @IsString()
+  method?: string;
+
+  @IsOptional()
+  @IsString()
+  payment_channel?: string;
+
+  @IsOptional()
+  @IsString()
+  payment_provider?: string;
+
+  @IsOptional()
+  @IsString()
+  provider?: string;
+
   @IsOptional()
   @IsString()
   phone?: string;
