@@ -522,7 +522,11 @@ message: 'PIN set successfully',
     if (failedPinAttempts >= MAX_PIN_ATTEMPTS)
       throw new ForbiddenException('PIN locked. Contact support.');
 
-    const valid = await bcrypt.compare(pin + userId, user.pin_hash);
+    // Compare the raw PIN to the stored bcrypt hash.
+    // Historically some code concatenated the userId to the PIN before hashing,
+    // but setPin/changePin/hash generation use the PIN alone. Use the raw PIN
+    // so comparisons are consistent with how PINs are stored.
+    const valid = await bcrypt.compare(pin, user.pin_hash);
     if (!valid) {
       await this.prisma.users.update({
         where: { id: userId }, data: { failed_pin_attempts: { increment: 1 } },
