@@ -116,6 +116,28 @@ class BroadcastNotificationDto {
   @IsOptional() @IsBoolean() email?: boolean;
   @IsOptional() @IsBoolean() sms?: boolean;
   @IsOptional() @IsString() target_role?: string;
+  @IsOptional() @IsString() audience?: string;
+}
+
+class SuperadminNotificationDto {
+  @IsString() title!: string;
+  @IsString() body!: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() metadata?: any;
+  @IsOptional() @IsBoolean() push?: boolean;
+  @IsOptional() @IsBoolean() email?: boolean;
+  @IsOptional() @IsBoolean() sms?: boolean;
+}
+
+class SuperadminBroadcastDto {
+  @IsString() title!: string;
+  @IsString() body!: string;
+  @IsOptional() @IsString() type?: string;
+  @IsOptional() metadata?: any;
+  @IsOptional() @IsBoolean() push?: boolean;
+  @IsOptional() @IsBoolean() email?: boolean;
+  @IsOptional() @IsBoolean() sms?: boolean;
+  @IsIn(['users', 'admins', 'all']) target!: string;
 }
 
 @ApiTags('Admin')
@@ -230,5 +252,25 @@ export class SuperadminController {
   @Get('dashboard')
   superadminDashboard() {
     return this.svc.getSuperadminDashboard();
+  }
+
+  @Post('notifications/send-user')
+  sendNotificationToUser(@CurrentUser() u: any, @Body() dto: SuperadminNotificationDto & { user_id: string }) {
+    return this.svc.sendNotificationToUser(u.id, dto);
+  }
+
+  @Post('notifications/broadcast-users')
+  broadcastToUsers(@CurrentUser() u: any, @Body() dto: SuperadminNotificationDto) {
+    return this.svc.broadcastToUsers(u.id, dto);
+  }
+
+  @Post('notifications/send-admin')
+  sendNotificationToAdmin(@CurrentUser() u: any, @Body() dto: SuperadminNotificationDto & { admin_id: string }) {
+    return this.svc.sendNotificationToAdmin(u.id, dto);
+  }
+
+  @Post('notifications/broadcast-admins')
+  broadcastToAdmins(@CurrentUser() u: any, @Body() dto: SuperadminNotificationDto) {
+    return this.svc.broadcastToAdmins(u.id, dto);
   }
 }

@@ -338,9 +338,11 @@ export class AdminService {
     email?: boolean;
     sms?: boolean;
     target_role?: string;
+    audience?: string;
   }) {
     const where: any = { is_deleted: false, is_active: true };
-    if (dto.target_role) where.role = dto.target_role;
+    const roleFilter = dto.target_role ?? dto.audience;
+    if (roleFilter && roleFilter !== 'all') where.role = roleFilter;
 
     const users = await this.prisma.users.findMany({ where, select: { id: true, email: true, phone: true } });
 
@@ -375,6 +377,122 @@ export class AdminService {
     });
 
     return { message: `Broadcast sent to ${users.length} users` };
+  }
+
+  async sendNotificationToUser(superadminId: string, dto: { user_id: string; title: string; body: string; type?: string; metadata?: any; push?: boolean; email?: boolean; sms?: boolean }) {
+    const user = await this.prisma.users.findUnique({ where: { id: dto.user_id }, select: { id: true, email: true, phone: true } });
+    if (!user) throw new NotFoundException('User not found');
+
+    await this.notifications.createInApp(dto.user_id, {
+      type: dto.type ?? 'admin',
+      title: dto.title,
+      body: dto.body,
+      metadata: dto.metadata,
+    });
+
+    if (dto.push) await this.notifications.sendPush(dto.user_id, dto.title, dto.body, dto.metadata);
+    if (dto.email && user.email) await this.notifications.sendEmail(user.email, dto.title, `<p>${dto.body}</p>`);
+    if (dto.sms && user.phone) await this.notifications.sendSms(user.phone, dto.body);
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: superadminId,
+        action: 'SEND_NOTIFICATION_TO_USER',
+        entity_type: 'users',
+        entity_id: dto.user_id,
+        new_values: { title: dto.title, body: dto.body, type: dto.type },
+      },
+    });
+
+    return { message: 'Notification sent' };
+  }
+
+  async broadcastToUsers(superadminId: string, dto: { title: string; body: string; type?: string; metadata?: any; push?: boolean; email?: boolean; sms?: boolean }) {
+    const users = await this.prisma.users.findMany({ where: { is_deleted: false, is_active: true }, select: { id: true, email: true, phone: true } });
+
+    const notificationPromises = users.map((user) =>
+      this.notifications.createInApp(user.id, {
+        type: dto.type ?? 'admin',
+        title: dto.title,
+        body: dto.body,
+        metadata: dto.metadata,
+      }),
+    );
+    await Promise.all(notificationPromises);
+
+    if (dto.push) await Promise.all(users.map((user) => this.notifications.sendPush(user.id, dto.title, dto.body, dto.metadata)));
+    if (dto.email) await Promise.all(users.filter((u) => u.email).map((user) => this.notifications.sendEmail(user.email!, dto.title, `<p>${dto.body}</p>`)));
+    if (dto.sms) await Promise.all(users.filter((u) => u.phone).map((user) => this.notifications.sendSms(user.phone!, dto.body)));
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: superadminId,
+        action: 'BROADCAST_NOTIFICATION_TO_USERS',
+        entity_type: 'users',
+        entity_id: null,
+        new_values: { title: dto.title, body: dto.body, type: dto.type, push: dto.push, email: dto.email, sms: dto.sms },
+      },
+    });
+
+    return { message: `Broadcast sent to ${users.length} users` };
+  }
+
+  async sendNotificationToAdmin(superadminId: string, dto: { admin_id: string; title: string; body: string; type?: string; metadata?: any; push?: boolean; email?: boolean; sms?: boolean }) {
+    const admin = await this.prisma.users.findUnique({ where: { id: dto.admin_id }, select: { id: true, email: true, phone: true, role: true } });
+    if (!admin || !['admin', 'super_admin'].includes(admin.role as string)) throw new NotFoundException('Admin not found');
+
+    await this.notifications.createInApp(dto.admin_id, {
+      type: dto.type ?? 'admin',
+      title: dto.title,
+      body: dto.body,
+      metadata: dto.metadata,
+    });
+
+    if (dto.push) await this.notifications.sendPush(dto.admin_id, dto.title, dto.body, dto.metadata);
+    if (dto.email && admin.email) await this.notifications.sendEmail(admin.email, dto.title, `<p>${dto.body}</p>`);
+    if (dto.sms && admin.phone) await this.notifications.sendSms(admin.phone, dto.body);
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: superadminId,
+        action: 'SEND_NOTIFICATION_TO_ADMIN',
+        entity_type: 'users',
+        entity_id: dto.admin_id,
+        new_values: { title: dto.title, body: dto.body, type: dto.type },
+      },
+    });
+
+    return { message: 'Notification sent' };
+  }
+
+  async broadcastToAdmins(superadminId: string, dto: { title: string; body: string; type?: string; metadata?: any; push?: boolean; email?: boolean; sms?: boolean }) {
+    const admins = await this.prisma.users.findMany({ where: { role: { in: ['admin', 'super_admin'] }, is_deleted: false, is_active: true }, select: { id: true, email: true, phone: true } });
+
+    const notificationPromises = admins.map((admin) =>
+      this.notifications.createInApp(admin.id, {
+        type: dto.type ?? 'admin',
+        title: dto.title,
+        body: dto.body,
+        metadata: dto.metadata,
+      }),
+    );
+    await Promise.all(notificationPromises);
+
+    if (dto.push) await Promise.all(admins.map((admin) => this.notifications.sendPush(admin.id, dto.title, dto.body, dto.metadata)));
+    if (dto.email) await Promise.all(admins.filter((a) => a.email).map((admin) => this.notifications.sendEmail(admin.email!, dto.title, `<p>${dto.body}</p>`)));
+    if (dto.sms) await Promise.all(admins.filter((a) => a.phone).map((admin) => this.notifications.sendSms(admin.phone!, dto.body)));
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: superadminId,
+        action: 'BROADCAST_NOTIFICATION_TO_ADMINS',
+        entity_type: 'users',
+        entity_id: null,
+        new_values: { title: dto.title, body: dto.body, type: dto.type, push: dto.push, email: dto.email, sms: dto.sms },
+      },
+    });
+
+    return { message: `Broadcast sent to ${admins.length} admins` };
   }
 
   async getAdminAnalytics() {
