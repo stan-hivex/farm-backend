@@ -30,6 +30,10 @@ export class CreateWithdrawDto {
 
   @IsOptional()
   @IsString()
+  cryptoAsset?: string;
+
+  @IsOptional()
+  @IsString()
   network?: string;
 
   @IsString()

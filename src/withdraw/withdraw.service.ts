@@ -49,8 +49,8 @@ export class WithdrawService {
         throw new BadRequestException('Account name, account number and bank name are required for bank transfer withdrawals');
       }
     } else if (dto.method === 'CRYPTO') {
-      if (!dto.cryptoAddress || !dto.network) {
-        throw new BadRequestException('Crypto address and network are required for cryptocurrency withdrawals');
+      if (!dto.cryptoAddress || !dto.cryptoAsset || !dto.network) {
+        throw new BadRequestException('Crypto asset, address and network are required for cryptocurrency withdrawals');
       }
     } else {
       throw new BadRequestException(`Unsupported withdrawal method: ${dto.method}`);
@@ -81,6 +81,7 @@ export class WithdrawService {
           bankName: dto.bankName,
           phoneNumber: dto.phoneNumber,
           cryptoAddress: dto.cryptoAddress,
+          cryptoAsset: dto.cryptoAsset,
           network: dto.network,
           reference,
           status: 'PENDING',
@@ -102,6 +103,8 @@ export class WithdrawService {
             method: dto.method,
             user_id: userId,
             reference,
+            cryptoAsset: dto.cryptoAsset,
+            network: dto.network,
           },
         },
       });
@@ -239,9 +242,14 @@ export class WithdrawService {
       const opts: any = {
         reference,
         amount: withdrawal.settlement,
-        crypto: withdrawal.network || 'USDT',
+        crypto: withdrawal.cryptoAsset || 'USDT',
         to_address: withdrawal.cryptoAddress,
-        metadata: { user_id: withdrawal.userId, reference },
+        metadata: {
+          user_id: withdrawal.userId,
+          reference,
+          cryptoAsset: withdrawal.cryptoAsset,
+          network: withdrawal.network,
+        },
       };
 
       const resp = await this.ivorypay.createWithdrawal(opts);

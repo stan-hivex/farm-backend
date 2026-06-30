@@ -696,6 +696,7 @@ model Withdrawal {
   bankName        String?
   phoneNumber     String?
   cryptoAddress   String?
+  cryptoAsset     String?
   network         String?
   reference       String   @unique
   status          String   @default("PENDING")
