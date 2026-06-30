@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { CacheService } from '../common/cache/cache.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
@@ -8,9 +9,27 @@ import { paginationParams, paginate } from '../common/utils/pagination.util';
 export class WalletsService {
   private readonly logger = new Logger(WalletsService.name);
 
-  constructor(private prisma: PrismaService, private authService: AuthService) {}
+  constructor(
+    private prisma: PrismaService,
+    private authService: AuthService,
+    private cache: CacheService,
+  ) {}
+
+  private async invalidateWalletCaches(userId: string) {
+    await Promise.all([
+      this.cache.cacheDelete(`wallet:${userId}:balance`),
+      this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
+      this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
+    ]);
+  }
 
   async getMyWallet(userId: string) {
+    const cacheKey = `wallet:${userId}:balance`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
@@ -33,7 +52,7 @@ export class WalletsService {
       }
     }
 
-    return {
+    const payload = {
       data: {
         id: wallet.id,
         wallet_address: wallet.wallet_address,
@@ -47,6 +66,9 @@ export class WalletsService {
         kes_equivalent: Number((Number(wallet.balance) * farmToKesRate).toFixed(2)),
       },
     };
+
+    await this.cache.cacheSet(cacheKey, payload, 60);
+    return payload;
   }
 
   async sendFunds(
@@ -187,6 +209,8 @@ export class WalletsService {
         data: { status: 'completed', processed_at: new Date() },
       });
 
+      await this.invalidateWalletCaches(senderId);
+
       return {
         data: { transaction_reference: reference, amount: dto.amount, fee, status: 'completed' },
         message: 'Transfer successful',
@@ -203,11 +227,17 @@ export class WalletsService {
     if (query.type) where.transaction_type = query.type;
     if (query.status) where.status = query.status;
 
+    const cacheKey = `transactions:${userId}:${page}:${limit}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const [txns, total] = await Promise.all([
       this.prisma.transactions.findMany({ where, skip, take, orderBy: { created_at: 'desc' } }),
       this.prisma.transactions.count({ where }),
     ]);
-    return {
+    const payload = {
       data: txns.map((t) => ({
         ...t,
         amount: Number(t.amount),

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { CacheService } from '../common/cache/cache.service';
 import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
@@ -12,9 +13,16 @@ export class AdminService {
     private escrowService: EscrowService,
     private notifications: NotificationsService,
     private withdrawService: WithdrawService,
+    private cache: CacheService,
   ) {}
 
   async getDashboardStats() {
+    const cacheKey = 'admin:dashboard:stats';
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const [totalUsers, totalMerchants, activeEscrows, txVolume, pendingKyc, pendingPayouts] =
       await Promise.all([
         this.prisma.users.count({ where: { is_deleted: false } }),
@@ -26,7 +34,7 @@ export class AdminService {
         this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
         this.prisma.merchant_payouts.count({ where: { status: 'pending' } }),
       ]);
-    return {
+    const payload = {
       data: {
         total_users: totalUsers,
         total_merchants: totalMerchants,
@@ -37,6 +45,8 @@ export class AdminService {
         pending_payouts: pendingPayouts,
       },
     };
+    await this.cache.cacheSet(cacheKey, payload, 60);
+    return payload;
   }
 
   async listUsers(query: any) {
@@ -142,6 +152,13 @@ export class AdminService {
     adminId: string,
   ) {
     const user = await this.prisma.users.update({ where: { id: userId }, data: dto });
+    await Promise.all([
+      this.cache.cacheDelete(`profile:${userId}`),
+      this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
+      this.cache.cacheDelete('admin:dashboard:stats'),
+      this.cache.cacheDelete('admin:analytics'),
+      this.cache.cacheDelete('admin:superadmin-dashboard'),
+    ]);
     await this.prisma.audit_logs.create({
       data: {
         user_id: adminId, action: 'UPDATE_USER_STATUS',
@@ -496,6 +513,12 @@ export class AdminService {
   }
 
   async getAdminAnalytics() {
+    const cacheKey = 'admin:analytics';
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const [totalUsers, totalEscrows, totalTransactions, pendingKyc, pendingPayouts, totalSecurityEvents] =
       await Promise.all([
         this.prisma.users.count({ where: { is_deleted: false } }),
@@ -520,7 +543,7 @@ export class AdminService {
       },
     });
 
-    return {
+    const payload = {
       data: {
         total_users: totalUsers,
         total_escrows: totalEscrows,
@@ -535,6 +558,8 @@ export class AdminService {
         })),
       },
     };
+    await this.cache.cacheSet(cacheKey, payload, 60);
+    return payload;
   }
 
   async getSettings() {
@@ -1152,6 +1177,12 @@ export class AdminService {
   }
 
   async getSuperadminDashboard() {
+    const cacheKey = 'admin:superadmin-dashboard';
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const [totalUsers, totalTransactions, totalRevenue, activeTransactions, flaggedTx, supportTickets, pendingDisputes, pendingKyc] =
       await Promise.all([
         this.prisma.users.count({ where: { is_deleted: false } }),
@@ -1196,7 +1227,7 @@ export class AdminService {
     const escrow_release_earnings = Number(escrowReleaseAgg._sum.fee ?? 0);
     const escrow_total_earnings = Number(escrow_creation_earnings + escrow_release_earnings);
 
-    return {
+    const payload = {
       data: {
         total_users: totalUsers,
         total_revenue: Number(totalRevenue._sum.amount ?? 0),
@@ -1218,6 +1249,8 @@ export class AdminService {
         total_escrow_count: (escrowCreationAgg._count.id ?? 0) + (escrowReleaseAgg._count.id ?? 0),
       },
     };
+    await this.cache.cacheSet(cacheKey, payload, 60);
+    return payload;
   }
 
   async getComplianceReport(query: any) {

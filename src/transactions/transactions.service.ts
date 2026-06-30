@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { CacheService } from '../common/cache/cache.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
 @Injectable()
 export class TransactionsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cache: CacheService,
+  ) {}
 
   async findAll(userId: string, query: any) {
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
@@ -13,11 +17,17 @@ export class TransactionsService {
     const where: any = { OR: [{ sender_wallet_id: wallet.id }, { receiver_wallet_id: wallet.id }] };
     if (query.type) where.transaction_type = query.type;
     if (query.status) where.status = query.status;
+    const cacheKey = `transactions:${userId}:${page}:${limit}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const [items, total] = await Promise.all([
       this.prisma.transactions.findMany({ where, skip, take, orderBy: { created_at: 'desc' } }),
       this.prisma.transactions.count({ where }),
     ]);
-    return {
+    const payload = {
       data: items.map((t) => ({
         ...t,
         amount: Number(t.amount),
@@ -27,6 +37,8 @@ export class TransactionsService {
       })),
       meta: paginate(total, page, limit),
     };
+    await this.cache.cacheSet(cacheKey, payload, 45);
+    return payload;
   }
 
   async findOne(userId: string, txId: string) {

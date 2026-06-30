@@ -755,6 +755,7 @@ enum merchant_status {
 
 enum notification_type {
   system
+  admin
   transaction
   security
   escrow

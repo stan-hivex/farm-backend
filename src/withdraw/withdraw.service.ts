@@ -6,6 +6,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { v4 as uuidv4 } from 'uuid';
+import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 
 @Injectable()
@@ -17,6 +18,7 @@ export class WithdrawService {
     private authService: AuthService,
     private paystack: PaystackService,
     private ivorypay: IvorypayService,
+    private cache: CacheService,
   ) {}
 
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
@@ -113,6 +115,10 @@ export class WithdrawService {
     });
 
     setImmediate(() => this.processWithdrawal(reference).catch((error) => this.logger.error(error?.message ?? error)));
+
+    await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
+    await this.cache.cacheInvalidatePattern(`dashboard:${userId}`);
+    await this.cache.cacheInvalidatePattern(`transactions:${userId}:*`);
 
     return { success: true, reference, withdrawal };
   }
@@ -319,6 +325,15 @@ export class WithdrawService {
       }
     });
 
+    await Promise.all([
+      this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
+      this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
+      this.cache.cacheInvalidatePattern(`transactions:${withdrawal.userId}:*`),
+      this.cache.cacheDelete('admin:dashboard:stats'),
+      this.cache.cacheDelete('admin:analytics'),
+      this.cache.cacheDelete('admin:superadmin-dashboard'),
+    ]);
+
     return true;
   }
 
@@ -362,6 +377,15 @@ export class WithdrawService {
         });
       }
     });
+
+    await Promise.all([
+      this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
+      this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
+      this.cache.cacheInvalidatePattern(`transactions:${withdrawal.userId}:*`),
+      this.cache.cacheDelete('admin:dashboard:stats'),
+      this.cache.cacheDelete('admin:analytics'),
+      this.cache.cacheDelete('admin:superadmin-dashboard'),
+    ]);
 
     return true;
   }

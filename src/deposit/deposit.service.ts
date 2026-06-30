@@ -5,6 +5,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { v4 as uuidv4 } from 'uuid';
+import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class DepositService {
     private paystack: PaystackService,
     private ivorypay: IvorypayService,
     private websocket: WebsocketGateway,
+    private cache: CacheService,
   ) {}
 
   async createDeposit(userId: string, dto: any) {
@@ -436,6 +438,10 @@ export class DepositService {
       return { ok: true };
     });
 
+    if (result.ok) {
+      await this.invalidateFinancialCaches(deposit?.userId);
+    }
+
     return result.ok;
   }
 
@@ -472,6 +478,8 @@ export class DepositService {
       where: { id: transaction.id },
       data: updates,
     });
+
+    await this.invalidateFinancialCaches(transaction?.metadata?.user_id ?? undefined);
 
     return true;
   }
@@ -550,6 +558,11 @@ export class DepositService {
       return { ok: true };
     });
 
+    if (result.ok) {
+      const metadata = (transaction?.metadata as any) ?? {};
+      await this.invalidateFinancialCaches(metadata?.user_id ?? undefined);
+    }
+
     return result.ok;
   }
 
@@ -625,7 +638,24 @@ export class DepositService {
       return { ok: true };
     });
 
+    if (result.ok) {
+      await this.invalidateFinancialCaches(deposit?.userId);
+    }
+
     return result.ok;
+  }
+
+  private async invalidateFinancialCaches(userId?: string) {
+    if (!userId) return;
+
+    await Promise.all([
+      this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`),
+      this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
+      this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
+      this.cache.cacheDelete('admin:dashboard:stats'),
+      this.cache.cacheDelete('admin:analytics'),
+      this.cache.cacheDelete('admin:superadmin-dashboard'),
+    ]);
   }
 
   private normalizeAmount(amount: any): number {
