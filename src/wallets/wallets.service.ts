@@ -247,5 +247,7 @@ export class WalletsService {
       })),
       meta: paginate(total, page, limit),
     };
+
+    return payload;
   }
 }
