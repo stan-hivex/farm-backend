@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
@@ -18,6 +19,7 @@ export class TransferRequestsService {
   constructor(
     private prisma: PrismaService,
     private authService: AuthService,
+    private notificationsService: NotificationsService,
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────
@@ -43,7 +45,7 @@ export class TransferRequestsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Get requester wallet
       const requesterWallet = await tx.wallets.findFirst({
         where: { user_id: requesterUserId, is_active: true },
@@ -121,6 +123,7 @@ export class TransferRequestsService {
       });
 
       return {
+        request,
         data: {
           request_id: request.id,
           request_reference: reference,
@@ -131,6 +134,33 @@ export class TransferRequestsService {
         message: 'Transfer request created successfully',
       };
     });
+
+    const request = result.request;
+    if (request && request.users_requester && request.users_sender) {
+      const title = 'Money request received';
+      const body = `${request.users_requester.username ?? 'A user'} requested ${dto.amount} FARM from you.`;
+      await Promise.all([
+        this.notificationsService.createInApp(request.users_sender.id, {
+          type: 'transfer_request',
+          title,
+          body,
+          metadata: {
+            request_id: request.id,
+            requester_username: request.users_requester.username,
+            amount: dto.amount,
+          },
+        }),
+        this.notificationsService.sendPush(request.users_sender.id, title, body, {
+          request_id: request.id,
+          type: 'transfer_request',
+        }),
+      ]);
+    }
+
+    return {
+      data: result.data,
+      message: result.message,
+    };
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -204,7 +234,7 @@ export class TransferRequestsService {
   ) {
     await this.authService.verifyPin(senderUserId, dto.pin);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Get the transfer request
       const request = await tx.transfer_requests.findUnique({
         where: { id: dto.request_id },
@@ -318,13 +348,11 @@ export class TransferRequestsService {
         ],
       });
 
-      // Update transaction status
       await tx.transactions.update({
         where: { id: transaction.id },
         data: { status: 'completed', processed_at: new Date() },
       });
 
-      // Update transfer request
       await tx.transfer_requests.update({
         where: { id: request.id },
         data: {
@@ -344,8 +372,21 @@ export class TransferRequestsService {
           request_reference: request.request_reference,
         },
         message: 'Transfer completed successfully',
+        requesterUserId: request.requester_user_id,
       };
     });
+
+    await this.notificationsService.notifyTransfer(
+      senderUserId,
+      result.requesterUserId!,
+      Number(result.data.amount),
+      result.data.transaction_reference,
+    );
+
+    return {
+      data: result.data,
+      message: result.message,
+    };
   }
 
   // ──────────────────────────────────────────────────────────────────────
