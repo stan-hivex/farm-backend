@@ -103,6 +103,7 @@ export class WithdrawService {
           description: `Pending withdrawal ${amount} FARM`,
           metadata: {
             method: dto.method,
+            provider: dto.method === 'CRYPTO' ? 'ivorypay' : 'paystack',
             user_id: userId,
             reference,
             cryptoAsset: dto.cryptoAsset,
@@ -153,22 +154,29 @@ export class WithdrawService {
     const statusResult: any = {
       reference,
       withdrawal_status: withdrawal.status,
+      provider: metadata.provider ?? (withdrawal.method === 'CRYPTO' ? 'ivorypay' : 'paystack'),
       method: withdrawal.method,
       amount: withdrawal.amount,
       currency: withdrawal.currency,
       rejection_reason: withdrawal.rejectionReason,
-      paystack_transfer_code: metadata.paystack_transfer_code,
-      paystack_transfer_status: metadata.paystack_transfer_status,
-      paystack_failure_reason: metadata.paystack_failure_reason,
     };
 
-    if (metadata.paystack_transfer_code) {
-      try {
-        const transferStatus = await this.paystack.getTransferStatus(metadata.paystack_transfer_code);
-        statusResult.paystack_transfer_details = transferStatus;
-        statusResult.paystack_transfer_status = transferStatus.status || statusResult.paystack_transfer_status;
-      } catch (e: any) {
-        statusResult.paystack_transfer_status_error = e.message || 'Unable to query paystack transfer status';
+    if (withdrawal.method === 'CRYPTO') {
+      statusResult.ivorypay_withdrawal_id = metadata.ivorypay_withdrawal_id;
+      statusResult.ivorypay_withdrawal_status = metadata.ivorypay_withdrawal_status;
+      statusResult.ivorypay_failure_reason = metadata.ivorypay_failure_reason;
+    } else {
+      statusResult.paystack_transfer_code = metadata.paystack_transfer_code;
+      statusResult.paystack_transfer_status = metadata.paystack_transfer_status;
+      statusResult.paystack_failure_reason = metadata.paystack_failure_reason;
+      if (metadata.paystack_transfer_code) {
+        try {
+          const transferStatus = await this.paystack.getTransferStatus(metadata.paystack_transfer_code);
+          statusResult.paystack_transfer_details = transferStatus;
+          statusResult.paystack_transfer_status = transferStatus.status || statusResult.paystack_transfer_status;
+        } catch (e: any) {
+          statusResult.paystack_transfer_status_error = e.message || 'Unable to query paystack transfer status';
+        }
       }
     }
 
@@ -265,7 +273,17 @@ export class WithdrawService {
       const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
       if (transaction) {
         const metadata = (transaction.metadata as any) ?? {};
-        await this.prisma.transactions.update({ where: { id: transaction.id }, data: { metadata: { ...metadata, ivorypay_withdrawal_id: withdrawalId } } });
+        await this.prisma.transactions.update({
+          where: { id: transaction.id },
+          data: {
+            metadata: {
+              ...metadata,
+              provider: 'ivorypay',
+              ivorypay_withdrawal_id: withdrawalId,
+              ivorypay_withdrawal_status: 'pending',
+            },
+          },
+        });
       }
       // Leave finalization to webhook or manual reconciliation
     } catch (e: any) {
@@ -363,16 +381,25 @@ export class WithdrawService {
 
       if (transaction) {
         const metadata = (transaction.metadata as any) ?? {};
+        const failureMetadata = withdrawal.method === 'CRYPTO'
+          ? {
+              ...metadata,
+              provider: 'ivorypay',
+              ivorypay_failure_reason: reason,
+              ivorypay_withdrawal_status: 'failed',
+            }
+          : {
+              ...metadata,
+              provider: 'paystack',
+              paystack_failure_reason: reason,
+              paystack_transfer_status: 'failed',
+            };
         await tx.transactions.update({
           where: { id: transaction.id },
           data: {
             status: 'failed',
             processed_at: new Date(),
-            metadata: {
-              ...metadata,
-              paystack_failure_reason: reason,
-              paystack_transfer_status: 'failed',
-            },
+            metadata: failureMetadata,
           },
         });
       }

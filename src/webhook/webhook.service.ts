@@ -235,7 +235,10 @@ export class WebhookService {
       return { received: true };
     }
 
+    const successWithdrawalEvents = ['withdrawal.success', 'transfer.success', 'payout.success'];
+    const failureWithdrawalEvents = ['withdrawal.failed'];
     const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);
+    const isFailureEvent = this.isIvorypayFailureEvent(event, status);
     // Amount validation (anti-fraud): verify webhook amount matches transaction amount
     if (isSuccessEvent) {
       try {
@@ -298,7 +301,7 @@ export class WebhookService {
     }
 
     if (!queued) {
-      this.logger.warn('Ivorypay webhook queue failed, processing directly to finalize deposit');
+      this.logger.warn('Ivorypay webhook queue failed, processing directly to finalize deposit or withdrawal');
       try {
         await this.handleIvorypayWebhookProcessing(payload);
         await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
@@ -380,7 +383,21 @@ export class WebhookService {
       },
       select: { reference: true },
     });
-    return deposit?.reference ?? null;
+    if (deposit?.reference) {
+      return deposit.reference;
+    }
+
+    const transaction = await this.prisma.transactions.findFirst({
+      where: {
+        OR: [
+          { transaction_reference: reference },
+          { metadata: { path: ['ivorypay_withdrawal_id'], equals: reference } as any },
+        ],
+      },
+      select: { transaction_reference: true },
+    });
+
+    return transaction?.transaction_reference ?? null;
   }
 
   private isIvorypaySuccessEvent(event: string, status: string) {
@@ -1371,19 +1388,19 @@ export class WebhookService {
         }
       }
 
-      if (isSuccessEvent) {
-        await this.finalizeDeposit(reference);
-      } else if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
+      if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
         await this.finalizeWithdrawal(reference, true);
+      } else if (['withdrawal.failed'].includes(event)) {
+        this.logger.warn(`Ivorypay webhook withdrawal failure event: event=${event} reference=${reference} status=${status}`);
+        await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+      } else if (isSuccessEvent) {
+        await this.finalizeDeposit(reference);
       } else if (isFailureEvent) {
         this.logger.warn(`Ivorypay webhook failure/cancel event received: event=${event} reference=${reference} status=${status}`);
         await this.depositService.failDeposit(
           reference,
           payload.data?.reason || payload.data?.message || payload.message || 'Payment failed or cancelled',
         );
-      } else if (['withdrawal.failed'].includes(event)) {
-        this.logger.warn(`Ivorypay webhook withdrawal failure event: event=${event} reference=${reference} status=${status}`);
-        await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
       }
     } catch (error) {
       this.logger.error(`Error processing Ivorypay webhook: ${error instanceof Error ? error.message : String(error)}`);
