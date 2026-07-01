@@ -99,7 +99,7 @@ export class TransferRequestsService {
         throw new BadRequestException('Cannot request from yourself');
 
       const reference = generateTxReference();
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
       const request = await tx.transfer_requests.create({
         data: {
@@ -168,13 +168,27 @@ export class TransferRequestsService {
   // ──────────────────────────────────────────────────────────────────────
   async getPendingRequests(userId: string, query: any) {
     const { skip, take } = paginationParams(query.page, query.limit);
+    const now = new Date();
+
+    await this.prisma.transfer_requests.updateMany({
+      where: {
+        sender_user_id: userId,
+        status: 'pending',
+        expires_at: {
+          lte: now,
+        },
+      },
+      data: {
+        status: 'expired',
+      },
+    });
 
     const requests = await this.prisma.transfer_requests.findMany({
       where: {
         sender_user_id: userId,
         status: 'pending',
         expires_at: {
-          gt: new Date(), // Only non-expired requests
+          gt: now,
         },
       },
       include: {
@@ -206,7 +220,7 @@ export class TransferRequestsService {
         sender_user_id: userId,
         status: 'pending',
         expires_at: {
-          gt: new Date(),
+          gt: now,
         },
       },
     });
@@ -254,8 +268,13 @@ export class TransferRequestsService {
       if (request.status !== 'pending')
         throw new BadRequestException(`Request status is ${request.status}`);
 
-      if (request.expires_at && request.expires_at < new Date())
+      if (request.expires_at && request.expires_at < new Date()) {
+        await tx.transfer_requests.update({
+          where: { id: request.id },
+          data: { status: 'expired' },
+        });
         throw new BadRequestException('This request has expired');
+      }
 
       // Validate sender wallet
       if (!request.wallets_sender)
