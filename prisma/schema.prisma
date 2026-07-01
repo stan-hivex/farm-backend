@@ -775,6 +775,7 @@ enum transaction_status {
 enum transaction_type {
   deposit
   withdrawal
+  transfer
   transfer_request
   merchant_payment
   escrow_lock

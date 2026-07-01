@@ -107,7 +107,7 @@ export class WalletsService {
       });
 
       const MAX_DAILY = 500_000; // FARM
-      const sentToday = Number(dailyVolume._sum.amount ?? 0);
+      const sentToday = Number(dailyVolume._sum?.amount ?? 0);
       if (sentToday + dto.amount > MAX_DAILY) {
         throw new BadRequestException('Daily transfer limit exceeded');
       }
