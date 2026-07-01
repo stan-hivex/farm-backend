@@ -65,6 +65,7 @@ export class TransferRequestsService {
       });
 
       let senderWalletId: string;
+      let senderUserId = senderUser?.id;
       if (senderUser?.wallets[0]) {
         senderWalletId = senderUser.wallets[0].id;
       } else {
@@ -73,13 +74,26 @@ export class TransferRequestsService {
         });
         if (!byAddress) throw new NotFoundException('Sender not found');
         senderWalletId = byAddress.id;
+        senderUserId = byAddress.user_id ?? undefined;
+      }
+
+      if (!senderUserId) {
+        const walletOwner = await tx.wallets.findUnique({
+          where: { id: senderWalletId },
+          select: { user_id: true },
+        });
+        senderUserId = walletOwner?.user_id ?? undefined;
+      }
+
+      if (!senderUserId) {
+        throw new NotFoundException('Sender not found');
       }
 
       if (requesterWallet.id === senderWalletId)
         throw new BadRequestException('Cannot request from yourself');
 
       // Check if sender is the same user (shouldn't happen but safety check)
-      if (requesterUserId === senderUser?.id)
+      if (requesterUserId === senderUserId)
         throw new BadRequestException('Cannot request from yourself');
 
       const reference = generateTxReference();
@@ -90,11 +104,12 @@ export class TransferRequestsService {
           request_reference: reference,
           requester_user_id: requesterUserId,
           requester_wallet_id: requesterWallet.id,
-          sender_user_id: senderUser!.id,
+          sender_user_id: senderUserId,
           sender_wallet_id: senderWalletId,
           amount: dto.amount,
           currency: 'FARM',
-          description: dto.description || `Money request from ${senderUser?.username}`,
+          description:
+            dto.description || `Money request from ${senderUser?.username ?? 'a user'}`,
           status: 'pending',
           expires_at: expiresAt,
           ip_address: ip,
