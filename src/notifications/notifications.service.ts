@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { type notification_type } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
 import Twilio from 'twilio';
 import * as admin from 'firebase-admin';
@@ -140,12 +141,12 @@ async updateSettings(userId: string, body: any) {
 }
 
   async createInApp(userId: string, dto: {
-    type: string; title: string; body: string; metadata?: any;
+    type: notification_type | string; title: string; body: string; metadata?: any;
   }) {
     return this.prisma.notifications.create({
       data: {
         user_id: userId,
-        type: dto.type as any,
+        type: dto.type as notification_type,
         title: dto.title,
         body: dto.body,
         metadata: dto.metadata,
