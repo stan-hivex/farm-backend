@@ -75,7 +75,7 @@ export class DepositService {
           fee: 0,
           net_amount: total,
           currency: dto.currency || 'KES',
-          description: `Pending ${paymentMethod} deposit via ${provider.toUpperCase()} (${depositCurrency} ${total})`,
+          description: `Pending ${paymentMethod} deposit`,
           metadata: {
             provider,
             amount_fiat: amount,
@@ -126,7 +126,7 @@ export class DepositService {
           fee: 0,
           net_amount: farmAmount,
           currency: 'FARM',
-          description: `Pending crypto deposit via Ivorypay (${farmAmount} FARM → ${amountUsd} USD)`,
+          description: `Pending crypto deposit`,
           metadata: {
             provider: 'ivorypay',
             provider_ref: providerRef,
@@ -431,6 +431,7 @@ export class DepositService {
             status: 'completed',
             receiver_wallet_id: transaction.receiver_wallet_id ?? wallet.id,
             processed_at: new Date(),
+            description: `Successful ${deposit.paymentMethod ? deposit.paymentMethod.toLowerCase() : 'deposit'} deposit`,
           },
         });
       }
@@ -476,7 +477,10 @@ export class DepositService {
 
     await this.prisma.transactions.update({
       where: { id: transaction.id },
-      data: updates,
+      data: {
+        ...updates,
+        description: 'Successful deposit',
+      },
     });
 
     await this.invalidateFinancialCaches(transaction?.metadata?.user_id ?? undefined);
@@ -631,6 +635,7 @@ export class DepositService {
             status: 'completed',
             receiver_wallet_id: wallet.id,
             processed_at: new Date(),
+            description: 'Successful deposit',
           },
         });
       }

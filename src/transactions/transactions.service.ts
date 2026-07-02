@@ -28,13 +28,24 @@ export class TransactionsService {
       this.prisma.transactions.count({ where }),
     ]);
     const payload = {
-      data: items.map((t) => ({
-        ...t,
-        amount: Number(t.amount),
-        fee: Number(t.fee),
-        net_amount: Number(t.net_amount),
-        is_outgoing: t.sender_wallet_id === wallet.id,
-      })),
+      data: items.map((t) => {
+        const normalizedStatus = this.normalizeTransactionStatus(t.status, t.transaction_type);
+        const normalizedDescription = this.normalizeTransactionDescription(
+          t.transaction_type,
+          normalizedStatus,
+          t.description,
+        );
+
+        return {
+          ...t,
+          status: normalizedStatus,
+          description: normalizedDescription,
+          amount: Number(t.amount),
+          fee: Number(t.fee),
+          net_amount: Number(t.net_amount),
+          is_outgoing: t.sender_wallet_id === wallet.id,
+        };
+      }),
       meta: paginate(total, page, limit),
     };
     await this.cache.cacheSet(cacheKey, payload, 45);
@@ -51,14 +62,51 @@ export class TransactionsService {
       include: { ledger_entries: true },
     });
     if (!txn) throw new NotFoundException('Transaction not found');
+    const normalizedStatus = this.normalizeTransactionStatus(txn.status, txn.transaction_type);
     return {
       data: {
         ...txn,
+        status: normalizedStatus,
+        description: this.normalizeTransactionDescription(txn.transaction_type, normalizedStatus, txn.description),
         amount: Number(txn.amount),
         fee: Number(txn.fee),
         net_amount: Number(txn.net_amount),
         is_outgoing: txn.sender_wallet_id === wallet?.id,
       },
     };
+  }
+
+  private normalizeTransactionStatus(status: string | null | undefined, transactionType?: string | null) {
+    const normalized = (status ?? '').toString().toLowerCase();
+    const successfulStatuses = ['completed', 'success', 'successful', 'succeeded', 'paid', 'settled'];
+    const pendingStatuses = ['pending', 'processing', 'initiated', 'in_progress'];
+    const failedStatuses = ['failed', 'cancelled', 'reversed', 'declined', 'expired', 'abandoned', 'incomplete'];
+
+    if (successfulStatuses.includes(normalized)) return 'Completed';
+    if (pendingStatuses.includes(normalized)) return 'Pending';
+    if (failedStatuses.includes(normalized)) return 'Failed';
+
+    if (transactionType?.toLowerCase() === 'deposit' && normalized.includes('success')) return 'Completed';
+    if (transactionType?.toLowerCase() === 'withdrawal' && normalized.includes('success')) return 'Completed';
+    return status?.toString() ?? 'Pending';
+  }
+
+  private normalizeTransactionDescription(transactionType: string | null | undefined, status: string | null | undefined, description: string | null | undefined) {
+    const normalizedType = (transactionType ?? '').toString().toLowerCase();
+    const normalizedStatus = (status ?? '').toString().toLowerCase();
+    if (normalizedStatus === 'completed' || normalizedStatus === 'success' || normalizedStatus === 'successful') {
+      if (normalizedType === 'deposit') return 'Successful deposit';
+      if (normalizedType === 'withdrawal') return 'Successful withdrawal';
+      return 'Successful transaction';
+    }
+    if (normalizedStatus === 'pending') {
+      if (normalizedType === 'deposit') return 'Pending deposit';
+      if (normalizedType === 'withdrawal') return 'Pending withdrawal';
+      return 'Pending transaction';
+    }
+    if (normalizedStatus === 'failed') {
+      return 'Failed transaction';
+    }
+    return description ?? 'Transaction';
   }
 }

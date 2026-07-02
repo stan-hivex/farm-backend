@@ -61,11 +61,20 @@ async function bootstrap() {
   });
 
   const configService = app.get(ConfigService);
-  const corsOrigins = configService
+  const configuredCorsOrigins = configService
     .get<string>('CORS_ORIGINS')
     ?.split(',')
     .map((origin) => origin.trim())
-    .filter(Boolean);
+    .filter(Boolean) ?? [];
+
+  const additionalCorsOrigins = [
+    configService.get<string>('FRONTEND_URL'),
+    configService.get<string>('APP_URL'),
+  ]
+    .filter((origin): origin is string => Boolean(origin))
+    .map((origin) => origin.trim());
+
+  const corsOrigins = [...new Set([...configuredCorsOrigins, ...additionalCorsOrigins])];
 
   const localhostCorsRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 

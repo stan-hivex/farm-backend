@@ -100,7 +100,7 @@ export class WithdrawService {
           fee,
           net_amount: settlement,
           currency: 'FARM',
-          description: `Pending withdrawal ${amount} FARM`,
+          description: 'Pending withdrawal',
           metadata: {
             method: dto.method,
             provider: dto.method === 'CRYPTO' ? 'ivorypay' : 'paystack',
@@ -326,6 +326,7 @@ export class WithdrawService {
           data: {
             status: 'completed',
             processed_at: new Date(),
+            description: 'Successful withdrawal',
           },
         });
 
