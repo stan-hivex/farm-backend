@@ -6,6 +6,7 @@ import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { UserRole } from '../common/enums';
 
 class SubmitKycDto {
@@ -48,14 +49,17 @@ export class KycController {
   constructor(private readonly svc: KycService) {}
 
   @Post('submit')
+  @Permissions('kyc:write')
   submit(@CurrentUser() u: any, @Body() dto: SubmitKycDto) {
     return this.svc.submit(u.id, dto);
   }
   @Get('my')           getMyKyc(@CurrentUser() u: any) { return this.svc.getMyKyc(u.id); }
-
+  
+  @Permissions('kyc:read')
   @Get('queue')        @UseGuards(RolesGuard) @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   queue(@Query() q: any) { return this.svc.getQueue(q); }
 
+  @Permissions('kyc:write')
   @Post(':id/review')  @UseGuards(RolesGuard) @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   review(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ReviewDto) { return this.svc.review(id, u.id, dto); }
 }

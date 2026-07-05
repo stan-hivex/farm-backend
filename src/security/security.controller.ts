@@ -4,6 +4,7 @@ import { IsBoolean, IsString, IsOptional } from 'class-validator';
 import { SecurityService } from './security.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 class UpdateBiometricsDto {
   @IsBoolean()
@@ -29,6 +30,7 @@ export class SecurityController {
   private readonly logger = new Logger(SecurityController.name);
   constructor(private readonly svc: SecurityService) {}
 
+  @Permissions('security:read')
   @Get('settings')
   @UseGuards(JwtGuard)
   settings(@CurrentUser() user: any) {
@@ -36,6 +38,7 @@ export class SecurityController {
     return this.svc.getSettings();
   }
 
+  @Permissions('security:write')
   @Put('biometrics')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
@@ -56,6 +59,7 @@ export class SecurityController {
     }
   }
 
+  @Permissions('security:write')
   @Post('verify-device')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
@@ -68,6 +72,7 @@ export class SecurityController {
     return this.svc.verifyDevice(user.id, dto.deviceFingerprint);
   }
 
+  @Permissions('security:read')
   @Get('biometrics')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()

@@ -8,6 +8,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { Permissions } from '../common/decorators/permissions.decorator';
+import { RequireOwnership } from '../common/decorators/ownership.decorator';
 
 import { WithdrawService } from './withdraw.service';
 import { KycGuard } from '../common/guards/kyc.guard';
@@ -27,6 +29,7 @@ export class WithdrawController {
     private readonly withdrawService: WithdrawService,
   ) {}
 
+  @Permissions('withdraw:write')
   @UseGuards(JwtAuthGuard, KycGuard)
   @Throttle({
     default: {
@@ -45,6 +48,7 @@ export class WithdrawController {
     );
   }
 
+  @Permissions('withdraw:write')
   @UseGuards(JwtAuthGuard, KycGuard)
   @Throttle({
     default: {
@@ -66,6 +70,7 @@ export class WithdrawController {
     return this.withdrawService.createWithdrawal(req.user.id, createDto);
   }
 
+  @Permissions('withdraw:read')
   @UseGuards(JwtAuthGuard)
   @Get('history')
   async history(@Req() req) {
@@ -84,6 +89,8 @@ export class WithdrawController {
     return { success: true, status };
   }
 
+  @Permissions('withdraw:read')
+  @RequireOwnership('id')
   @UseGuards(JwtAuthGuard)
   @Get(':id')
   async getOne(@Param('id') id: string, @Req() req: any) {

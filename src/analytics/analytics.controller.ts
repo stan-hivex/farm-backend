@@ -8,6 +8,7 @@ Req,
 
 import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 @Controller('analytics')
 export class AnalyticsController {
@@ -20,6 +21,7 @@ private readonly analyticsService: AnalyticsService,
 // =====================================================
 
 @UseGuards(JwtAuthGuard)
+@Permissions('analytics:read')
 @Get('growth-history')
 async getGrowthHistory(
   @Req() req,

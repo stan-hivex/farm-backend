@@ -5,6 +5,8 @@ import { EscrowService } from './escrow.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
+import { RequireOwnership } from '../common/decorators/ownership.decorator';
 
 class CreateEscrowDto {
   @IsNotEmpty() @IsString() seller_identifier!: string;
@@ -24,13 +26,31 @@ class MessageDto { @IsNotEmpty() @IsString() message!: string; }
 export class EscrowController {
   constructor(private readonly svc: EscrowService) {}
 
+  @Permissions('escrow:read')
   @Get()                   list(@CurrentUser() u: any, @Query() q: any) { return this.svc.list(u.id, q); }
+
+  @Permissions('escrow:write')
   @Post()
   @UseGuards(JwtGuard, KycGuard)
   create(@CurrentUser() u: any, @Body() dto: CreateEscrowDto) { return this.svc.create(u.id, dto); }
+
+  @Permissions('escrow:read')
+  @RequireOwnership('id')
   @Get(':id')              getOne(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.getOne(id, u.id); }
+
+  @Permissions('escrow:write')
+  @RequireOwnership('id')
   @Post(':id/release')     release(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.release(id, u.id); }
+
+  @Permissions('escrow:write')
+  @RequireOwnership('id')
   @Post(':id/dispute')     dispute(@CurrentUser() u: any, @Param('id') id: string, @Body() dto: DisputeDto) { return this.svc.dispute(id, u.id, dto); }
+
+  @Permissions('escrow:write')
+  @RequireOwnership('id')
   @Post(':id/cancel')      cancel(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.cancel(id, u.id); }
+
+  @Permissions('escrow:write')
+  @RequireOwnership('id')
   @Post(':id/message')     message(@CurrentUser() u: any, @Param('id') id: string, @Body() dto: MessageDto) { return this.svc.addMessage(id, u.id, dto.message); }
 }

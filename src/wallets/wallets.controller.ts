@@ -7,6 +7,7 @@ import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { EmailVerifiedGuard } from '../common/guards/email-verified.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 class SendFundsDto {
   @IsNotEmpty() @IsString() recipient_identifier!: string;
@@ -22,10 +23,12 @@ class SendFundsDto {
 export class WalletsController {
   constructor(private readonly svc: WalletsService) {}
 
+  @Permissions('wallet:read')
   @Get()
   @ApiOperation({ summary: 'Get my wallet balance' })
   getWallet(@CurrentUser() u: any) { return this.svc.getMyWallet(u.id); }
 
+  @Permissions('wallet:write')
   @Post('send')
   @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Send FARM tokens (PIN required)' })
@@ -33,6 +36,7 @@ export class WalletsController {
     return this.svc.sendFunds(u.id, dto, req.ip || '');
   }
 
+  @Permissions('wallet:read')
   @Get('transactions')
   @ApiOperation({ summary: 'List my transactions' })
   transactions(@CurrentUser() u: any, @Query() q: any) {

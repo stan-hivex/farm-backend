@@ -6,6 +6,7 @@ import { PaymentsService } from './payments.service';
 import { verifyDeviceToken } from '../common/utils/device-token.util';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 // Paystack webhook endpoint removed in favor of unified webhook queue flow
@@ -26,6 +27,7 @@ export class PaymentsController {
   // Paystack-specific HTTP webhook endpoint removed.
   // Use the unified `/webhooks/paystack` endpoint handled by `WebhookController` and queued processing.
 
+  @Permissions('payments:write')
   @Post('deposit')
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard, KycGuard)
@@ -47,6 +49,7 @@ export class PaymentsController {
   // Withdrawal endpoint removed: use POST /api/v1/withdraw/create (WithdrawService)
   // The old requestWithdrawal() method incorrectly debited wallets immediately.
 
+  @Permissions('payments:read')
   @Get('deposits')
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard)
@@ -55,6 +58,7 @@ export class PaymentsController {
     return this.svc.getDepositHistory(u.id);
   }
 
+  @Permissions('payments:read')
   @Get('withdrawals')
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard)

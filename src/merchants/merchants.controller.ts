@@ -4,6 +4,7 @@ import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-va
 import { MerchantsService } from './merchants.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 class ApplyDto {
   @IsNotEmpty() @IsString() business_name!: string;
@@ -27,11 +28,24 @@ class PayoutDto {
 export class MerchantsController {
   constructor(private readonly svc: MerchantsService) {}
 
+  @Permissions('merchant:write')
   @Post('apply')           apply(@CurrentUser() u: any, @Body() dto: ApplyDto) { return this.svc.apply(u.id, dto); }
+
+  @Permissions('merchant:read')
   @Get()                   get(@CurrentUser() u: any) { return this.svc.getMyMerchant(u.id); }
+
+  @Permissions('merchant:read')
   @Get('dashboard')        dashboard(@CurrentUser() u: any) { return this.svc.getDashboard(u.id); }
+
+  @Permissions('merchant:read')
   @Get('transactions')     transactions(@CurrentUser() u: any, @Query() q: any) { return this.svc.getTransactions(u.id, q); }
+
+  @Permissions('merchant:write')
   @Post('payout')          payout(@CurrentUser() u: any, @Body() dto: PayoutDto) { return this.svc.requestPayout(u.id, dto); }
+
+  @Permissions('merchant:read')
   @Get('payouts')          payouts(@CurrentUser() u: any, @Query() q: any) { return this.svc.getPayouts(u.id, q); }
+
+  @Permissions('merchant:write')
   @Post('qr/regenerate')   regenQr(@CurrentUser() u: any) { return this.svc.regenerateQr(u.id); }
 }

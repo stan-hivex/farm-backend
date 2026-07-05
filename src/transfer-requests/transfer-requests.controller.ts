@@ -22,6 +22,8 @@ import { TransferRequestsService } from './transfer-requests.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
+import { RequireOwnership } from '../common/decorators/ownership.decorator';
 
 class RequestFundsDto {
   @IsNotEmpty() @IsString() sender_identifier!: string;
@@ -41,6 +43,7 @@ class AcceptTransferDto {
 export class TransferRequestsController {
   constructor(private readonly svc: TransferRequestsService) {}
 
+  @Permissions('transfer:write')
   @Post('request')
   @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Request funds from another user' })
@@ -52,12 +55,14 @@ export class TransferRequestsController {
     return this.svc.requestFunds(u.id, dto, req.ip || '');
   }
 
+  @Permissions('transfer:read')
   @Get('pending')
   @ApiOperation({ summary: 'Get pending transfer requests for me (as sender)' })
   getPendingRequests(@CurrentUser() u: any, @Query() q: any) {
     return this.svc.getPendingRequests(u.id, q);
   }
 
+  @Permissions('transfer:write')
   @Post('accept')
   @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Accept and complete a transfer request' })
@@ -69,24 +74,31 @@ export class TransferRequestsController {
     return this.svc.acceptAndTransfer(u.id, dto, req.ip || '');
   }
 
+  @Permissions('transfer:write')
+  @RequireOwnership('id')
   @Post(':id/reject')
   @ApiOperation({ summary: 'Reject a transfer request' })
   rejectRequest(@CurrentUser() u: any, @Param('id') id: string) {
     return this.svc.rejectRequest(u.id, id);
   }
 
+  @Permissions('transfer:write')
+  @RequireOwnership('id')
   @Post(':id/cancel')
   @ApiOperation({ summary: 'Cancel a transfer request I created' })
   cancelRequest(@CurrentUser() u: any, @Param('id') id: string) {
     return this.svc.cancelRequest(u.id, id);
   }
 
+  @Permissions('transfer:read')
+  @RequireOwnership('id')
   @Get(':id')
   @ApiOperation({ summary: 'Get transfer request details' })
   getRequestDetails(@CurrentUser() u: any, @Param('id') id: string) {
     return this.svc.getRequestDetails(u.id, id);
   }
 
+  @Permissions('transfer:read')
   @Get()
   @ApiOperation({ summary: 'Get all my transfer requests (sent and received)' })
   getMyRequestHistory(@CurrentUser() u: any, @Query() q: any) {

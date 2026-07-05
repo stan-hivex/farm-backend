@@ -17,4 +17,6 @@ export class RegisterDto {
   password!: string;
   @ApiProperty({ required: false }) @IsOptional() @IsString() country?: string;
   @ApiProperty({ required: false }) @IsOptional() @IsString() referral_code?: string;
+  @ApiProperty({ required: false, description: 'Cloudflare Turnstile token' }) @IsOptional() @IsString() cf_turnstile_response?: string;
+  @ApiProperty({ required: false, description: 'Alternate Turnstile token field' }) @IsOptional() @IsString() turnstile_token?: string;
 }

@@ -7,4 +7,6 @@ export class LoginDto {
   @ApiProperty() @IsNotEmpty() @IsString() password!: string;
   @ApiProperty({ required: false }) @IsOptional() @IsString() device_name?: string;
   @ApiProperty({ required: false }) @IsOptional() @IsString() device_os?: string;
+  @ApiProperty({ required: false, description: 'Cloudflare Turnstile token' }) @IsOptional() @IsString() cf_turnstile_response?: string;
+  @ApiProperty({ required: false, description: 'Alternate Turnstile token field' }) @IsOptional() @IsString() turnstile_token?: string;
 }

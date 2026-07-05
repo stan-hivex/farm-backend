@@ -14,6 +14,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { NotificationsService }
 from './notifications.service';
 import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 @Controller('notifications')
 @UseGuards(AuthGuard('jwt'))
@@ -24,6 +25,7 @@ export class NotificationsController {
       NotificationsService,
   ) {}
 
+  @Permissions('notifications:read')
   @Get('settings')
   async getSettings(
     @Req() req,
@@ -34,6 +36,7 @@ export class NotificationsController {
     );
   }
 
+  @Permissions('notifications:write')
   @Put('settings')
   async updateSettings(
 
@@ -48,6 +51,7 @@ export class NotificationsController {
     );
   }
 
+  @Permissions('notifications:write')
   @Post('device-token')
   async registerDeviceToken(
     @Req() req,
@@ -60,6 +64,7 @@ export class NotificationsController {
     );
   }
 
+  @Permissions('notifications:write')
   @Delete('device-token')
   async removeDeviceToken(
     @Req() req,

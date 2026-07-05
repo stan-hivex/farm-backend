@@ -494,6 +494,8 @@ model users {
   email_verified                                                        Boolean?                 @default(false)
   failed_login_attempts                                                 Int?                     @default(0)
   failed_pin_attempts                                                   Int?                     @default(0)
+  login_lockout_until                                                   DateTime?                @db.Timestamp(6)
+  supabase_user_id                                                      String?                  @unique @db.VarChar(255)
   profile_image                                                         String?
   bio                                                                   String?
   country                                                               String?                  @db.VarChar(100)

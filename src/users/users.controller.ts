@@ -26,6 +26,7 @@ import {
 import { UsersService } from './users.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 class UpdateProfileDto {
   @IsOptional()
@@ -94,11 +95,13 @@ export class UsersController {
     private readonly svc: UsersService,
   ) {}
 
+  @Permissions('profile:read')
   @Get('me')
   getMe(@CurrentUser() u: any) {
     return this.svc.getProfile(u.id);
   }
 
+  @Permissions('profile:write')
   @Put('me')
   updateMe(
     @CurrentUser() u: any,

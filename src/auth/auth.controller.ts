@@ -2,6 +2,7 @@
 import {
   Controller,
   Post,
+  Delete,
   Body,
   Req,
   HttpCode,
@@ -43,6 +44,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 @ApiTags('Auth')
 @Controller({
@@ -81,7 +83,10 @@ export class AuthController {
       );
     }
 
-    return this.authService.register(body as RegisterDto, req.ip || '');
+    const turnstileToken = (body as RegisterDto & { cf_turnstile_response?: string; turnstile_token?: string }).cf_turnstile_response
+      || (body as RegisterDto & { cf_turnstile_response?: string; turnstile_token?: string }).turnstile_token;
+
+    return this.authService.register(body as RegisterDto, req.ip || '', turnstileToken);
   }
 
   /**
@@ -168,7 +173,8 @@ export class AuthController {
     @Body() dto: ForgotPasswordDto,
     @Req() req: Request,
   ) {
-    return this.authService.sendPasswordResetOtp(dto.email, req.ip || '');
+    const turnstileToken = dto.cf_turnstile_response || dto.turnstile_token;
+    return this.authService.sendPasswordResetOtp(dto.email, req.ip || '', turnstileToken);
   }
 
   @Public()
@@ -251,7 +257,15 @@ export class AuthController {
       );
     }
 
-    throw new BadRequestException('Login now requires a Supabase access token. Please use Supabase authentication.');
+    const turnstileToken = (body as LoginDto & { cf_turnstile_response?: string; turnstile_token?: string }).cf_turnstile_response
+      || (body as LoginDto & { cf_turnstile_response?: string; turnstile_token?: string }).turnstile_token;
+
+    return this.authService.login(
+      body as LoginDto,
+      req.ip || '',
+      req.headers['user-agent'] || '',
+      turnstileToken,
+    );
   }
 
   @Public()
@@ -271,10 +285,12 @@ export class AuthController {
     @Body() dto: SupabaseAuthDto,
     @Req() req: Request,
   ) {
+    const turnstileToken = dto.cf_turnstile_response || dto.turnstile_token;
     return this.authService.supabaseLogin(
       dto.supabase_token,
       req.ip || '',
       req.headers['user-agent'] || '',
+      turnstileToken,
     );
   }
 
@@ -351,6 +367,7 @@ export class AuthController {
    */
   @UseGuards(JwtGuard)
   @Post('logout')
+  @Permissions('sessions:write')
   @HttpCode(HttpStatus.OK)
   @Throttle({
     default: {
@@ -373,6 +390,7 @@ export class AuthController {
 
   @UseGuards(JwtGuard)
   @Post('change-password')
+  @Permissions('auth:write')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Change password and revoke all other sessions' })
@@ -384,6 +402,19 @@ export class AuthController {
   }
 
   @UseGuards(JwtGuard)
+  @Delete('delete-account')
+  @Permissions('auth:write')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('JWT')
+  @ApiOperation({ summary: 'Delete the current account and revoke all sessions' })
+  deleteAccount(
+    @CurrentUser() user: any,
+  ) {
+    return this.authService.deleteAccount(user.id);
+  }
+
+  @UseGuards(JwtGuard)
+  @Permissions('sessions:read')
   @Get('sessions')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'List active sessions for the current user' })
@@ -394,6 +425,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtGuard)
+  @Permissions('sessions:write')
   @Post('sessions/:id/revoke')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke a session by ID for the current user' })
@@ -408,6 +440,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtGuard)
+  @Permissions('sessions:write')
   @Post('sessions/revoke-others')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke all other sessions for the current user' })
@@ -421,6 +454,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtGuard)
+  @Permissions('sessions:write')
   @Post('sessions/revoke-all')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke all active sessions for the current user' })
@@ -443,6 +477,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Set PIN',
   })
+  @Permissions('auth:write')
   setPin(
     @CurrentUser() user: any,
     @Body() dto: SetPinDto,
@@ -462,6 +497,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Change PIN',
   })
+  @Permissions('auth:write')
   changePin(
     @CurrentUser() user: any,
     @Body() dto: ChangePinDto,
@@ -488,6 +524,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Reset forgotten PIN',
   })
+  @Permissions('auth:write')
   forgotPin(
     @CurrentUser() user: any,
     @Body() dto: ResetPinDto,

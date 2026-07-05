@@ -8,6 +8,7 @@ import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { UserRole } from '../common/enums';
 
 class UserStatusDto { @IsOptional() @IsBoolean() is_active?: boolean; @IsOptional() @IsBoolean() is_suspended?: boolean; }
@@ -77,44 +78,79 @@ class BroadcastNotificationDto {
 export class AdminController {
   constructor(private readonly svc: AdminService, private readonly withdrawService: WithdrawService) {}
 
+  @Permissions('admin:read')
   @Get('dashboard')               stats() { return this.svc.getDashboardStats(); }
+  @Permissions('admin:read')
   @Get('transactions')            transactions(@Query() q: any) { return this.svc.listTransactions(q); }
+  @Permissions('admin:read')
   @Get('users')                   users(@Query() q: any) { return this.svc.listUsers(q); }
+  @Permissions('admin:read')
   @Get('users/:id')               user(@Param('id') id: string) { return this.svc.getUserDetail(id); }
+  @Permissions('admin:write')
   @Patch('users/:id/status')      userStatus(@Param('id') id: string, @Body() dto: UserStatusDto, @CurrentUser() u: any) { return this.svc.updateUserStatus(id, dto, u.id); }
+  @Permissions('admin:write')
   @Patch('users/:id')             updateUser(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser() u: any) { return this.svc.updateUser(id, dto, u.id); }
+  @Permissions('admin:write')
   @Delete('users/:id')            deleteUser(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.deleteUser(id, u.id); }
+  @Permissions('admin:read')
   @Get('escrow')                  escrows(@Query() q: any) { return this.svc.listAllEscrows(q); }
+  @Permissions('admin:read')
   @Get('escrow/:id')              escrowDetail(@Param('id') id: string) { return this.svc.getEscrow(id); }
+  @Permissions('admin:write')
   @Post('escrow/:id/resolve')     resolve(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.resolveDispute(id, u.id, dto); }
+  @Permissions('admin:read')
   @Get('merchants')               merchants(@Query() q: any) { return this.svc.listMerchants(q); }
+  @Permissions('admin:write')
   @Post('merchants/:id/decision') decision(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: MerchantDecisionDto) { return this.svc.approveMerchant(id, u.id, dto); }
+  @Permissions('admin:read')
   @Get('payouts')                 payouts(@Query() q: any) { return this.svc.listPayouts(q); }
+  @Permissions('admin:write')
   @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.processPayout(id, u.id, 'completed'); }
+  @Permissions('admin:write')
   @Post('notifications/send')     sendNotification(@CurrentUser() u: any, @Body() dto: SendNotificationDto) { return this.svc.sendNotification(u.id, dto); }
+  @Permissions('admin:write')
   @Post('notifications/broadcast') broadcastNotification(@CurrentUser() u: any, @Body() dto: BroadcastNotificationDto) { return this.svc.broadcastNotification(u.id, dto); }
+  @Permissions('admin:read')
   @Get('kyc/queue')               kycQueue(@Query() q: any) { return this.svc.listKycQueue(q); }
+  @Permissions('admin:write')
   @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
+  @Permissions('admin:read')
   @Get('analytics')               analytics() { return this.svc.getAdminAnalytics(); }
+  @Permissions('admin:read')
   @Get('settings')                settings() { return this.svc.getSettings(); }
+  @Permissions('admin:write')
   @Put('settings/:key')           updateSetting(@Param('key') key: string, @Body() dto: SettingDto, @CurrentUser() u: any) { return this.svc.updateSetting(key, dto.value, u.id); }
+  @Permissions('admin:read')
   @Get('exchange-rates')          getExchangeRates() { return this.svc.getExchangeRates(); }
+  @Permissions('admin:write')
   @Put('exchange-rates')          updateExchangeRates(@Body() dto: ExchangeRatesDto, @CurrentUser() u: any) { return this.svc.updateExchangeRates(dto.rates, u.id); }
+  @Permissions('admin:read')
   @Get('audit-logs')              auditLogs(@Query() q: any) { return this.svc.getAuditLogs(q); }
+  @Permissions('admin:write')
   @Post('investments')            createProject(@CurrentUser() u: any, @Body() dto: any) { return this.svc.createProject(u.id, dto); }
+  @Permissions('admin:write')
   @Put('investments/:id')         updateProject(@Param('id') id: string, @Body() dto: any) { return this.svc.updateProject(id, dto); }
 
   // ── Audit Dashboard ──────────────────────────────────────────────────────────
+  @Permissions('admin:read')
   @Get('audit/dashboard')         auditDashboard() { return this.svc.getAuditDashboard(); }
+  @Permissions('admin:read')
   @Get('audit/security-events')   securityEvents(@Query() q: any) { return this.svc.getSecurityEvents(q); }
+  @Permissions('admin:read')
   @Get('audit/security-stats')    securityStats() { return this.svc.getSecurityStats(); }
+  @Permissions('admin:read')
   @Get('audit/users/:id/activity') userActivity(@Param('id') id: string, @Query() q: any) { return this.svc.getUserActivityLog(id, q); }
+  @Permissions('admin:read')
   @Get('audit/users/:id/sessions') userSessions(@Param('id') id: string, @Query() q: any) { return this.svc.getUserSessions(id, q); }
+  @Permissions('admin:read')
   @Get('audit/admin-logs')        adminLogs(@Query() q: any) { return this.svc.getAdminAuditLog(q); }
+  @Permissions('admin:read')
   @Get('audit/compliance')        complianceReport(@Query() q: any) { return this.svc.getComplianceReport(q); }
 
+  @Permissions('admin:read')
   @Get('withdrawals')             allWithdrawals(@Query() q: any) { return this.svc.listAllWithdrawals(q); }
 
+  @Permissions('admin:write')
   @Post('withdrawals/:id/process')
   async processWithdrawal(@Param('id') id: string, @CurrentUser() u: any) {
     const w = await this.withdrawService.getWithdrawal(id);
@@ -125,6 +161,7 @@ export class AdminController {
   }
 
   // ── Superadmin Wallet ────────────────────────────────────────────────────────
+  @Permissions('admin:read')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
   @Get('wallet')
@@ -132,6 +169,7 @@ export class AdminController {
     return this.svc.getSuperadminWallet(u.id);
   }
 
+  @Permissions('admin:write')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
   @Post('wallet/withdraw')
@@ -140,28 +178,33 @@ export class AdminController {
   }
 
   // ── Superadmin Management ────────────────────────────────────────────────────
+  @Permissions('admin:write')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Post('superadmin/create')
   createSuperadmin(@Body() dto: CreateSuperadminDto, @CurrentUser() u: any) {
     return this.svc.createSuperadmin(dto, u.id);
   }
 
+  @Permissions('admin:read')
   @Get('superadmin/list')
   listSuperadmins(@Query() q: any) {
     return this.svc.listSuperadmins(q);
   }
 
+  @Permissions('admin:read')
   @Get('superadmin/:id')
   getSuperadmin(@Param('id') id: string) {
     return this.svc.getSuperadmin(id);
   }
 
+  @Permissions('admin:write')
   @Patch('superadmin/:id')
   @Roles(UserRole.ADMIN)
   updateSuperadmin(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) {
     return this.svc.updateSuperadmin(id, dto, u.id);
   }
 
+  @Permissions('admin:write')
   @Post('superadmin/:id/deactivate')
   @Roles(UserRole.ADMIN)
   deactivateSuperadmin(@Param('id') id: string, @CurrentUser() u: any) {
@@ -178,6 +221,7 @@ export class AdminController {
 export class SuperadminController {
   constructor(private readonly svc: AdminService) {}
 
+  @Permissions('admin:read')
   @Get('dashboard')
   superadminDashboard() {
     return this.svc.getSuperadminDashboard();

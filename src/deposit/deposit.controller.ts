@@ -9,6 +9,8 @@
 } from '@nestjs/common';
 import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
+import { Permissions } from '../common/decorators/permissions.decorator';
+import { RequireOwnership } from '../common/decorators/ownership.decorator';
 
 import { DepositService } from './deposit.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -63,6 +65,7 @@ export class DepositController {
     private readonly depositService: DepositService,
   ) {}
 
+  @Permissions('payments:write')
   @Throttle({
     default: {
       limit: 10,
@@ -85,6 +88,7 @@ export class DepositController {
     );
   }
 
+  @Permissions('payments:read')
   @Get('history')
   async history(@Req() req: any) {
     const userId = req.user?.id;
@@ -97,6 +101,7 @@ export class DepositController {
     );
   }
 
+  @Permissions('payments:read')
   @Get('wallet')
   async wallet(@Req() req: any) {
     const userId = req.user?.id;
@@ -109,6 +114,8 @@ export class DepositController {
     );
   }
 
+  @Permissions('payments:read')
+  @RequireOwnership('id')
   @Get(':id')
   async getOne(@Param('id') id: string, @Req() req: any) {
     const userId = req.user?.id;

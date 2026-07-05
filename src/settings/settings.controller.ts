@@ -10,6 +10,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsIn } from 'class-validator';
 
 import { SettingsService } from './settings.service';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 class UpdateLanguageDto {
   @IsString()
@@ -30,6 +31,7 @@ export class SettingsController {
     private readonly settingsService: SettingsService,
   ) {}
 
+  @Permissions('settings:write')
   @Put('language')
   async updateLanguage(
     @Req() req,
@@ -41,6 +43,7 @@ export class SettingsController {
     );
   }
 
+  @Permissions('settings:write')
   @Put('theme')
   async updateTheme(
     @Req() req,

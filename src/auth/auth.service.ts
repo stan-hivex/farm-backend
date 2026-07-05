@@ -25,7 +25,7 @@ import {
   generatePasswordResetToken,
 } from './password-reset.util';
 import {
-  MAX_PIN_ATTEMPTS, MAX_LOGIN_ATTEMPTS, OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS,
+  MAX_PIN_ATTEMPTS, MAX_LOGIN_ATTEMPTS, LOGIN_LOCKOUT_STEP_ATTEMPTS, OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS,
 } from '../common/constants';
 
 @Injectable()
@@ -105,7 +105,9 @@ export class AuthService {
     await this.notifications.sendEmail(normalizedEmail, 'Verify your FARM email', html);
   }
 
-  async register(dto: RegisterDto, ip: string) {
+  async register(dto: RegisterDto, ip: string, turnstileToken?: string) {
+    await this.verifyTurnstileToken(turnstileToken, ip);
+
     const existing = await this.prisma.users.findFirst({
       where: {
         OR: [
@@ -227,7 +229,9 @@ if (new Date() > expiryDate) {
     return { message: 'OTP verified successfully', user_id: user.id };
   }
 
-  async sendPasswordResetOtp(email: string, ip = '') {
+  async sendPasswordResetOtp(email: string, ip = '', turnstileToken?: string) {
+    await this.verifyTurnstileToken(turnstileToken, ip);
+
     const normalizedEmail = email.trim().toLowerCase();
     const rateLimitKey = `${normalizedEmail}:${ip || 'unknown'}`;
 
@@ -362,6 +366,95 @@ if (new Date() > expiryDate) {
     return { message: 'Password changed successfully. Please sign in again.' };
   }
 
+  async deleteAccount(userId: string) {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        is_deleted: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.is_deleted) {
+      return { message: 'Account deleted successfully' };
+    }
+
+    await this.deleteSupabaseUser(user.email);
+
+    await this.prisma.$transaction([
+      this.prisma.users.update({
+        where: { id: user.id },
+        data: {
+          is_deleted: true,
+          is_active: false,
+          email_verified: false,
+          phone_verified: false,
+          failed_login_attempts: 0,
+        },
+      }),
+      this.prisma.user_sessions.deleteMany({
+        where: { user_id: user.id },
+      }),
+      this.prisma.activity_logs.create({
+        data: { user_id: user.id, activity: 'ACCOUNT_DELETED' },
+      }),
+    ]);
+
+    return { message: 'Account deleted successfully' };
+  }
+
+  private async deleteSupabaseUser(email?: string | null) {
+    const supabaseUrl = this.cfg.get<string>('SUPABASE_URL');
+    const serviceRoleKey = this.cfg.get<string>('SUPABASE_SERVICE_ROLE_KEY');
+
+    if (!supabaseUrl || !serviceRoleKey || !email) {
+      return;
+    }
+
+    try {
+      const normalizedSupabaseUrl = supabaseUrl
+        .replace(/\/rest\/v1\/?$/i, '')
+        .replace(/\/$/, '');
+      const adminBaseUrl = `${normalizedSupabaseUrl}/auth/v1/admin`;
+
+      const lookupResponse = await axios.get(
+        `${adminBaseUrl}/users?email=${encodeURIComponent(email)}`,
+        {
+          headers: {
+            apikey: serviceRoleKey,
+            Authorization: `Bearer ${serviceRoleKey}`,
+          },
+          timeout: 10000,
+        },
+      );
+
+      const users = Array.isArray(lookupResponse.data?.users)
+        ? lookupResponse.data.users
+        : [];
+      const supabaseUser = users.find((candidate: any) => candidate?.email?.toLowerCase() === email.toLowerCase());
+      const supabaseUserId = supabaseUser?.id;
+
+      if (!supabaseUserId) {
+        return;
+      }
+
+      await axios.delete(`${adminBaseUrl}/users/${supabaseUserId}`, {
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+        },
+        timeout: 10000,
+      });
+    } catch (error) {
+      this.logger.warn(`Supabase account deletion failed for ${email}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async resetPassword(dto: ResetPasswordDto) {
     if (dto.password !== dto.confirm_password) {
       throw new BadRequestException('Passwords do not match');
@@ -423,7 +516,9 @@ if (new Date() > expiryDate) {
   }
 
   // ── Login ────────────────────────────────────────────────────────────────────
-  async login(dto: LoginDto, ip: string, userAgent: string) {
+  async login(dto: LoginDto, ip: string, userAgent: string, turnstileToken?: string) {
+    await this.verifyTurnstileToken(turnstileToken, ip);
+
     const normalizedIdentifier = dto.identifier.trim();
     const normalizedPhone = normalizedIdentifier.replace(/\s+/g, '');
 
@@ -447,32 +542,47 @@ if (new Date() > expiryDate) {
     }
 
     const failedAttempts = user.failed_login_attempts ?? 0;
-
-    if (failedAttempts >= MAX_LOGIN_ATTEMPTS) {
-      await this.prisma.security_events.create({
-        data: {
-          user_id: user.id,
-          event_type: 'ACCOUNT_LOCKED',
-          description: 'Too many failed login attempts',
-          severity: 'high',
-          ip_address: ip,
-        },
-      });
-      throw new ForbiddenException('Account locked. Contact support.');
-    }
+    await this.enforceLoginLockout(user.id, user.login_lockout_until, ip);
 
     const valid = await bcrypt.compare(dto.password, user.password_hash);
     if (!valid) {
+      const nextFailedAttempts = failedAttempts + 1;
+      const lockoutMinutes = this.getLockoutMinutes(nextFailedAttempts);
+      const lockoutDate = new Date(Date.now() + lockoutMinutes * 60 * 1000);
+      const shouldLockAccount = nextFailedAttempts >= LOGIN_LOCKOUT_STEP_ATTEMPTS;
+
+      const updateData: Record<string, any> = {
+        failed_login_attempts: nextFailedAttempts,
+      };
+
+      if (shouldLockAccount) {
+        updateData.login_lockout_until = lockoutDate;
+      }
+
       await this.prisma.users.update({
         where: { id: user.id },
-        data: { failed_login_attempts: { increment: 1 } },
+        data: updateData,
       });
+
+      if (shouldLockAccount) {
+        await this.prisma.security_events.create({
+          data: {
+            user_id: user.id,
+            event_type: 'ACCOUNT_LOCKED',
+            description: `Account locked for ${lockoutMinutes} minute(s) after ${nextFailedAttempts} failed login attempts`,
+            severity: 'high',
+            ip_address: ip,
+          },
+        });
+        throw new ForbiddenException(`Too many failed login attempts. Account locked for ${lockoutMinutes} minute(s).`);
+      }
+
       throw new UnauthorizedException('Invalid credentials');
     }
 
     await this.prisma.users.update({
       where: { id: user.id },
-      data: { failed_login_attempts: 0, last_login_at: new Date(), last_seen_at: new Date() },
+      data: { failed_login_attempts: 0, login_lockout_until: null, last_login_at: new Date(), last_seen_at: new Date() },
     });
 
     const walletId = user.wallets[0]?.id;
@@ -494,8 +604,14 @@ if (new Date() > expiryDate) {
     });
 
     await this.prisma.activity_logs.create({
-      data: { user_id: user.id, activity: 'LOGIN', ip_address: ip },
+      data: {
+        user_id: user.id,
+        activity: 'LOGIN',
+        ip_address: ip,
+      },
     });
+
+    await this.sendLoginNotification(user.id, ip, userAgent);
 
     return {
       data: {
@@ -526,7 +642,9 @@ if (new Date() > expiryDate) {
   // ── Supabase token exchange ─────────────────────────────────────────────────
   private jwksCache: Record<string, { keys: any[]; expiresAt: number }> = {};
 
-  async supabaseLogin(supabaseToken: string, ip: string, userAgent: string) {
+  async supabaseLogin(supabaseToken: string, ip: string, userAgent: string, turnstileToken?: string) {
+    await this.verifyTurnstileToken(turnstileToken, ip);
+
     const supabaseUrl = this.cfg.get<string>('SUPABASE_URL');
 
     if (!supabaseUrl) {
@@ -555,6 +673,7 @@ if (new Date() > expiryDate) {
     const emailVerified = !!supabaseClaims?.email_confirmed_at;
     const phone = supabaseClaims?.phone?.trim() || `supabase-${randomBytes(8).toString('hex')}`;
     const metadata = supabaseClaims?.user_metadata ?? {};
+    const supabaseUserId = (supabaseClaims?.sub || supabaseClaims?.id || supabaseClaims?.user_id || null) as string | null;
     const firstName = (metadata.first_name || metadata.name || email.split('@')[0] || 'Supabase').trim();
     const lastName = (metadata.last_name || 'User').trim();
     const usernameBase = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() || `supabaseuser`;
@@ -565,9 +684,12 @@ if (new Date() > expiryDate) {
       username = `${usernameBase}${counter++}`;
     }
 
-    let user = await this.prisma.users.findUnique({
-      where: { email },
-      include: { wallets: { where: { is_active: true }, take: 1 } },
+    let user = await this.findOrLinkSupabaseUser(email, supabaseUserId, {
+      firstName,
+      lastName,
+      country: metadata.country,
+      emailVerified,
+      phone,
     });
 
     if (!user) {
@@ -591,6 +713,7 @@ if (new Date() > expiryDate) {
             country: metadata.country,
             email_verified: emailVerified,
             phone_verified: !!supabaseClaims?.phone,
+            supabase_user_id: supabaseUserId,
             referral_code: generateReferralCode(),
           },
         });
@@ -650,6 +773,8 @@ if (new Date() > expiryDate) {
       }
     }
 
+    await this.enforceLoginLockout(user.id, user.login_lockout_until, ip);
+
     const walletId = user.wallets[0]?.id;
     const userRole = user.role ?? 'user';
     const tokens = await this.issueTokens(user.id, userRole, walletId);
@@ -669,8 +794,14 @@ if (new Date() > expiryDate) {
     });
 
     await this.prisma.activity_logs.create({
-      data: { user_id: user.id, activity: 'SUPABASE_LOGIN', ip_address: ip },
+      data: {
+        user_id: user.id,
+        activity: 'SUPABASE_LOGIN',
+        ip_address: ip,
+      },
     });
+
+    await this.sendLoginNotification(user.id, ip, userAgent);
 
     return {
       data: {
@@ -698,6 +829,74 @@ if (new Date() > expiryDate) {
     };
   }
 
+  private async findOrLinkSupabaseUser(
+    email: string,
+    supabaseUserId: string | null,
+    details: {
+      firstName: string;
+      lastName: string;
+      country?: string | null;
+      emailVerified: boolean;
+      phone: string;
+    },
+  ) {
+    const existingUser = await this.prisma.users.findFirst({
+      where: {
+        OR: [
+          { email: { equals: email, mode: 'insensitive' } },
+          ...(supabaseUserId ? [{ supabase_user_id: supabaseUserId }] : []),
+        ],
+        is_deleted: false,
+      },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    }) as any;
+
+    if (!existingUser) {
+      return null;
+    }
+
+    const updateData: Record<string, any> = {};
+
+    if (supabaseUserId && !existingUser.supabase_user_id) {
+      updateData.supabase_user_id = supabaseUserId;
+    }
+
+    if (details.country && !existingUser.country) {
+      updateData.country = details.country;
+    }
+
+    if (details.firstName && !existingUser.first_name) {
+      updateData.first_name = details.firstName;
+    }
+
+    if (details.lastName && !existingUser.last_name) {
+      updateData.last_name = details.lastName;
+    }
+
+    if (details.emailVerified && !existingUser.email_verified) {
+      updateData.email_verified = true;
+    }
+
+    if (details.phone && !existingUser.phone) {
+      updateData.phone = details.phone;
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      const updatedUser = await this.prisma.users.update({
+        where: { id: existingUser.id },
+        data: updateData,
+      }) as any;
+
+      return {
+        ...existingUser,
+        ...updatedUser,
+        wallets: existingUser.wallets,
+      };
+    }
+
+    return existingUser;
+  }
+
   private async verifySupabaseJwt(token: string, jwksUrl: string, expectedIssuer: string): Promise<any> {
     const decodedHeader = jwt.decode(token, { complete: true }) as any;
     const kid = decodedHeader?.header?.kid;
@@ -711,6 +910,40 @@ if (new Date() > expiryDate) {
       issuer: expectedIssuer,
       audience: 'authenticated',
     });
+  }
+
+  private async enforceLoginLockout(userId: string, lockoutUntilValue: Date | string | null | undefined, ip: string) {
+    const lockoutUntil = lockoutUntilValue ? new Date(lockoutUntilValue) : null;
+
+    if (lockoutUntil && lockoutUntil.getTime() > Date.now()) {
+      const remainingMs = lockoutUntil.getTime() - Date.now();
+      const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60000));
+      await this.prisma.security_events.create({
+        data: {
+          user_id: userId,
+          event_type: 'ACCOUNT_LOCKED',
+          description: `Account temporarily locked for ${remainingMinutes} minute(s) due to repeated failed login attempts`,
+          severity: 'high',
+          ip_address: ip,
+        },
+      });
+      throw new ForbiddenException(`Account temporarily locked. Try again in ${remainingMinutes} minute(s).`);
+    }
+
+    if (lockoutUntil && lockoutUntil.getTime() <= Date.now()) {
+      await this.prisma.users.update({
+        where: { id: userId },
+        data: { login_lockout_until: null, failed_login_attempts: 0 },
+      });
+    }
+  }
+
+  private getLockoutMinutes(failedAttempts: number): number {
+    if (failedAttempts <= 0) {
+      return 0;
+    }
+
+    return Math.ceil(failedAttempts / LOGIN_LOCKOUT_STEP_ATTEMPTS) * LOGIN_LOCKOUT_STEP_ATTEMPTS;
   }
 
   private async getSigningKey(kid: string, jwksUrl: string): Promise<string> {
@@ -733,6 +966,85 @@ if (new Date() > expiryDate) {
     }
 
     return this.jwkToPem(jwk);
+  }
+
+  private parseBrowserAndOs(userAgent?: string) {
+    const ua = userAgent?.trim() || '';
+    const browser = /edg(e|a|i)/i.test(ua)
+      ? 'Edge'
+      : /opr|opera/i.test(ua)
+      ? 'Opera'
+      : /chrome/i.test(ua) && !/edg|opr|opera/i.test(ua)
+      ? 'Chrome'
+      : /firefox/i.test(ua)
+      ? 'Firefox'
+      : /safari/i.test(ua) && !/chrome/i.test(ua)
+      ? 'Safari'
+      : /msie|trident/i.test(ua)
+      ? 'Internet Explorer'
+      : 'Unknown browser';
+
+    const os = /windows nt/i.test(ua)
+      ? 'Windows'
+      : /mac os x/i.test(ua)
+      ? 'MacOS'
+      : /android/i.test(ua)
+      ? 'Android'
+      : /iphone|ipad/i.test(ua)
+      ? 'iOS'
+      : /linux/i.test(ua)
+      ? 'Linux'
+      : 'Unknown OS';
+
+    return { browser, os };
+  }
+
+  private async resolveLoginLocation(ip: string): Promise<string | null> {
+    if (!ip || ip === '::1' || ip === '127.0.0.1' || ip.startsWith('127.')) {
+      return null;
+    }
+
+    try {
+      const response = await axios.get(`http://ip-api.com/json/${ip}`, { timeout: 5000 });
+      if (response.data?.status === 'success') {
+        const city = response.data?.city?.trim();
+        const country = response.data?.country?.trim();
+        return [city, country].filter(Boolean).join(', ') || null;
+      }
+    } catch (error) {
+      this.logger.debug(`Login location lookup failed for ${ip}: ${error}`);
+    }
+
+    return null;
+  }
+
+  private async sendLoginNotification(userId: string, ip: string, userAgent: string) {
+    const { browser, os } = this.parseBrowserAndOs(userAgent);
+    const location = await this.resolveLoginLocation(ip);
+    const timestamp = new Date().toISOString();
+    const bodyLines = [
+      'New login detected',
+      browser,
+      os,
+      location ?? 'Unknown location',
+      ip,
+      timestamp,
+    ];
+
+    const body = bodyLines.join('\n');
+    const metadata = { browser, os, location, ip, timestamp };
+
+    await this.notifications.createInApp(userId, {
+      type: 'security',
+      title: 'New login detected',
+      body,
+      metadata,
+    });
+
+    await this.notifications.sendPush(userId, 'New login detected', body, {
+      event: 'login',
+      ...metadata,
+    });
   }
 
   private jwkToPem(jwk: any): string {
@@ -1238,6 +1550,45 @@ async sendOtp(userId: string, phone: string, purpose: string) {
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────────
+  private async verifyTurnstileToken(token?: string, ip?: string): Promise<void> {
+    const secretKey = this.cfg.get<string>('TURNSTILE_SECRET_KEY');
+    if (!secretKey) {
+      return;
+    }
+
+    const enabled = this.cfg.get<string>('TURNSTILE_ENABLED')?.toLowerCase() !== 'false';
+    if (!enabled) {
+      return;
+    }
+
+    const normalizedToken = token?.trim();
+    if (!normalizedToken) {
+      throw new BadRequestException('Captcha verification is required');
+    }
+
+    try {
+      const response = await axios.post(
+        'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+        new URLSearchParams({
+          secret: secretKey,
+          response: normalizedToken,
+          remoteip: ip || '',
+        }),
+        {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          timeout: 10000,
+        },
+      );
+
+      if (!response.data?.success) {
+        throw new BadRequestException('Captcha verification failed');
+      }
+    } catch (error) {
+      this.logger.warn(`Turnstile verification failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new BadRequestException('Captcha verification failed');
+    }
+  }
+
   private async issueTokens(userId: string, role: string, walletId?: string) {
     // Security: Secrets MUST be set in environment (no hardcoded fallbacks)
     const accessSecret = this.cfg.get<string>('JWT_ACCESS_SECRET');

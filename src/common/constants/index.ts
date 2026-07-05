@@ -1,5 +1,6 @@
 export const MAX_PIN_ATTEMPTS = 5;
 export const MAX_LOGIN_ATTEMPTS = 5;
+export const LOGIN_LOCKOUT_STEP_ATTEMPTS = 5;
 export const OTP_EXPIRY_MINUTES = 5;
 export const OTP_MAX_ATTEMPTS = 3;
 export const ESCROW_AUTO_RELEASE_DAYS = 7;

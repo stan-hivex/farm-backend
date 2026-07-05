@@ -24,6 +24,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SecurityModule } from './security/security.module';
 import { KycModule } from './kyc/kyc.module';
 import { HealthModule } from './health/health.module';
+import { RolesGuard } from './common/guards/roles.guard';
 import { ProjectsModule } from './projects/projects.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AdminModule } from './admin/admin.module';
@@ -118,6 +119,10 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
     },
     {
       provide: APP_INTERCEPTOR,
