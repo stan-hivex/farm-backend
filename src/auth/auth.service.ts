@@ -666,12 +666,13 @@ if (new Date() > expiryDate) {
     }
 
     const email = supabaseClaims?.email?.toLowerCase();
-    if (!email) {
-      throw new BadRequestException('Supabase user email is required');
-    }
-
     const emailVerified = !!supabaseClaims?.email_confirmed_at;
     const phone = supabaseClaims?.phone?.trim() || `supabase-${randomBytes(8).toString('hex')}`;
+    const fallbackPhone = phone.startsWith('supabase-') ? null : phone;
+
+    if (!email && !fallbackPhone) {
+      throw new BadRequestException('Supabase user email or phone is required');
+    }
     const metadata = supabaseClaims?.user_metadata ?? {};
     const supabaseUserId = (supabaseClaims?.sub || supabaseClaims?.id || supabaseClaims?.user_id || null) as string | null;
     const firstName = (metadata.first_name || metadata.name || email.split('@')[0] || 'Supabase').trim();
@@ -684,12 +685,12 @@ if (new Date() > expiryDate) {
       username = `${usernameBase}${counter++}`;
     }
 
-    let user = await this.findOrLinkSupabaseUser(email, supabaseUserId, {
+    let user = await this.findOrLinkSupabaseUser(email || null, supabaseUserId, {
       firstName,
       lastName,
       country: metadata.country,
       emailVerified,
-      phone,
+      phone: fallbackPhone || phone,
     });
 
     if (!user) {
@@ -749,7 +750,7 @@ if (new Date() > expiryDate) {
         throw new InternalServerErrorException('Failed to load created user');
       }
 
-      if (!emailVerified) {
+      if (this.shouldRequireEmailVerification(true, emailVerified)) {
         throw new ForbiddenException('Email not verified. Please verify your email before accessing the dashboard.');
       }
     } else {
@@ -766,10 +767,6 @@ if (new Date() > expiryDate) {
           data: { email_verified: true },
         });
         user.email_verified = true;
-      }
-
-      if (!user.email_verified) {
-        throw new ForbiddenException('Email not verified. Please verify your email before accessing the dashboard.');
       }
     }
 
@@ -830,20 +827,23 @@ if (new Date() > expiryDate) {
   }
 
   private async findOrLinkSupabaseUser(
-    email: string,
+    email: string | null,
     supabaseUserId: string | null,
     details: {
       firstName: string;
       lastName: string;
       country?: string | null;
       emailVerified: boolean;
-      phone: string;
+      phone: string | null;
     },
   ) {
+    const normalizedPhone = details.phone?.trim() && !details.phone.startsWith('supabase-') ? details.phone.trim() : null;
+
     const existingUser = await this.prisma.users.findFirst({
       where: {
         OR: [
-          { email: { equals: email, mode: 'insensitive' } },
+          ...(email ? [{ email: { equals: email, mode: 'insensitive' as const } }] : []),
+          ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
           ...(supabaseUserId ? [{ supabase_user_id: supabaseUserId }] : []),
         ],
         is_deleted: false,
@@ -877,8 +877,8 @@ if (new Date() > expiryDate) {
       updateData.email_verified = true;
     }
 
-    if (details.phone && !existingUser.phone) {
-      updateData.phone = details.phone;
+    if (normalizedPhone && !existingUser.phone) {
+      updateData.phone = normalizedPhone;
     }
 
     if (Object.keys(updateData).length > 0) {
@@ -895,6 +895,10 @@ if (new Date() > expiryDate) {
     }
 
     return existingUser;
+  }
+
+  private shouldRequireEmailVerification(isNewUser: boolean, emailVerified: boolean): boolean {
+    return isNewUser && !emailVerified;
   }
 
   private async verifySupabaseJwt(token: string, jwksUrl: string, expectedIssuer: string): Promise<any> {
