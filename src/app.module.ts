@@ -2,6 +2,7 @@ import { Module, Logger } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
@@ -47,6 +48,16 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
       isGlobal: true,
       envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],
       ignoreEnvFile: false,
+    }),
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        secret: cfg.get<string>('JWT_ACCESS_SECRET') || 'secret',
+        signOptions: {
+          expiresIn: (cfg.get<string>('JWT_ACCESS_EXPIRES') || '15m') as any,
+        },
+      }),
     }),
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
