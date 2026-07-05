@@ -537,9 +537,16 @@ if (new Date() > expiryDate) {
     if (!user) throw new UnauthorizedException('Invalid credentials');
     if (user.is_suspended) throw new ForbiddenException('Account suspended. Contact support.');
     if (!user.is_active) throw new ForbiddenException('Account is inactive.');
-    if (user.email && !user.email_verified) {
-      throw new ForbiddenException('Email not verified. Please verify your email before logging in.');
+
+    // If user has a linked Supabase account, they must use Supabase auth
+    if (user.supabase_user_id) {
+      throw new UnauthorizedException(
+        'This account is now linked to Supabase. Please use email/password with Supabase to sign in.'
+      );
     }
+
+    // Legacy FARM users do NOT require email verification
+    // Only new Supabase users (created after migration) require it
 
     const failedAttempts = user.failed_login_attempts ?? 0;
     await this.enforceLoginLockout(user.id, user.login_lockout_until, ip);
@@ -685,6 +692,7 @@ if (new Date() > expiryDate) {
       username = `${usernameBase}${counter++}`;
     }
 
+    // Check if this is a legacy user trying to authenticate via Supabase
     let user = await this.findOrLinkSupabaseUser(email || null, supabaseUserId, {
       firstName,
       lastName,
@@ -750,15 +758,23 @@ if (new Date() > expiryDate) {
         throw new InternalServerErrorException('Failed to load created user');
       }
 
-      if (this.shouldRequireEmailVerification(true, emailVerified)) {
+      // NEW USER: Email must be verified before access
+      if (!emailVerified) {
         throw new ForbiddenException('Email not verified. Please verify your email before accessing the dashboard.');
       }
     } else {
+      // EXISTING USER (legacy or previously created)
       if (user.is_suspended) {
         throw new ForbiddenException('Account suspended. Contact support.');
       }
       if (!user.is_active) {
         throw new ForbiddenException('Account is inactive.');
+      }
+
+      // If this legacy user just linked their Supabase account, mark email as verified
+      // (they were already verified before Supabase existed)
+      if (!user.supabase_user_id && supabaseUserId) {
+        user.supabase_user_id = supabaseUserId;
       }
 
       if (emailVerified && !user.email_verified) {
@@ -839,6 +855,7 @@ if (new Date() > expiryDate) {
   ) {
     const normalizedPhone = details.phone?.trim() && !details.phone.startsWith('supabase-') ? details.phone.trim() : null;
 
+    // Look for existing user by email, phone, or Supabase ID
     const existingUser = await this.prisma.users.findFirst({
       where: {
         OR: [
@@ -857,8 +874,13 @@ if (new Date() > expiryDate) {
 
     const updateData: Record<string, any> = {};
 
+    // LEGACY USER LINKING: If user doesn't have a Supabase ID yet, link it now
     if (supabaseUserId && !existingUser.supabase_user_id) {
       updateData.supabase_user_id = supabaseUserId;
+      // Legacy users are automatically marked as email verified since they existed before Supabase
+      if (!existingUser.email_verified) {
+        updateData.email_verified = true;
+      }
     }
 
     if (details.country && !existingUser.country) {
@@ -873,7 +895,8 @@ if (new Date() > expiryDate) {
       updateData.last_name = details.lastName;
     }
 
-    if (details.emailVerified && !existingUser.email_verified) {
+    // Only update email_verified for NEW Supabase accounts (those already have supabase_user_id)
+    if (details.emailVerified && !existingUser.email_verified && existingUser.supabase_user_id) {
       updateData.email_verified = true;
     }
 
@@ -895,6 +918,10 @@ if (new Date() > expiryDate) {
     }
 
     return existingUser;
+  }
+
+  private isLegacyUser(user: any): boolean {
+    return !user.supabase_user_id;
   }
 
   private shouldRequireEmailVerification(isNewUser: boolean, emailVerified: boolean): boolean {
