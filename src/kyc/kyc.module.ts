@@ -1,6 +1,12 @@
 import { Module } from '@nestjs/common';
 import { KycController } from './kyc.controller';
 import { KycService } from './kyc.service';
+import { AuthModule } from '../auth/auth.module';
 
-@Module({ controllers: [KycController], providers: [KycService], exports: [KycService] })
+@Module({
+	imports: [AuthModule],
+	controllers: [KycController],
+	providers: [KycService],
+	exports: [KycService],
+})
 export class KycModule {}
