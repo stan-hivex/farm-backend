@@ -8,8 +8,11 @@ import {
   HttpStatus,
   UseGuards,
   UnauthorizedException,
+  BadRequestException,
   Param,
   Get,
+  Query,
+  ExecutionContext,
 } from '@nestjs/common';
 
 import {
@@ -26,11 +29,15 @@ import { AuthService } from './auth.service';
 
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { SupabaseAuthDto } from './dto/supabase-auth.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { SetPinDto } from './dto/set-pin.dto';
 import { ChangePinDto } from './dto/change-pin.dto';
 import { ResetPinDto } from './dto/reset-pin.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -55,20 +62,26 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 60000,
+      ttl: 60,
+      generateKey: authThrottleKey,
     },
   })
   @ApiOperation({
     summary: 'Register new user',
   })
   register(
-    @Body() dto: RegisterDto,
+    @Body() body: RegisterDto | SupabaseAuthDto,
     @Req() req: Request,
   ) {
-    return this.authService.register(
-      dto,
-      req.ip || '',
-    );
+    if (this.isSupabaseAuthBody(body)) {
+      return this.authService.supabaseLogin(
+        body.supabase_token,
+        req.ip || '',
+        req.headers['user-agent'] || '',
+      );
+    }
+
+    return this.authService.register(body as RegisterDto, req.ip || '');
   }
 
   /**
@@ -80,7 +93,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 60000,
+      ttl: 60,
     },
   })
   @ApiOperation({
@@ -105,7 +118,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 3,
-      ttl: 60000,
+      ttl: 60,
     },
   })
   @ApiOperation({
@@ -117,6 +130,7 @@ export class AuthController {
       phone: string;
     },
   ) {
+    
     const user =
       await (this.authService as any).prisma.users.findUnique({
         where: {
@@ -137,6 +151,79 @@ export class AuthController {
   }
 
   /**
+   * ================= FORGOT PASSWORD =================
+   */
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 5,
+      ttl: 300,
+      generateKey: authThrottleKey,
+    },
+  })
+  @ApiOperation({ summary: 'Send password reset OTP to email' })
+  forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Req() req: Request,
+  ) {
+    return this.authService.sendPasswordResetOtp(dto.email, req.ip || '');
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 5,
+      ttl: 300,
+    },
+  })
+  @ApiOperation({ summary: 'Reset password using OTP' })
+  resetPassword(
+    @Body() dto: ResetPasswordDto,
+  ) {
+    return this.authService.resetPassword(dto);
+  }
+
+  /**
+   * ================= RESEND EMAIL VERIFICATION =================
+   */
+  @Public()
+  @Post('resend-email-verification')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 3,
+      ttl: 60000,
+    },
+  })
+  @ApiOperation({ summary: 'Resend email verification link' })
+  resendEmailVerification(
+    @Body()
+    body: {
+      email: string;
+    },
+  ) {
+    return this.authService.resendEmailVerification(body.email);
+  }
+
+  /**
+   * ================= VERIFY EMAIL =================
+   */
+  @Public()
+  @Get('verify-email/:token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify email address' })
+  verifyEmail(
+    @Param('token') token: string | undefined,
+    @Query('token') queryToken: string | undefined,
+  ) {
+    return this.authService.verifyEmail(token || queryToken || '');
+  }
+
+  /**
    * ================= LOGIN =================
    */
   @Public()
@@ -145,21 +232,54 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 60000,
+      ttl: 60,
+      generateKey: authThrottleKey,
     },
   })
   @ApiOperation({
     summary: 'Login',
   })
   login(
-    @Body() dto: LoginDto,
+    @Body() body: LoginDto | SupabaseAuthDto,
     @Req() req: Request,
   ) {
-    return this.authService.login(
-      dto,
+    if (this.isSupabaseAuthBody(body)) {
+      return this.authService.supabaseLogin(
+        body.supabase_token,
+        req.ip || '',
+        req.headers['user-agent'] || '',
+      );
+    }
+
+    throw new BadRequestException('Login now requires a Supabase access token. Please use Supabase authentication.');
+  }
+
+  @Public()
+  @Post('supabase')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 5,
+      ttl: 60,
+      generateKey: authThrottleKey,
+    },
+  })
+  @ApiOperation({
+    summary: 'Login or register with a Supabase access token',
+  })
+  supabaseAuth(
+    @Body() dto: SupabaseAuthDto,
+    @Req() req: Request,
+  ) {
+    return this.authService.supabaseLogin(
+      dto.supabase_token,
       req.ip || '',
       req.headers['user-agent'] || '',
     );
+  }
+
+  private isSupabaseAuthBody(body: unknown): body is SupabaseAuthDto {
+    return typeof body === 'object' && body !== null && typeof (body as SupabaseAuthDto).supabase_token === 'string' && (body as SupabaseAuthDto).supabase_token.trim().length > 0;
   }
 
   @Public()
@@ -249,6 +369,18 @@ export class AuthController {
       user.id,
       user.jti,
     );
+  }
+
+  @UseGuards(JwtGuard)
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('JWT')
+  @ApiOperation({ summary: 'Change password and revoke all other sessions' })
+  changePassword(
+    @CurrentUser() user: any,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(user.id, dto);
   }
 
   @UseGuards(JwtGuard)
@@ -383,5 +515,18 @@ function decodeJwtPayload(
   } catch {
     return null;
   }
+}
+
+function authThrottleKey(context: ExecutionContext): string {
+  const request = context.switchToHttp().getRequest<Request>();
+  const ip = request.ip || 'unknown-ip';
+  const body: Record<string, any> = request.body || {};
+  const identifier = (
+    body.identifier || body.email || body.phone || body.supabase_token || ''
+  ).toString().trim().toLowerCase();
+
+  return identifier.length > 0
+    ? `${ip}:${identifier}`
+    : `${ip}:anonymous`;
 }
 

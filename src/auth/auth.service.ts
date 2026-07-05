@@ -1,12 +1,14 @@
 import {
   Injectable, BadRequestException, UnauthorizedException,
-  ConflictException, ForbiddenException, NotFoundException, Logger,
+  ConflictException, ForbiddenException, NotFoundException, InternalServerErrorException, Logger,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
+import axios from 'axios';
+import * as jwt from 'jsonwebtoken';
+import { createPublicKey, randomBytes } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RegisterDto } from './dto/register.dto';
@@ -14,9 +16,14 @@ import { LoginDto } from './dto/login.dto';
 import { SetPinDto } from './dto/set-pin.dto';
 import { ChangePinDto } from './dto/change-pin.dto';
 import { ResetPinDto } from './dto/reset-pin.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import {
   generateWalletAddress, generateOtp, generateReferralCode,
 } from '../common/utils/reference.util';
+import {
+  PasswordResetRateLimiter,
+  generatePasswordResetToken,
+} from './password-reset.util';
 import {
   MAX_PIN_ATTEMPTS, MAX_LOGIN_ATTEMPTS, OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS,
 } from '../common/constants';
@@ -24,6 +31,7 @@ import {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly passwordResetRateLimiter = new PasswordResetRateLimiter();
 
   constructor(
     private prisma: PrismaService,
@@ -33,6 +41,70 @@ export class AuthService {
   ) {}
 
   // ── Register ────────────────────────────────────────────────────────────────
+  private buildAuthLinks(path: string, token: string, email?: string) {
+    const frontendUrl = this.cfg.get<string>('FRONTEND_URL')?.replace(/\/$/, '');
+    const appScheme = this.cfg.get<string>('APP_SCHEME') || 'farm';
+    const appHost = this.cfg.get<string>('APP_HOST') || 'farm.com';
+
+    const params = new URLSearchParams({ token });
+    if (email) {
+      params.set('email', email);
+    }
+
+    const query = params.toString();
+    const webUrl = frontendUrl ? `${frontendUrl}${path}${query ? `?${query}` : ''}` : '';
+    const appUrl = `${appScheme}://${appHost}${path}${query ? `?${query}` : ''}`;
+
+    return { webUrl, appUrl };
+  }
+
+  private buildAuthEmailHtml({
+    greeting,
+    body,
+    appUrl,
+    webUrl,
+  }: {
+    greeting: string;
+    body: string;
+    appUrl: string;
+    webUrl: string;
+  }) {
+    return `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
+        <p>${greeting}</p>
+        <p>${body}</p>
+        <p><a href="${appUrl}" style="display:inline-block;padding:10px 16px;background:#111827;color:#fff;text-decoration:none;border-radius:6px;">Open in app</a></p>
+        <p><a href="${webUrl || appUrl}">Open in browser</a></p>
+        <p>If you did not request this action, you can safely ignore this email.</p>
+      </div>
+    `.trim();
+  }
+
+  private async sendEmailVerification(userId: string, email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const token = generatePasswordResetToken();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await this.prisma.otp_verifications.create({
+      data: {
+        user_id: userId,
+        otp_code: token,
+        purpose: 'email_verification',
+        expires_at: expiresAt,
+      },
+    });
+
+    const { webUrl, appUrl } = this.buildAuthLinks('/verify-email', token, normalizedEmail);
+    const html = this.buildAuthEmailHtml({
+      greeting: 'Hello there,',
+      body: 'Please confirm your email address to activate your FARM account.',
+      appUrl,
+      webUrl,
+    });
+
+    await this.notifications.sendEmail(normalizedEmail, 'Verify your FARM email', html);
+  }
+
   async register(dto: RegisterDto, ip: string) {
     const existing = await this.prisma.users.findFirst({
       where: {
@@ -95,8 +167,16 @@ export class AuthService {
       return u;
     });
 
+    const messages: string[] = [];
     await this.sendOtp(user.id, user.phone, 'phone_verification');
-    return { message: 'Registration successful. OTP sent to your phone number.' };
+    messages.push('OTP sent to your phone number.');
+
+    if (user.email) {
+      await this.sendEmailVerification(user.id, user.email);
+      messages.push('Verification email sent to your email address.');
+    }
+
+    return { message: messages.join(' ') };
   }
 
   // ── Verify OTP ───────────────────────────────────────────────────────────────
@@ -147,6 +227,201 @@ if (new Date() > expiryDate) {
     return { message: 'OTP verified successfully', user_id: user.id };
   }
 
+  async sendPasswordResetOtp(email: string, ip = '') {
+    const normalizedEmail = email.trim().toLowerCase();
+    const rateLimitKey = `${normalizedEmail}:${ip || 'unknown'}`;
+
+    if (!this.passwordResetRateLimiter.allowRequest(rateLimitKey)) {
+      return { message: 'Too many password reset requests. Please try again shortly.' };
+    }
+
+    const user = await this.prisma.users.findUnique({ where: { email: normalizedEmail } });
+    if (!user) {
+      return { message: 'If the email exists, a password reset link has been sent.' };
+    }
+    if (user.is_deleted) {
+      return { message: 'If the email exists, a password reset link has been sent.' };
+    }
+
+    const token = generatePasswordResetToken();
+    const expires_at = new Date(Date.now() + 15 * 60 * 1000);
+    await this.prisma.otp_verifications.create({
+      data: {
+        user_id: user.id,
+        otp_code: token,
+        purpose: 'forgot_password',
+        expires_at,
+      },
+    });
+
+    const { webUrl, appUrl } = this.buildAuthLinks('/reset-password', token, normalizedEmail);
+    const html = this.buildAuthEmailHtml({
+      greeting: `Hello ${user.first_name || 'FARM user'},`,
+      body: 'We received a request to reset your password. Use the secure link below to continue.',
+      appUrl,
+      webUrl,
+    });
+
+    await this.notifications.sendEmail(normalizedEmail, 'Reset your FARM password', html);
+    return { message: 'If the email exists, a password reset link has been sent.' };
+  }
+
+  async verifyEmail(token: string) {
+    if (!token?.trim()) {
+      throw new BadRequestException('A valid verification token is required');
+    }
+
+    const verification = await this.prisma.otp_verifications.findFirst({
+      where: {
+        otp_code: token.trim(),
+        purpose: 'email_verification',
+        verified: false,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    if (!verification || !verification.user_id) {
+      throw new BadRequestException('Invalid or expired email verification link');
+    }
+
+    const expiresAt = verification.expires_at ? new Date(verification.expires_at) : null;
+    if (!expiresAt || new Date() > expiresAt) {
+      throw new BadRequestException('Email verification link has expired');
+    }
+
+    const user = await this.prisma.users.findUnique({ where: { id: verification.user_id } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.email_verified) {
+      return { message: 'Email already verified' };
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.users.update({
+        where: { id: user.id },
+        data: { email_verified: true },
+      }),
+      this.prisma.otp_verifications.update({
+        where: { id: verification.id },
+        data: { verified: true },
+      }),
+    ]);
+
+    return { message: 'Email verified successfully' };
+  }
+
+  async resendEmailVerification(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.prisma.users.findUnique({ where: { email: normalizedEmail } });
+    if (!user) {
+      return { message: 'If the email exists, a verification email has been sent.' };
+    }
+
+    if (user.email_verified) {
+      return { message: 'Email already verified' };
+    }
+
+    await this.sendEmailVerification(user.id, normalizedEmail);
+    return { message: 'If the email exists, a verification email has been sent.' };
+  }
+
+  async changePassword(userId: string, dto: { current_password: string; new_password: string; confirm_password: string }) {
+    if (dto.new_password !== dto.confirm_password) {
+      throw new BadRequestException('New passwords do not match');
+    }
+
+    const user = await this.prisma.users.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const validCurrentPassword = await bcrypt.compare(dto.current_password, user.password_hash);
+    if (!validCurrentPassword) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    const password_hash = await bcrypt.hash(dto.new_password, rounds);
+
+    await this.prisma.$transaction([
+      this.prisma.users.update({
+        where: { id: user.id },
+        data: { password_hash, failed_login_attempts: 0 },
+      }),
+      this.prisma.user_sessions.updateMany({
+        where: { user_id: user.id, is_revoked: false },
+        data: { is_revoked: true },
+      }),
+      this.prisma.activity_logs.create({
+        data: { user_id: user.id, activity: 'PASSWORD_CHANGED' },
+      }),
+    ]);
+
+    return { message: 'Password changed successfully. Please sign in again.' };
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    if (dto.password !== dto.confirm_password) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    const token = (dto.token || dto.otp || '').trim();
+    if (!token) {
+      throw new BadRequestException('A valid password reset token is required');
+    }
+
+    const resetRecord = await this.prisma.otp_verifications.findFirst({
+      where: {
+        otp_code: token,
+        purpose: 'forgot_password',
+        verified: false,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+    if (!resetRecord || !resetRecord.user_id) {
+      throw new BadRequestException('Invalid or expired password reset link');
+    }
+
+    const expiresAt = resetRecord.expires_at ? new Date(resetRecord.expires_at) : null;
+    if (!expiresAt || new Date() > expiresAt) {
+      throw new BadRequestException('Password reset link has expired');
+    }
+
+    const user = await this.prisma.users.findUnique({ where: { id: resetRecord.user_id } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (dto.email && dto.email.trim().toLowerCase() !== user.email?.toLowerCase()) {
+      throw new BadRequestException('Password reset token does not match the provided email');
+    }
+
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    const password_hash = await bcrypt.hash(dto.password, rounds);
+
+    await this.prisma.$transaction([
+      this.prisma.users.update({
+        where: { id: user.id },
+        data: { password_hash, failed_login_attempts: 0 },
+      }),
+      this.prisma.user_sessions.updateMany({
+        where: { user_id: user.id, is_revoked: false },
+        data: { is_revoked: true },
+      }),
+      this.prisma.otp_verifications.update({
+        where: { id: resetRecord.id },
+        data: { verified: true },
+      }),
+      this.prisma.activity_logs.create({
+        data: { user_id: user.id, activity: 'PASSWORD_RESET' },
+      }),
+    ]);
+
+    return { message: 'Password has been reset successfully' };
+  }
+
   // ── Login ────────────────────────────────────────────────────────────────────
   async login(dto: LoginDto, ip: string, userAgent: string) {
     const normalizedIdentifier = dto.identifier.trim();
@@ -167,6 +442,9 @@ if (new Date() > expiryDate) {
     if (!user) throw new UnauthorizedException('Invalid credentials');
     if (user.is_suspended) throw new ForbiddenException('Account suspended. Contact support.');
     if (!user.is_active) throw new ForbiddenException('Account is inactive.');
+    if (user.email && !user.email_verified) {
+      throw new ForbiddenException('Email not verified. Please verify your email before logging in.');
+    }
 
     const failedAttempts = user.failed_login_attempts ?? 0;
 
@@ -236,12 +514,242 @@ if (new Date() > expiryDate) {
           kyc_status: user.kyc_status,
           kyc_level: user.kyc_level,
           phone_verified: user.phone_verified,
+          email_verified: user.email_verified,
           has_pin: !!user.pin_hash,
           profile_image: user.profile_image,
         },
       },
       message: 'Login successful',
     };
+  }
+
+  // ── Supabase token exchange ─────────────────────────────────────────────────
+  private jwksCache: Record<string, { keys: any[]; expiresAt: number }> = {};
+
+  async supabaseLogin(supabaseToken: string, ip: string, userAgent: string) {
+    const supabaseUrl = this.cfg.get<string>('SUPABASE_URL');
+
+    if (!supabaseUrl) {
+      throw new Error('Supabase URL is not configured.');
+    }
+
+    const normalizedSupabaseUrl = supabaseUrl
+      .replace(/\/rest\/v1\/?$/i, '')
+      .replace(/\/$/, '');
+
+    const jwksUrl = `${normalizedSupabaseUrl}/auth/v1/.well-known/jwks.json`;
+
+    let supabaseClaims: any;
+    try {
+      supabaseClaims = await this.verifySupabaseJwt(supabaseToken, jwksUrl, `${normalizedSupabaseUrl}/auth/v1`);
+    } catch (error) {
+      this.logger.warn('Supabase token verification failed', error as any);
+      throw new UnauthorizedException('Invalid Supabase token.');
+    }
+
+    const email = supabaseClaims?.email?.toLowerCase();
+    if (!email) {
+      throw new BadRequestException('Supabase user email is required');
+    }
+
+    const emailVerified = !!supabaseClaims?.email_confirmed_at;
+    const phone = supabaseClaims?.phone?.trim() || `supabase-${randomBytes(8).toString('hex')}`;
+    const metadata = supabaseClaims?.user_metadata ?? {};
+    const firstName = (metadata.first_name || metadata.name || email.split('@')[0] || 'Supabase').trim();
+    const lastName = (metadata.last_name || 'User').trim();
+    const usernameBase = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() || `supabaseuser`;
+
+    let username = usernameBase;
+    let counter = 1;
+    while (await this.prisma.users.findUnique({ where: { username } })) {
+      username = `${usernameBase}${counter++}`;
+    }
+
+    let user = await this.prisma.users.findUnique({
+      where: { email },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+
+    if (!user) {
+      const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+      const password_hash = await bcrypt.hash(randomBytes(16).toString('hex'), rounds);
+
+      const qrSecret = this.cfg.get<string>('QR_HMAC_SECRET');
+      if (!qrSecret) {
+        throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
+      }
+
+      const createdUser = await this.prisma.$transaction(async (tx) => {
+        const createdUser = await tx.users.create({
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+            username,
+            email,
+            phone,
+            password_hash,
+            country: metadata.country,
+            email_verified: emailVerified,
+            phone_verified: !!supabaseClaims?.phone,
+            referral_code: generateReferralCode(),
+          },
+        });
+
+        await tx.wallets.create({
+          data: {
+            user_id: createdUser.id,
+            wallet_name: `${createdUser.first_name}'s Wallet`,
+            wallet_type: 'user',
+            wallet_address: generateWalletAddress(createdUser.id, qrSecret),
+            currency: 'FARM',
+          },
+        });
+
+        await tx.activity_logs.create({
+          data: {
+            user_id: createdUser.id,
+            activity: 'SUPABASE_REGISTER',
+            ip_address: ip,
+          },
+        });
+
+        return createdUser;
+      });
+
+      // reload with wallet relation after creation
+      user = await this.prisma.users.findUnique({
+        where: { id: createdUser.id },
+        include: { wallets: { where: { is_active: true }, take: 1 } },
+      }) as any;
+
+      if (!user) {
+        throw new InternalServerErrorException('Failed to load created user');
+      }
+
+      if (!emailVerified) {
+        throw new ForbiddenException('Email not verified. Please verify your email before accessing the dashboard.');
+      }
+    } else {
+      if (user.is_suspended) {
+        throw new ForbiddenException('Account suspended. Contact support.');
+      }
+      if (!user.is_active) {
+        throw new ForbiddenException('Account is inactive.');
+      }
+
+      if (emailVerified && !user.email_verified) {
+        await this.prisma.users.update({
+          where: { id: user.id },
+          data: { email_verified: true },
+        });
+        user.email_verified = true;
+      }
+
+      if (!user.email_verified) {
+        throw new ForbiddenException('Email not verified. Please verify your email before accessing the dashboard.');
+      }
+    }
+
+    const walletId = user.wallets[0]?.id;
+    const userRole = user.role ?? 'user';
+    const tokens = await this.issueTokens(user.id, userRole, walletId);
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+
+    await this.prisma.user_sessions.create({
+      data: {
+        user_id: user.id,
+        refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
+        jwt_id: tokens.jti,
+        ip_address: ip,
+        user_agent: userAgent,
+        device_name: '',
+        device_os: '',
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    await this.prisma.activity_logs.create({
+      data: { user_id: user.id, activity: 'SUPABASE_LOGIN', ip_address: ip },
+    });
+
+    return {
+      data: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        token_type: 'Bearer',
+        expires_in: 900,
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          username: user.username,
+          phone: user.phone,
+          email: user.email,
+          role: user.role,
+          kyc_status: user.kyc_status,
+          kyc_level: user.kyc_level,
+          phone_verified: user.phone_verified,
+          email_verified: user.email_verified,
+          has_pin: !!user.pin_hash,
+          profile_image: user.profile_image,
+        },
+      },
+      message: 'Supabase login successful',
+    };
+  }
+
+  private async verifySupabaseJwt(token: string, jwksUrl: string, expectedIssuer: string): Promise<any> {
+    const decodedHeader = jwt.decode(token, { complete: true }) as any;
+    const kid = decodedHeader?.header?.kid;
+    if (!kid) {
+      throw new UnauthorizedException('Missing token key ID');
+    }
+
+    const publicKey = await this.getSigningKey(kid, jwksUrl);
+    return jwt.verify(token, publicKey, {
+      algorithms: ['RS256'],
+      issuer: expectedIssuer,
+      audience: 'authenticated',
+    });
+  }
+
+  private async getSigningKey(kid: string, jwksUrl: string): Promise<string> {
+    const now = Date.now();
+    let cache = this.jwksCache[jwksUrl];
+
+    if (!cache || cache.expiresAt < now) {
+      const response = await axios.get(jwksUrl, { timeout: 5000 });
+      const keys = response.data?.keys;
+      if (!Array.isArray(keys) || keys.length === 0) {
+        throw new Error('Invalid JWKS response');
+      }
+      cache = { keys, expiresAt: now + 60 * 60 * 1000 }; // 1 hour cache
+      this.jwksCache[jwksUrl] = cache;
+    }
+
+    const jwk = cache.keys.find((key) => key.kid === kid);
+    if (!jwk) {
+      throw new Error(`Unable to find signing key for kid ${kid}`);
+    }
+
+    return this.jwkToPem(jwk);
+  }
+
+  private jwkToPem(jwk: any): string {
+    if (jwk.kty !== 'RSA') {
+      throw new Error(`Unsupported JWK key type: ${jwk.kty}`);
+    }
+
+    const keyObject = createPublicKey({
+      key: {
+        kty: 'RSA',
+        n: jwk.n,
+        e: jwk.e,
+      },
+      format: 'jwk',
+    });
+
+    return keyObject.export({ format: 'pem', type: 'spki' }).toString('utf8');
   }
 
   // ── Refresh ──────────────────────────────────────────────────────────────────
@@ -267,6 +775,11 @@ if (new Date() > expiryDate) {
     if (!session) {
       await this.logSecurityEvent(userId, 'REFRESH_TOKEN_INVALID', 'No valid session found', 'high', ip);
       throw new UnauthorizedException('Session not found or expired');
+    }
+
+    if (session.users?.email && !session.users.email_verified) {
+      await this.logSecurityEvent(userId, 'EMAIL_VERIFICATION_REQUIRED', 'Email not verified before refresh', 'medium', ip);
+      throw new ForbiddenException('Email not verified. Please verify your email to refresh tokens.');
     }
 
     // Check if this refresh token has already been used (token reuse detection)
@@ -715,16 +1228,15 @@ async sendOtp(userId: string, phone: string, purpose: string) {
   return { message: 'OTP sent to your phone' };
 }
 
-  // Add this method inside the AuthService class
+  async resendOtp(userId: string) {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return this.sendOtp(userId, user.phone, 'phone_verification');
+  }
 
-async resendOtp(userId: string) {
-  const user = await this.prisma.users.findUnique({
-    where: { id: userId },
-    select: { phone: true },
-  });
-  if (!user) throw new NotFoundException('User not found');
-  return this.sendOtp(userId, user.phone, 'phone_verification');
-}
   // ── Private helpers ───────────────────────────────────────────────────────────
   private async issueTokens(userId: string, role: string, walletId?: string) {
     // Security: Secrets MUST be set in environment (no hardcoded fallbacks)

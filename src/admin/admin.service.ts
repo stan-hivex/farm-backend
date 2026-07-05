@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { CacheService } from '../common/cache/cache.service';
 import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
@@ -13,16 +12,9 @@ export class AdminService {
     private escrowService: EscrowService,
     private notifications: NotificationsService,
     private withdrawService: WithdrawService,
-    private cache: CacheService,
   ) {}
 
   async getDashboardStats() {
-    const cacheKey = 'admin:dashboard:stats';
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
     const [totalUsers, totalMerchants, activeEscrows, txVolume, pendingKyc, pendingPayouts] =
       await Promise.all([
         this.prisma.users.count({ where: { is_deleted: false } }),
@@ -34,7 +26,7 @@ export class AdminService {
         this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
         this.prisma.merchant_payouts.count({ where: { status: 'pending' } }),
       ]);
-    const payload = {
+    return {
       data: {
         total_users: totalUsers,
         total_merchants: totalMerchants,
@@ -45,8 +37,6 @@ export class AdminService {
         pending_payouts: pendingPayouts,
       },
     };
-    await this.cache.cacheSet(cacheKey, payload, 60);
-    return payload;
   }
 
   async listUsers(query: any) {
@@ -152,13 +142,6 @@ export class AdminService {
     adminId: string,
   ) {
     const user = await this.prisma.users.update({ where: { id: userId }, data: dto });
-    await Promise.all([
-      this.cache.cacheDelete(`profile:${userId}`),
-      this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
-      this.cache.cacheDelete('admin:dashboard:stats'),
-      this.cache.cacheDelete('admin:analytics'),
-      this.cache.cacheDelete('admin:superadmin-dashboard'),
-    ]);
     await this.prisma.audit_logs.create({
       data: {
         user_id: adminId, action: 'UPDATE_USER_STATUS',
@@ -355,11 +338,9 @@ export class AdminService {
     email?: boolean;
     sms?: boolean;
     target_role?: string;
-    audience?: string;
   }) {
     const where: any = { is_deleted: false, is_active: true };
-    const roleFilter = dto.target_role ?? dto.audience;
-    if (roleFilter && roleFilter !== 'all') where.role = roleFilter;
+    if (dto.target_role) where.role = dto.target_role;
 
     const users = await this.prisma.users.findMany({ where, select: { id: true, email: true, phone: true } });
 
@@ -396,129 +377,7 @@ export class AdminService {
     return { message: `Broadcast sent to ${users.length} users` };
   }
 
-  async sendNotificationToUser(superadminId: string, dto: { user_id: string; title: string; body: string; type?: string; metadata?: any; push?: boolean; email?: boolean; sms?: boolean }) {
-    const user = await this.prisma.users.findUnique({ where: { id: dto.user_id }, select: { id: true, email: true, phone: true } });
-    if (!user) throw new NotFoundException('User not found');
-
-    await this.notifications.createInApp(dto.user_id, {
-      type: dto.type ?? 'admin',
-      title: dto.title,
-      body: dto.body,
-      metadata: dto.metadata,
-    });
-
-    if (dto.push) await this.notifications.sendPush(dto.user_id, dto.title, dto.body, dto.metadata);
-    if (dto.email && user.email) await this.notifications.sendEmail(user.email, dto.title, `<p>${dto.body}</p>`);
-    if (dto.sms && user.phone) await this.notifications.sendSms(user.phone, dto.body);
-
-    await this.prisma.audit_logs.create({
-      data: {
-        user_id: superadminId,
-        action: 'SEND_NOTIFICATION_TO_USER',
-        entity_type: 'users',
-        entity_id: dto.user_id,
-        new_values: { title: dto.title, body: dto.body, type: dto.type },
-      },
-    });
-
-    return { message: 'Notification sent' };
-  }
-
-  async broadcastToUsers(superadminId: string, dto: { title: string; body: string; type?: string; metadata?: any; push?: boolean; email?: boolean; sms?: boolean }) {
-    const users = await this.prisma.users.findMany({ where: { is_deleted: false, is_active: true }, select: { id: true, email: true, phone: true } });
-
-    const notificationPromises = users.map((user) =>
-      this.notifications.createInApp(user.id, {
-        type: dto.type ?? 'admin',
-        title: dto.title,
-        body: dto.body,
-        metadata: dto.metadata,
-      }),
-    );
-    await Promise.all(notificationPromises);
-
-    if (dto.push) await Promise.all(users.map((user) => this.notifications.sendPush(user.id, dto.title, dto.body, dto.metadata)));
-    if (dto.email) await Promise.all(users.filter((u) => u.email).map((user) => this.notifications.sendEmail(user.email!, dto.title, `<p>${dto.body}</p>`)));
-    if (dto.sms) await Promise.all(users.filter((u) => u.phone).map((user) => this.notifications.sendSms(user.phone!, dto.body)));
-
-    await this.prisma.audit_logs.create({
-      data: {
-        user_id: superadminId,
-        action: 'BROADCAST_NOTIFICATION_TO_USERS',
-        entity_type: 'users',
-        entity_id: null,
-        new_values: { title: dto.title, body: dto.body, type: dto.type, push: dto.push, email: dto.email, sms: dto.sms },
-      },
-    });
-
-    return { message: `Broadcast sent to ${users.length} users` };
-  }
-
-  async sendNotificationToAdmin(superadminId: string, dto: { admin_id: string; title: string; body: string; type?: string; metadata?: any; push?: boolean; email?: boolean; sms?: boolean }) {
-    const admin = await this.prisma.users.findUnique({ where: { id: dto.admin_id }, select: { id: true, email: true, phone: true, role: true } });
-    if (!admin || !['admin', 'super_admin'].includes(admin.role as string)) throw new NotFoundException('Admin not found');
-
-    await this.notifications.createInApp(dto.admin_id, {
-      type: dto.type ?? 'admin',
-      title: dto.title,
-      body: dto.body,
-      metadata: dto.metadata,
-    });
-
-    if (dto.push) await this.notifications.sendPush(dto.admin_id, dto.title, dto.body, dto.metadata);
-    if (dto.email && admin.email) await this.notifications.sendEmail(admin.email, dto.title, `<p>${dto.body}</p>`);
-    if (dto.sms && admin.phone) await this.notifications.sendSms(admin.phone, dto.body);
-
-    await this.prisma.audit_logs.create({
-      data: {
-        user_id: superadminId,
-        action: 'SEND_NOTIFICATION_TO_ADMIN',
-        entity_type: 'users',
-        entity_id: dto.admin_id,
-        new_values: { title: dto.title, body: dto.body, type: dto.type },
-      },
-    });
-
-    return { message: 'Notification sent' };
-  }
-
-  async broadcastToAdmins(superadminId: string, dto: { title: string; body: string; type?: string; metadata?: any; push?: boolean; email?: boolean; sms?: boolean }) {
-    const admins = await this.prisma.users.findMany({ where: { role: { in: ['admin', 'super_admin'] }, is_deleted: false, is_active: true }, select: { id: true, email: true, phone: true } });
-
-    const notificationPromises = admins.map((admin) =>
-      this.notifications.createInApp(admin.id, {
-        type: dto.type ?? 'admin',
-        title: dto.title,
-        body: dto.body,
-        metadata: dto.metadata,
-      }),
-    );
-    await Promise.all(notificationPromises);
-
-    if (dto.push) await Promise.all(admins.map((admin) => this.notifications.sendPush(admin.id, dto.title, dto.body, dto.metadata)));
-    if (dto.email) await Promise.all(admins.filter((a) => a.email).map((admin) => this.notifications.sendEmail(admin.email!, dto.title, `<p>${dto.body}</p>`)));
-    if (dto.sms) await Promise.all(admins.filter((a) => a.phone).map((admin) => this.notifications.sendSms(admin.phone!, dto.body)));
-
-    await this.prisma.audit_logs.create({
-      data: {
-        user_id: superadminId,
-        action: 'BROADCAST_NOTIFICATION_TO_ADMINS',
-        entity_type: 'users',
-        entity_id: null,
-        new_values: { title: dto.title, body: dto.body, type: dto.type, push: dto.push, email: dto.email, sms: dto.sms },
-      },
-    });
-
-    return { message: `Broadcast sent to ${admins.length} admins` };
-  }
-
   async getAdminAnalytics() {
-    const cacheKey = 'admin:analytics';
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
     const [totalUsers, totalEscrows, totalTransactions, pendingKyc, pendingPayouts, totalSecurityEvents] =
       await Promise.all([
         this.prisma.users.count({ where: { is_deleted: false } }),
@@ -543,7 +402,7 @@ export class AdminService {
       },
     });
 
-    const payload = {
+    return {
       data: {
         total_users: totalUsers,
         total_escrows: totalEscrows,
@@ -558,8 +417,6 @@ export class AdminService {
         })),
       },
     };
-    await this.cache.cacheSet(cacheKey, payload, 60);
-    return payload;
   }
 
   async getSettings() {
@@ -628,41 +485,14 @@ export class AdminService {
 
   async createProject(adminId: string, dto: any) {
     const project = await this.prisma.investment_projects.create({
-      data: {
-        project_name: dto.project_name,
-        category: dto.category,
-        description: dto.description,
-        banner_image: dto.banner_image,
-        target_amount: dto.target_amount,
-        minimum_investment: dto.minimum_investment,
-        roi_percent: dto.roi_percent,
-        duration_months: dto.duration_months,
-        status: dto.status,
-        starts_at: dto.starts_at,
-        ends_at: dto.ends_at,
-        created_by: adminId,
-      },
+      data: { ...dto, created_by: adminId },
     });
     return { data: project, message: 'Investment project created' };
   }
 
   async updateProject(id: string, dto: any) {
-    const updateData: any = {
-      project_name: dto.project_name,
-      category: dto.category,
-      description: dto.description,
-      banner_image: dto.banner_image,
-      target_amount: dto.target_amount,
-      minimum_investment: dto.minimum_investment,
-      roi_percent: dto.roi_percent,
-      duration_months: dto.duration_months,
-      status: dto.status,
-      starts_at: dto.starts_at,
-      ends_at: dto.ends_at,
-    };
-
     return {
-      data: await this.prisma.investment_projects.update({ where: { id }, data: updateData }),
+      data: await this.prisma.investment_projects.update({ where: { id }, data: dto }),
     };
   }
 
@@ -1177,12 +1007,6 @@ export class AdminService {
   }
 
   async getSuperadminDashboard() {
-    const cacheKey = 'admin:superadmin-dashboard';
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
     const [totalUsers, totalTransactions, totalRevenue, activeTransactions, flaggedTx, supportTickets, pendingDisputes, pendingKyc] =
       await Promise.all([
         this.prisma.users.count({ where: { is_deleted: false } }),
@@ -1227,7 +1051,7 @@ export class AdminService {
     const escrow_release_earnings = Number(escrowReleaseAgg._sum.fee ?? 0);
     const escrow_total_earnings = Number(escrow_creation_earnings + escrow_release_earnings);
 
-    const payload = {
+    return {
       data: {
         total_users: totalUsers,
         total_revenue: Number(totalRevenue._sum.amount ?? 0),
@@ -1249,8 +1073,6 @@ export class AdminService {
         total_escrow_count: (escrowCreationAgg._count.id ?? 0) + (escrowReleaseAgg._count.id ?? 0),
       },
     };
-    await this.cache.cacheSet(cacheKey, payload, 60);
-    return payload;
   }
 
   async getComplianceReport(query: any) {

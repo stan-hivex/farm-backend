@@ -7,37 +7,21 @@ import { paginationParams, paginate } from '../common/utils/pagination.util';
 export class KycService {
   constructor(private prisma: PrismaService) {}
 
-  private normalizeValue(value?: any) {
-    if (value instanceof Date) return value.toISOString();
+  private normalizeValue(value?: string) {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-  }
-
-  private parseDateValue(value?: any): Date | undefined {
-    if (!value) return undefined;
-    if (value instanceof Date) return value;
-    if (typeof value !== 'string') return undefined;
-    const v = value.trim();
-    // Accept YYYY-MM-DD by adding midnight Z
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-      const d = new Date(v + 'T00:00:00Z');
-      return isNaN(d.getTime()) ? undefined : d;
-    }
-    // Try parsing full ISO or other date strings
-    const parsed = new Date(v);
-    return isNaN(parsed.getTime()) ? undefined : parsed;
   }
 
   private computeKycLevel(data: any) {
     const first_name = this.normalizeValue(data.first_name);
     const last_name = this.normalizeValue(data.last_name);
     const date_of_birth = this.normalizeValue(data.date_of_birth || data.dob);
-    const phone = this.normalizeValue(data.phone || data.phone_number);
+    const phone = this.normalizeValue(data.phone);
     const email = this.normalizeValue(data.email);
-    const document_type = this.normalizeValue(data.document_type || data.document_type_code);
+    const document_type = this.normalizeValue(data.document_type);
     const document_number = this.normalizeValue(data.document_number);
-    const front_image = this.normalizeValue(data.front_image || data.front_image_url);
-    const back_image = this.normalizeValue(data.back_image || data.back_image_url);
-    const selfie_image = this.normalizeValue(data.selfie_image || data.selfie_image_url);
+    const front_image = this.normalizeValue(data.front_image);
+    const back_image = this.normalizeValue(data.back_image);
+    const selfie_image = this.normalizeValue(data.selfie_image);
     const country = this.normalizeValue(data.country);
     const county = this.normalizeValue(data.county || data.state);
     const city = this.normalizeValue(data.city);
@@ -58,22 +42,20 @@ export class KycService {
 
   private buildKycDocumentPayload(existing: any, dto: any, urls: { front?: string | null; back?: string | null; selfie?: string | null }) {
     return {
-      document_type: dto.document_type ?? dto.document_type_code ?? existing?.document_type,
+      document_type: dto.document_type ?? existing?.document_type,
       document_number: dto.document_number ?? existing?.document_number,
-      // Prefer base64 image payloads (front_image) which will be uploaded server-side,
-      // otherwise accept already-uploaded URLs from the client (front_image_url).
       front_image: dto.front_image ?? existing?.front_image,
       back_image: dto.back_image ?? existing?.back_image,
       selfie_image: dto.selfie_image ?? existing?.selfie_image,
-      front_image_url: dto.front_image ? urls.front : dto.front_image_url ?? existing?.front_image_url ?? null,
-      back_image_url: dto.back_image ? urls.back : dto.back_image_url ?? existing?.back_image_url ?? null,
-      selfie_image_url: dto.selfie_image ? urls.selfie : dto.selfie_image_url ?? existing?.selfie_image_url ?? null,
+      front_image_url: dto.front_image ? urls.front : existing?.front_image_url ?? null,
+      back_image_url: dto.back_image ? urls.back : existing?.back_image_url ?? null,
+      selfie_image_url: dto.selfie_image ? urls.selfie : existing?.selfie_image_url ?? null,
       first_name: dto.first_name ?? existing?.first_name,
       last_name: dto.last_name ?? existing?.last_name,
-      date_of_birth: this.parseDateValue(dto.dob ?? dto.date_of_birth ?? existing?.date_of_birth) ?? existing?.date_of_birth,
+      date_of_birth: dto.dob ?? existing?.date_of_birth,
       gender: dto.gender ?? existing?.gender,
       nationality: dto.nationality ?? existing?.nationality,
-      phone: dto.phone ?? dto.phone_number ?? existing?.phone,
+      phone: dto.phone ?? existing?.phone,
       email: dto.email ?? existing?.email,
       country: dto.country ?? existing?.country,
       county: dto.state ?? existing?.county,

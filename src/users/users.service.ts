@@ -1,30 +1,13 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { CacheService } from '../common/cache/cache.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
-  constructor(
-    private prisma: PrismaService,
-    private cache: CacheService,
-  ) {}
-
-  private async invalidateUserProfileCaches(userId: string) {
-    await Promise.all([
-      this.cache.cacheDelete(`profile:${userId}`),
-      this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
-    ]);
-  }
+  constructor(private prisma: PrismaService) {}
 
   async getProfile(userId: string) {
-    const cacheKey = `profile:${userId}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
       select: {
@@ -36,9 +19,7 @@ export class UsersService {
       },
     });
     if (!user) throw new NotFoundException('User not found');
-    const payload = { data: user };
-    await this.cache.cacheSet(cacheKey, payload, 600);
-    return payload;
+    return { data: user };
   }
 
   async updateProfile(userId: string, dto: {
@@ -71,7 +52,6 @@ export class UsersService {
         bio: true, country: true, city: true, profile_image: true,
       },
     });
-    await this.invalidateUserProfileCaches(userId);
     return { data: user, message: 'Profile updated' };
   }
 

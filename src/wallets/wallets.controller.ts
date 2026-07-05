@@ -5,6 +5,7 @@ import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional, Length } from '
 import { WalletsService } from './wallets.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
+import { EmailVerifiedGuard } from '../common/guards/email-verified.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 class SendFundsDto {
@@ -16,7 +17,7 @@ class SendFundsDto {
 
 @ApiTags('Wallet')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, EmailVerifiedGuard)
 @Controller({ path: 'wallet', version: '1' })
 export class WalletsController {
   constructor(private readonly svc: WalletsService) {}
