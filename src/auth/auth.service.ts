@@ -758,8 +758,9 @@ if (new Date() > expiryDate) {
         throw new InternalServerErrorException('Failed to load created user');
       }
 
-      // NEW USER: Email must be verified before access
-      if (!emailVerified) {
+      // Only Supabase-backed users require email verification.
+      // Legacy FARM users are exempt from Supabase email verification enforcement.
+      if (this.shouldRequireEmailVerification(user)) {
         throw new ForbiddenException('Email not verified. Please verify your email before accessing the dashboard.');
       }
     } else {
@@ -924,8 +925,10 @@ if (new Date() > expiryDate) {
     return !user.supabase_user_id;
   }
 
-  private shouldRequireEmailVerification(isNewUser: boolean, emailVerified: boolean): boolean {
-    return isNewUser && !emailVerified;
+  private shouldRequireEmailVerification(user: any): boolean {
+    // Only Supabase-backed users require a verified email address.
+    // Legacy FARM users are exempt because they predate Supabase.
+    return !!user?.supabase_user_id && !user.email_verified;
   }
 
   private async verifySupabaseJwt(token: string, jwksUrl: string, expectedIssuer: string): Promise<any> {
@@ -1120,7 +1123,7 @@ if (new Date() > expiryDate) {
       throw new UnauthorizedException('Session not found or expired');
     }
 
-    if (session.users?.email && !session.users.email_verified) {
+    if (session.users && this.shouldRequireEmailVerification(session.users)) {
       await this.logSecurityEvent(userId, 'EMAIL_VERIFICATION_REQUIRED', 'Email not verified before refresh', 'medium', ip);
       throw new ForbiddenException('Email not verified. Please verify your email to refresh tokens.');
     }

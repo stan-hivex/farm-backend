@@ -87,10 +87,10 @@ describe('AuthService', () => {
     expect((service as any).getLockoutMinutes(11)).toBe(15);
   });
 
-  it('does not require email verification for existing linked users', () => {
-    expect((service as any).shouldRequireEmailVerification(false, false)).toBe(false);
-    expect((service as any).shouldRequireEmailVerification(true, false)).toBe(true);
-    expect((service as any).shouldRequireEmailVerification(true, true)).toBe(false);
+  it('does not require email verification for legacy FARM users', () => {
+    expect((service as any).shouldRequireEmailVerification({ supabase_user_id: null, email_verified: false })).toBe(false);
+    expect((service as any).shouldRequireEmailVerification({ supabase_user_id: 'supabase-user-123', email_verified: false })).toBe(true);
+    expect((service as any).shouldRequireEmailVerification({ supabase_user_id: 'supabase-user-123', email_verified: true })).toBe(false);
   });
 
   it('links an existing farm user to a Supabase identity on first login', async () => {
