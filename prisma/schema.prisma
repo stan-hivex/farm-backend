@@ -303,7 +303,7 @@ model notifications {
 model otp_verifications {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id    String?   @db.Uuid
-  otp_code   String    @db.VarChar(10)
+  otp_code   String    @db.Text
   purpose    String?   @db.VarChar(50)
   attempts   Int?      @default(0)
   verified   Boolean?  @default(false)
