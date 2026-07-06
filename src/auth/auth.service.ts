@@ -20,7 +20,6 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import {
   generateWalletAddress, generateOtp, generateReferralCode,
 } from '../common/utils/reference.util';
-import { canAccessProtectedFeatures, isLegacyUser } from '../common/auth/email-verification.util';
 import {
   PasswordResetRateLimiter,
   generatePasswordResetToken,
@@ -1114,11 +1113,6 @@ if (new Date() > expiryDate) {
     if (!session) {
       await this.logSecurityEvent(userId, 'REFRESH_TOKEN_INVALID', 'No valid session found', 'high', ip);
       throw new UnauthorizedException('Session not found or expired');
-    }
-
-    if (session.users?.email && !canAccessProtectedFeatures(session.users)) {
-      await this.logSecurityEvent(userId, 'EMAIL_VERIFICATION_REQUIRED', 'Email not verified before refresh', 'medium', ip);
-      throw new ForbiddenException('Email not verified. Please verify your email to refresh tokens.');
     }
 
     // Check if this refresh token has already been used (token reuse detection)

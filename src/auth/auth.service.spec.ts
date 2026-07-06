@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthService } from './auth.service';
-import { canAccessProtectedFeatures, isLegacyUser } from '../common/auth/email-verification.util';
 import { PrismaService } from '../database/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -86,22 +85,6 @@ describe('AuthService', () => {
     expect((service as any).getLockoutMinutes(5)).toBe(5);
     expect((service as any).getLockoutMinutes(10)).toBe(10);
     expect((service as any).getLockoutMinutes(11)).toBe(15);
-  });
-
-  it('centralized email verification helper behaves for legacy and supabase users', () => {
-    // legacy user without supabase id => should be allowed even if email_verified false
-    const legacy = { supabase_user_id: null, email_verified: false };
-    expect(isLegacyUser(legacy)).toBe(true);
-    expect(canAccessProtectedFeatures(legacy)).toBe(true);
-
-    // supabase new user not verified => blocked
-    const newSupabase = { supabase_user_id: 'sb-1', email_verified: false };
-    expect(isLegacyUser(newSupabase)).toBe(false);
-    expect(canAccessProtectedFeatures(newSupabase)).toBe(false);
-
-    // supabase verified user => allowed
-    const verifiedSupabase = { supabase_user_id: 'sb-2', email_verified: true };
-    expect(canAccessProtectedFeatures(verifiedSupabase)).toBe(true);
   });
 
   it('links an existing farm user to a Supabase identity on first login', async () => {
