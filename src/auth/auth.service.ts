@@ -20,6 +20,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import {
   generateWalletAddress, generateOtp, generateReferralCode,
 } from '../common/utils/reference.util';
+import { canAccessProtectedFeatures, isLegacyUser } from '../common/auth/email-verification.util';
 import {
   PasswordResetRateLimiter,
   generatePasswordResetToken,
@@ -758,9 +759,8 @@ if (new Date() > expiryDate) {
         throw new InternalServerErrorException('Failed to load created user');
       }
 
-      // Only Supabase-backed users require email verification.
-      // Legacy FARM users are exempt from Supabase email verification enforcement.
-      if (this.shouldRequireEmailVerification(user)) {
+      // NEW USER: Email must be verified before access
+      if (!emailVerified) {
         throw new ForbiddenException('Email not verified. Please verify your email before accessing the dashboard.');
       }
     } else {
@@ -921,15 +921,8 @@ if (new Date() > expiryDate) {
     return existingUser;
   }
 
-  private isLegacyUser(user: any): boolean {
-    return !user.supabase_user_id;
-  }
-
-  private shouldRequireEmailVerification(user: any): boolean {
-    // Only Supabase-backed users require a verified email address.
-    // Legacy FARM users are exempt because they predate Supabase.
-    return !!user?.supabase_user_id && !user.email_verified;
-  }
+  // NOTE: legacy / supabase user checks centralized in
+  // `src/common/auth/email-verification.util.ts` and imported above.
 
   private async verifySupabaseJwt(token: string, jwksUrl: string, expectedIssuer: string): Promise<any> {
     const decodedHeader = jwt.decode(token, { complete: true }) as any;
@@ -1123,7 +1116,7 @@ if (new Date() > expiryDate) {
       throw new UnauthorizedException('Session not found or expired');
     }
 
-    if (session.users && this.shouldRequireEmailVerification(session.users)) {
+    if (session.users?.email && !canAccessProtectedFeatures(session.users)) {
       await this.logSecurityEvent(userId, 'EMAIL_VERIFICATION_REQUIRED', 'Email not verified before refresh', 'medium', ip);
       throw new ForbiddenException('Email not verified. Please verify your email to refresh tokens.');
     }
