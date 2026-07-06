@@ -16,17 +16,19 @@ export class EmailVerifiedGuard implements CanActivate {
 
     const dbUser = await this.prisma.users.findUnique({
       where: { id: userId },
-      select: { email_verified: true },
+      select: { email_verified: true, supabase_user_id: true },
     });
 
     if (!dbUser) {
       throw new UnauthorizedException('User not found');
     }
 
-    if (!dbUser.email_verified) {
-      throw new ForbiddenException('Email verification required to access wallet features');
+    const isLegacyUser = !dbUser.supabase_user_id;
+
+    if (dbUser.email_verified || isLegacyUser) {
+      return true;
     }
 
-    return true;
+    throw new ForbiddenException('Email verification required to access wallet features');
   }
 }
