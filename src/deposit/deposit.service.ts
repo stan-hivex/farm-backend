@@ -37,9 +37,11 @@ export class DepositService {
       'CARD'
     ).toUpperCase();
     const provider = paymentMethod === 'CRYPTO' ? 'ivorypay' : 'paystack';
-    const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
-    const fee = amount * feeRate;
-    const total = amount + fee;
+    // Removed platform-imposed deposit fees so users are credited the exact amount they
+    // requested. Previously MOBILE_MONEY had 1.5% and CARD/default had 2%.
+    const feeRate = 0;
+    const fee = 0;
+    const total = amount;
 
     const depositCurrency = paymentMethod === 'CRYPTO' ? 'FARM' : dto.currency || 'KES';
     const depositAmount = amount;
