@@ -646,6 +646,7 @@ model user_settings {
   theme               String   @default("system") @db.VarChar(20)
   push_notifications  Boolean  @default(true)
   email_notifications Boolean  @default(false)
+  in_app_notifications Boolean @default(true)
   sms_notifications   Boolean  @default(false)
   sound_enabled       Boolean  @default(true)
   vibration_enabled   Boolean  @default(true)
