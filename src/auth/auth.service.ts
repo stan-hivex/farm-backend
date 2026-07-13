@@ -239,7 +239,8 @@ if (new Date() > expiryDate) {
   }
 
   async firebaseLogin(dto: FirebaseLoginDto, ip: string, userAgent: string, turnstileToken?: string) {
-    if (!dto.firebase_token?.trim()) {
+    const firebaseToken = (dto.firebase_token || dto.firebaseIdToken || '').trim();
+    if (!firebaseToken) {
       throw new BadRequestException('Firebase token is required');
     }
 
@@ -262,7 +263,7 @@ if (new Date() > expiryDate) {
     if (user.is_suspended) throw new ForbiddenException('Account suspended. Contact support.');
     if (!user.is_active) throw new ForbiddenException('Account is inactive.');
 
-    const decodedToken = await this.verifyFirebaseToken(dto.firebase_token);
+    const decodedToken = await this.verifyFirebaseToken(firebaseToken);
     const firebasePhone = this.normalizePhoneNumber(decodedToken.phone_number || '');
     const accountPhone = this.normalizePhoneNumber(user.phone);
 
@@ -881,7 +882,14 @@ async resendOtp(userId: string) {
     try {
       if (!admin.apps.length) {
         const projectId = this.cfg.get<string>('FIREBASE_PROJECT_ID');
-        if (projectId) {
+        const credentialsPath = this.cfg.get<string>('GOOGLE_APPLICATION_CREDENTIALS');
+
+        if (credentialsPath) {
+          admin.initializeApp({
+            projectId: projectId || undefined,
+            credential: admin.credential.applicationDefault(),
+          });
+        } else if (projectId) {
           admin.initializeApp({ projectId });
         } else {
           admin.initializeApp();

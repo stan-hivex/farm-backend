@@ -7,10 +7,15 @@ export class FirebaseLoginDto {
   @IsString()
   identifier?: string;
 
-  @ApiProperty({ description: 'Firebase ID token returned after phone verification' })
-  @IsNotEmpty()
+  @ApiPropertyOptional({ description: 'Firebase ID token returned after phone verification' })
+  @IsOptional()
   @IsString()
-  firebase_token!: string;
+  firebase_token?: string;
+
+  @ApiPropertyOptional({ description: 'Alternate Firebase ID token field used by the Flutter client' })
+  @IsOptional()
+  @IsString()
+  firebaseIdToken?: string;
 
   @ApiPropertyOptional({ description: 'Country code such as +254 or 254' })
   @IsOptional()

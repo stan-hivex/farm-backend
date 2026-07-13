@@ -41,10 +41,17 @@ describe('AuthController', () => {
     expect(authService.supabaseLogin).toHaveBeenCalledWith('token-123', '127.0.0.1', 'jest');
   });
 
-  it('login rejects legacy password-based requests and requires Supabase auth', () => {
+  it('login forwards password-based requests through the existing auth service flow', () => {
     const req = { ip: '127.0.0.1', headers: { 'user-agent': 'jest' } } as any;
 
-    expect(() => controller.login({ identifier: 'user@example.com', password: 'secret' } as any, req)).toThrow(BadRequestException);
+    controller.login({ identifier: 'user@example.com', password: 'secret' } as any, req);
+
+    expect(authService.login).toHaveBeenCalledWith(
+      { identifier: 'user@example.com', password: 'secret' },
+      '127.0.0.1',
+      'jest',
+      undefined,
+    );
     expect(authService.supabaseLogin).not.toHaveBeenCalled();
   });
 });
