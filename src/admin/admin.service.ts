@@ -309,11 +309,11 @@ export class AdminService {
     if (dto.push) {
       await this.notifications.sendPush(dto.user_id, dto.title, dto.body, dto.metadata);
     }
-    if (dto.email) {
-      await this.notifications.sendEmailToUser(dto.user_id, dto.title, `<p>${dto.body}</p>`);
+    if (dto.email && user.email) {
+      await this.notifications.sendEmail(user.email, dto.title, `<p>${dto.body}</p>`);
     }
-    if (dto.sms) {
-      await this.notifications.sendSmsToUser(dto.user_id, dto.body);
+    if (dto.sms && user.phone) {
+      await this.notifications.sendSms(user.phone, dto.body);
     }
 
     await this.prisma.audit_logs.create({
@@ -358,10 +358,10 @@ export class AdminService {
       await Promise.all(users.map((user) => this.notifications.sendPush(user.id, dto.title, dto.body, dto.metadata)));
     }
     if (dto.email) {
-      await Promise.all(users.map((user) => this.notifications.sendEmailToUser(user.id, dto.title, `<p>${dto.body}</p>`)));
+      await Promise.all(users.filter((u) => u.email).map((user) => this.notifications.sendEmail(user.email!, dto.title, `<p>${dto.body}</p>`)));
     }
     if (dto.sms) {
-      await Promise.all(users.map((user) => this.notifications.sendSmsToUser(user.id, dto.body)));
+      await Promise.all(users.filter((u) => u.phone).map((user) => this.notifications.sendSms(user.phone!, dto.body)));
     }
 
     await this.prisma.audit_logs.create({

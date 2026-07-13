@@ -30,6 +30,7 @@ import { AuthService } from './auth.service';
 
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { SupabaseAuthDto } from './dto/supabase-auth.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { SetPinDto } from './dto/set-pin.dto';
@@ -269,6 +270,33 @@ export class AuthController {
   }
 
   @Public()
+  @Post('firebase-login')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 5,
+      ttl: 60,
+      generateKey: authThrottleKey,
+    },
+  })
+  @ApiOperation({ summary: 'Complete login with a verified Firebase ID token' })
+  firebaseLogin(
+    @Body() dto: FirebaseLoginDto,
+    @Req() req: Request,
+  ) {
+    const turnstileToken = dto.cf_turnstile_response || dto.turnstile_token;
+    return this.authService.firebaseLogin(
+      {
+        ...dto,
+        identifier: dto.identifier || '',
+      },
+      req.ip || '',
+      req.headers['user-agent'] || '',
+      turnstileToken,
+    );
+  }
+
+  @Public()
   @Post('supabase')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -365,6 +393,19 @@ export class AuthController {
   /**
    * ================= LOGOUT =================
    */
+  @UseGuards(JwtGuard)
+  @Post('device-token')
+  @Permissions('sessions:write')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('JWT')
+  @ApiOperation({ summary: 'Register a device token for push notifications' })
+  registerDeviceToken(
+    @CurrentUser() user: any,
+    @Body() body: { token: string; platform?: string },
+  ) {
+    return this.authService.registerDeviceToken(user.id, body.token, body.platform);
+  }
+
   @UseGuards(JwtGuard)
   @Post('logout')
   @Permissions('sessions:write')

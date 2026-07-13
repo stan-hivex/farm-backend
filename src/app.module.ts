@@ -2,7 +2,6 @@ import { Module, Logger } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
@@ -25,7 +24,6 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SecurityModule } from './security/security.module';
 import { KycModule } from './kyc/kyc.module';
 import { HealthModule } from './health/health.module';
-import { RolesGuard } from './common/guards/roles.guard';
 import { ProjectsModule } from './projects/projects.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AdminModule } from './admin/admin.module';
@@ -48,16 +46,6 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
       isGlobal: true,
       envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],
       ignoreEnvFile: false,
-    }),
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => ({
-        secret: cfg.get<string>('JWT_ACCESS_SECRET') || 'secret',
-        signOptions: {
-          expiresIn: (cfg.get<string>('JWT_ACCESS_EXPIRES') || '15m') as any,
-        },
-      }),
     }),
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
@@ -130,10 +118,6 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: RolesGuard,
     },
     {
       provide: APP_INTERCEPTOR,

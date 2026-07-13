@@ -73,56 +73,76 @@ export class NotificationsService {
   }
 
   async getSettings(userId: string) {
-    const settings = await this.prisma.user_settings.findUnique({
-      where: { user_id: userId },
-    });
 
-    return {
-      success: true,
-      data: settings,
-    };
-  }
-
-  async updateSettings(userId: string, body: any) {
-    const settings = await this.prisma.user_settings.upsert({
-      where: { user_id: userId },
-      update: {
-        push_notifications: body.push_notifications,
-        email_notifications: body.email_notifications,
-        in_app_notifications: body.in_app_notifications,
-        sms_notifications: body.sms_notifications,
-        sound_enabled: body.sound_enabled,
-        vibration_enabled: body.vibration_enabled,
-      },
-      create: {
+  const settings =
+    await this.prisma.user_settings.findUnique({
+      where: {
         user_id: userId,
-        push_notifications: body.push_notifications,
-        email_notifications: body.email_notifications,
-        in_app_notifications: body.in_app_notifications,
-        sms_notifications: body.sms_notifications,
-        sound_enabled: body.sound_enabled,
-        vibration_enabled: body.vibration_enabled,
       },
     });
 
-    return {
-      success: true,
-      data: settings,
-    };
-  }
+  return {
+    success: true,
+    data: settings,
+  };
+}
+
+async updateSettings(userId: string, body: any) {
+
+  const settings =
+    await this.prisma.user_settings.upsert({
+
+      where: {
+        user_id: userId,
+      },
+
+      update: {
+        push_notifications:
+          body.push_notifications,
+
+        email_notifications:
+          body.email_notifications,
+
+        sms_notifications:
+          body.sms_notifications,
+
+        sound_enabled:
+          body.sound_enabled,
+
+        vibration_enabled:
+          body.vibration_enabled,
+      },
+
+      create: {
+
+        user_id: userId,
+
+        push_notifications:
+          body.push_notifications,
+
+        email_notifications:
+          body.email_notifications,
+
+        sms_notifications:
+          body.sms_notifications,
+
+        sound_enabled:
+          body.sound_enabled,
+
+        vibration_enabled:
+          body.vibration_enabled,
+      },
+    });
+
+  return {
+    success: true,
+    data: settings,
+  };
+}
 
   async createInApp(userId: string, dto: {
     type: notification_type | string; title: string; body: string; metadata?: any;
   }) {
-    const settings = await this.prisma.user_settings.findUnique({
-      where: { user_id: userId },
-    });
-
-    if (settings?.in_app_notifications === false) {
-      this.logger.debug(`In-app notifications disabled for user ${userId}. Skipping create.`);
-      return null;
-    }
-
     return this.prisma.notifications.create({
       data: {
         user_id: userId,
@@ -132,42 +152,6 @@ export class NotificationsService {
         metadata: dto.metadata,
       },
     });
-  }
-
-  async getUserSettings(userId: string) {
-    return this.prisma.user_settings.findUnique({ where: { user_id: userId } });
-  }
-
-  async sendEmailToUser(userId: string, subject: string, html: string) {
-    const settings = await this.getUserSettings(userId);
-    if (settings?.email_notifications === false) {
-      this.logger.debug(`Email notifications disabled for user ${userId}. Skipping email send.`);
-      return false;
-    }
-
-    const user = await this.prisma.users.findUnique({ where: { id: userId } });
-    if (!user?.email) {
-      this.logger.debug(`No email address for user ${userId}. Skipping email send.`);
-      return false;
-    }
-
-    return this.sendEmail(user.email, subject, html);
-  }
-
-  async sendSmsToUser(userId: string, message: string) {
-    const settings = await this.getUserSettings(userId);
-    if (settings?.sms_notifications === false) {
-      this.logger.debug(`SMS notifications disabled for user ${userId}. Skipping SMS send.`);
-      return false;
-    }
-
-    const user = await this.prisma.users.findUnique({ where: { id: userId } });
-    if (!user?.phone) {
-      this.logger.debug(`No phone number for user ${userId}. Skipping SMS send.`);
-      return false;
-    }
-
-    return this.sendSms(user.phone, message);
   }
 
   async sendEmail(to: string, subject: string, html: string) {
@@ -202,15 +186,6 @@ export class NotificationsService {
       this.logger.debug('FCM not configured; skipping push send');
       return false;
     }
-
-    const settings = await this.prisma.user_settings.findUnique({
-      where: { user_id: userId },
-    });
-    if (settings?.push_notifications === false) {
-      this.logger.debug(`Push notifications disabled for user ${userId}. Skipping FCM send.`);
-      return false;
-    }
-
     try {
       const tokens = await this.getDeviceTokens(userId);
       if (!tokens || tokens.length === 0) return false;

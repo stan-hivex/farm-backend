@@ -16,23 +16,6 @@ export class WalletsService {
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const available = Number(wallet.balance) - Number(wallet.locked_balance);
-    let farmToKesRate = 1;
-    const directRate = await this.prisma.exchange_rates.findFirst({
-      where: { base_currency: 'FARM', target_currency: 'KES' },
-      orderBy: { fetched_at: 'desc' },
-    });
-    if (directRate) {
-      farmToKesRate = Number(directRate.rate);
-    } else {
-      const reverseRate = await this.prisma.exchange_rates.findFirst({
-        where: { base_currency: 'KES', target_currency: 'FARM' },
-        orderBy: { fetched_at: 'desc' },
-      });
-      if (reverseRate && Number(reverseRate.rate) != 0) {
-        farmToKesRate = 1 / Number(reverseRate.rate);
-      }
-    }
-
     return {
       data: {
         id: wallet.id,
@@ -44,7 +27,6 @@ export class WalletsService {
         currency: wallet.currency,
         blockchain_address: wallet.blockchain_address,
         is_frozen: wallet.is_frozen,
-        kes_equivalent: Number((Number(wallet.balance) * farmToKesRate).toFixed(2)),
       },
     };
   }
@@ -200,23 +182,8 @@ export class WalletsService {
     if (!wallet) throw new NotFoundException('Wallet not found');
 
     const where: any = { OR: [{ sender_wallet_id: wallet.id }, { receiver_wallet_id: wallet.id }] };
-
-    const normalizedType = (query.type ?? '').toString().toLowerCase();
-    const normalizedStatus = (query.status ?? '').toString().toLowerCase();
-
-    if (normalizedType) {
-      const mappedType = this.mapTransactionType(normalizedType);
-      if (mappedType) {
-        where.transaction_type = mappedType;
-      }
-    }
-
-    if (normalizedStatus) {
-      const mappedStatus = this.mapTransactionStatus(normalizedStatus);
-      if (mappedStatus) {
-        where.status = mappedStatus;
-      }
-    }
+    if (query.type) where.transaction_type = query.type;
+    if (query.status) where.status = query.status;
 
     const [txns, total] = await Promise.all([
       this.prisma.transactions.findMany({ where, skip, take, orderBy: { created_at: 'desc' } }),
@@ -229,74 +196,8 @@ export class WalletsService {
         fee: Number(t.fee),
         net_amount: Number(t.net_amount),
         is_outgoing: t.sender_wallet_id === wallet.id,
-        status: this.normalizeStatus(t.status),
       })),
       meta: paginate(total, page, limit),
     };
-  }
-
-  private mapTransactionType(type: string): string | null {
-    switch (type) {
-      case 'send':
-      case 'sent':
-      case 'transfer':
-      case 'outgoing':
-        return 'transfer';
-      case 'receive':
-      case 'received':
-      case 'incoming':
-        return 'transfer';
-      case 'deposit':
-      case 'topup':
-        return 'deposit';
-      case 'withdraw':
-      case 'withdrawal':
-      case 'cashout':
-        return 'withdrawal';
-      default:
-        return type;
-    }
-  }
-
-  private mapTransactionStatus(status: string): string | null {
-    switch (status) {
-      case 'pending':
-      case 'processing':
-      case 'initiated':
-      case 'in_progress':
-        return 'pending';
-      case 'complete':
-      case 'completed':
-      case 'success':
-      case 'successful':
-      case 'succeeded':
-      case 'approved':
-        return 'completed';
-      case 'fail':
-      case 'failed':
-      case 'rejected':
-      case 'declined':
-      case 'expired':
-      case 'cancelled':
-      case 'reversed':
-      case 'error':
-        return 'failed';
-      default:
-        return status;
-    }
-  }
-
-  private normalizeStatus(status: string | null | undefined) {
-    const normalized = (status ?? '').toString().toLowerCase();
-    if (['completed', 'success', 'successful', 'succeeded', 'approved', 'paid', 'settled'].includes(normalized)) {
-      return 'Completed';
-    }
-    if (['pending', 'processing', 'initiated', 'in_progress'].includes(normalized)) {
-      return 'Pending';
-    }
-    if (['failed', 'cancelled', 'reversed', 'declined', 'expired', 'abandoned', 'incomplete', 'error'].includes(normalized)) {
-      return 'Failed';
-    }
-    return status?.toString() ?? 'Pending';
   }
 }

@@ -37,11 +37,9 @@ export class DepositService {
       'CARD'
     ).toUpperCase();
     const provider = paymentMethod === 'CRYPTO' ? 'ivorypay' : 'paystack';
-    // Removed platform-imposed deposit fees so users are credited the exact amount they
-    // requested. Previously MOBILE_MONEY had 1.5% and CARD/default had 2%.
-    const feeRate = 0;
-    const fee = 0;
-    const total = amount;
+    const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
+    const fee = amount * feeRate;
+    const total = amount + fee;
 
     const depositCurrency = paymentMethod === 'CRYPTO' ? 'FARM' : dto.currency || 'KES';
     const depositAmount = amount;
@@ -77,7 +75,7 @@ export class DepositService {
           fee: 0,
           net_amount: total,
           currency: dto.currency || 'KES',
-          description: `Pending ${paymentMethod} deposit`,
+          description: `Pending ${paymentMethod} deposit via ${provider.toUpperCase()} (${depositCurrency} ${total})`,
           metadata: {
             provider,
             amount_fiat: amount,
@@ -128,7 +126,7 @@ export class DepositService {
           fee: 0,
           net_amount: farmAmount,
           currency: 'FARM',
-          description: `Pending crypto deposit`,
+          description: `Pending crypto deposit via Ivorypay (${farmAmount} FARM → ${amountUsd} USD)`,
           metadata: {
             provider: 'ivorypay',
             provider_ref: providerRef,
@@ -433,7 +431,6 @@ export class DepositService {
             status: 'completed',
             receiver_wallet_id: transaction.receiver_wallet_id ?? wallet.id,
             processed_at: new Date(),
-            description: `Successful ${deposit.paymentMethod ? deposit.paymentMethod.toLowerCase() : 'deposit'} deposit`,
           },
         });
       }
@@ -479,10 +476,7 @@ export class DepositService {
 
     await this.prisma.transactions.update({
       where: { id: transaction.id },
-      data: {
-        ...updates,
-        description: 'Successful deposit',
-      },
+      data: updates,
     });
 
     await this.invalidateFinancialCaches(transaction?.metadata?.user_id ?? undefined);
@@ -637,7 +631,6 @@ export class DepositService {
             status: 'completed',
             receiver_wallet_id: wallet.id,
             processed_at: new Date(),
-            description: 'Successful deposit',
           },
         });
       }
