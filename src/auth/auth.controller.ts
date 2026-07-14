@@ -31,6 +31,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { FirebaseLoginDto } from './dto/firebase-login.dto';
+import { VerifyPhoneDto } from './dto/verify-phone.dto';
 import { SupabaseAuthDto } from './dto/supabase-auth.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { SetPinDto } from './dto/set-pin.dto';
@@ -294,6 +295,23 @@ export class AuthController {
       req.headers['user-agent'] || '',
       turnstileToken,
     );
+  }
+
+  /**
+   * ================= VERIFY PHONE (Firebase) =================
+   * Protected endpoint: requires valid FARM JWT
+   */
+  @UseGuards(JwtGuard)
+  @Post('verify-phone')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify phone using Firebase ID token' })
+  @ApiBearerAuth('JWT')
+  async verifyPhone(
+    @Body() dto: VerifyPhoneDto,
+    @CurrentUser() user: any,
+    @Req() req: Request,
+  ) {
+    return this.authService.verifyPhone(dto.firebaseIdToken, user?.sub || user?.id || '');
   }
 
   @Public()

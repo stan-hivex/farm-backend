@@ -321,6 +321,31 @@ if (new Date() > expiryDate) {
     };
   }
 
+  /**
+   * Verify a Firebase ID token for the currently authenticated user and
+   * mark their phone as verified if the token phone matches the account.
+   */
+  async verifyPhone(firebaseToken: string, userId: string) {
+    if (!firebaseToken) throw new BadRequestException('Firebase token is required');
+
+    const user = await this.prisma.users.findUnique({ where: { id: userId } }) as any;
+    if (!user) throw new NotFoundException('User not found');
+
+    const decodedToken = await this.verifyFirebaseToken(firebaseToken);
+    const firebasePhone = this.normalizePhoneNumber(decodedToken.phone_number || '');
+    const accountPhone = this.normalizePhoneNumber(user.phone);
+
+    if (!firebasePhone || firebasePhone !== accountPhone) {
+      throw new UnauthorizedException('Phone verification does not match the account');
+    }
+
+    await this.prisma.users.update({ where: { id: user.id }, data: { phone_verified: true, last_seen_at: new Date() } });
+
+    await this.prisma.activity_logs.create({ data: { user_id: user.id, activity: 'PHONE_VERIFIED' } });
+
+    return { message: 'Phone verified successfully' };
+  }
+
   async supabaseLogin(supabaseToken: string, ip: string, userAgent: string, turnstileToken?: string) {
     return { message: 'Supabase auth is not configured in this environment', data: {} };
   }
