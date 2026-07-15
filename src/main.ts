@@ -61,11 +61,15 @@ async function bootstrap() {
   });
 
   const configService = app.get(ConfigService);
-  const corsOrigins = configService
-    .get<string>('CORS_ORIGINS')
-    ?.split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
+  const configuredCorsOrigins = [
+    configService.get<string>('CORS_ORIGINS'),
+    configService.get<string>('FRONTEND_URL'),
+    configService.get<string>('APP_URL'),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .flatMap((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean));
+
+  const corsOrigins = [...new Set(configuredCorsOrigins)];
 
   const localhostCorsRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
