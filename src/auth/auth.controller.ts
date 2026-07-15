@@ -299,19 +299,23 @@ export class AuthController {
 
   /**
    * ================= VERIFY PHONE (Firebase) =================
-   * Protected endpoint: requires valid FARM JWT
+   * Public endpoint: verifies Firebase ID token and issues FARM JWT
    */
-  @UseGuards(JwtGuard)
+  @Public()
   @Post('verify-phone')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify phone using Firebase ID token' })
-  @ApiBearerAuth('JWT')
   async verifyPhone(
     @Body() dto: VerifyPhoneDto,
-    @CurrentUser() user: any,
     @Req() req: Request,
   ) {
-    return this.authService.verifyPhone(dto.firebaseIdToken, user?.sub || user?.id || '');
+    const turnstileToken = dto.cf_turnstile_response || dto.turnstile_token;
+    return this.authService.verifyPhone(
+      dto.firebaseIdToken,
+      req.ip || '',
+      req.headers['user-agent'] || '',
+      turnstileToken,
+    );
   }
 
   @Public()

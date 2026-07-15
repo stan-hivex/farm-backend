@@ -325,25 +325,92 @@ if (new Date() > expiryDate) {
    * Verify a Firebase ID token for the currently authenticated user and
    * mark their phone as verified if the token phone matches the account.
    */
-  async verifyPhone(firebaseToken: string, userId: string) {
+  async verifyPhone(
+    firebaseToken: string,
+    ip: string,
+    userAgent: string,
+    turnstileToken?: string,
+  ) {
     if (!firebaseToken) throw new BadRequestException('Firebase token is required');
-
-    const user = await this.prisma.users.findUnique({ where: { id: userId } }) as any;
-    if (!user) throw new NotFoundException('User not found');
 
     const decodedToken = await this.verifyFirebaseToken(firebaseToken);
     const firebasePhone = this.normalizePhoneNumber(decodedToken.phone_number || '');
-    const accountPhone = this.normalizePhoneNumber(user.phone);
 
-    if (!firebasePhone || firebasePhone !== accountPhone) {
-      throw new UnauthorizedException('Phone verification does not match the account');
+    if (!firebasePhone) {
+      throw new UnauthorizedException('Firebase token does not contain a valid phone number');
     }
 
-    await this.prisma.users.update({ where: { id: user.id }, data: { phone_verified: true, last_seen_at: new Date() } });
+    const user = await this.prisma.users.findFirst({
+      where: {
+        phone: firebasePhone,
+        is_deleted: false,
+      },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    }) as any;
 
-    await this.prisma.activity_logs.create({ data: { user_id: user.id, activity: 'PHONE_VERIFIED' } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
-    return { message: 'Phone verified successfully' };
+    if (user.phone_verified) {
+      throw new BadRequestException('Phone is already verified');
+    }
+
+    await this.prisma.users.update({
+      where: { id: user.id },
+      data: {
+        phone_verified: true,
+        failed_login_attempts: 0,
+        last_login_at: new Date(),
+        last_seen_at: new Date(),
+      },
+    });
+
+    const walletId = user.wallets[0]?.id;
+    const userRole = user.role ?? 'user';
+    const tokens = await this.issueTokens(user.id, userRole, walletId);
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+
+    await this.prisma.user_sessions.create({
+      data: {
+        user_id: user.id,
+        refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
+        jwt_id: tokens.jti,
+        ip_address: ip,
+        user_agent: userAgent,
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    await this.prisma.activity_logs.create({
+      data: {
+        user_id: user.id,
+        activity: 'LOGIN',
+        ip_address: ip,
+      },
+    });
+
+    return {
+      success: true,
+      data: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          username: user.username,
+          phone: user.phone,
+          email: user.email,
+          role: user.role,
+          kyc_status: user.kyc_status,
+          kyc_level: user.kyc_level,
+          phone_verified: true,
+          has_pin: !!user.pin_hash,
+          profile_image: user.profile_image,
+        },
+      },
+    };
   }
 
   async supabaseLogin(supabaseToken: string, ip: string, userAgent: string, turnstileToken?: string) {
