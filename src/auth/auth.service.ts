@@ -211,12 +211,32 @@ if (new Date() > expiryDate) {
       data: { failed_login_attempts: 0, last_login_at: new Date(), last_seen_at: new Date() },
     });
 
+    const walletId = user.wallets[0]?.id;
+    const userRole = user.role ?? 'user';
+    const tokens = await this.issueTokens(user.id, userRole, walletId);
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+
+    await this.prisma.user_sessions.create({
+      data: {
+        user_id: user.id,
+        refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
+        jwt_id: tokens.jti,
+        ip_address: ip,
+        user_agent: userAgent,
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      },
+    });
+
     await this.prisma.activity_logs.create({
       data: { user_id: user.id, activity: 'LOGIN_STEP_1', ip_address: ip },
     });
 
     return {
       data: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        token_type: 'Bearer',
+        expires_in: 900,
         otp_required: true,
         phone: this.normalizePhoneNumber(user.phone),
         user: {
