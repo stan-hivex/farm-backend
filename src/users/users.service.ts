@@ -56,23 +56,48 @@ export class UsersService {
   }
 
   async searchUsers(query: string) {
-    if (!query || query.length < 2) return { data: [] };
+    const normalized = (query ?? '').trim().toLowerCase();
+    if (!normalized || normalized.length < 2) return { data: [] };
+
+    const searchTerms = normalized.split(/\s+/).filter(Boolean);
+    const searchValue = searchTerms.join(' ');
+
     const users = await this.prisma.users.findMany({
       where: {
-        is_deleted: false, is_active: true,
+        is_deleted: false,
+        is_active: true,
         OR: [
-          { username: { contains: query, mode: 'insensitive' } },
-          { phone: { contains: query } },
-          { first_name: { contains: query, mode: 'insensitive' } },
+          { username: { contains: searchValue, mode: 'insensitive' } },
+          { phone: { contains: searchValue } },
+          { first_name: { contains: searchValue, mode: 'insensitive' } },
+          { last_name: { contains: searchValue, mode: 'insensitive' } },
+          {
+            AND: searchTerms.slice(1).map((term) => ({
+              OR: [
+                { first_name: { contains: term, mode: 'insensitive' } },
+                { last_name: { contains: term, mode: 'insensitive' } },
+                { username: { contains: term, mode: 'insensitive' } },
+              ],
+            })),
+          },
         ],
       },
       select: {
-        id: true, username: true, first_name: true, last_name: true,
+        id: true,
+        username: true,
+        first_name: true,
+        last_name: true,
+        phone: true,
         profile_image: true,
         wallets: { select: { wallet_address: true }, take: 1 },
       },
+      orderBy: [
+        { username: 'asc' },
+        { first_name: 'asc' },
+      ],
       take: 10,
     });
+
     return { data: users };
   }
 
