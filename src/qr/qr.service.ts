@@ -28,6 +28,16 @@ export class QrService {
     return { data: { qr_payload: signed, qr_image_base64: qr_image } };
   }
 
+  async getMerchantQr(merchantId: string) {
+    const merchant = await this.prisma.merchants.findUnique({ where: { id: merchantId } });
+    if (!merchant) throw new NotFoundException('Merchant not found');
+    if (!merchant.qr_code) {
+      return this.generateMerchantQr(merchantId);
+    }
+    const qr_image = await QRCode.toDataURL(merchant.qr_code);
+    return { data: { qr_payload: merchant.qr_code, qr_image_base64: qr_image } };
+  }
+
   async generateReceiveQr(userId: string, amount?: number) {
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },

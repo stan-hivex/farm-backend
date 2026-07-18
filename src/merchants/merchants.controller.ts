@@ -38,6 +38,9 @@ export class MerchantsController {
   @Get('dashboard')        dashboard(@CurrentUser() u: any) { return this.svc.getDashboard(u.id); }
 
   @Permissions('merchant:read')
+  @Get('qr')               getQr(@CurrentUser() u: any) { return this.svc.getMerchantQr(u.id); }
+
+  @Permissions('merchant:read')
   @Get('transactions')     transactions(@CurrentUser() u: any, @Query() q: any) { return this.svc.getTransactions(u.id, q); }
 
   @Permissions('merchant:write')

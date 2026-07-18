@@ -141,6 +141,15 @@ export class MerchantsService {
     return this.qrService.generateMerchantQr(merchant.id);
   }
 
+  async getMerchantQr(userId: string) {
+    const merchant = await this.getMerchantByUser(userId);
+    if (merchant.status !== 'approved') throw new ForbiddenException('Merchant not approved');
+    if (!merchant.qr_code) {
+      return this.qrService.generateMerchantQr(merchant.id);
+    }
+    return this.qrService.getMerchantQr(merchant.id);
+  }
+
   private async getMerchantByUser(userId: string) {
     const m = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
     if (!m) throw new BadRequestException('Merchant account not found. Please apply first.');
