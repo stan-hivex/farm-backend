@@ -3,6 +3,14 @@ import { PrismaService } from '../database/prisma.service';
 import { CacheService } from '../common/cache/cache.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
+interface TransactionUserSummary {
+  id: string;
+  username: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  profile_image?: string | null;
+}
+
 @Injectable()
 export class TransactionsService {
   constructor(
@@ -24,7 +32,44 @@ export class TransactionsService {
     }
 
     const [items, total] = await Promise.all([
-      this.prisma.transactions.findMany({ where, skip, take, orderBy: { created_at: 'desc' } }),
+      this.prisma.transactions.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
+        include: {
+          wallets_transactions_sender_wallet_idTowallets: {
+            select: {
+              id: true,
+              user_id: true,
+              users: {
+                select: {
+                  id: true,
+                  username: true,
+                  first_name: true,
+                  last_name: true,
+                  profile_image: true,
+                },
+              },
+            },
+          },
+          wallets_transactions_receiver_wallet_idTowallets: {
+            select: {
+              id: true,
+              user_id: true,
+              users: {
+                select: {
+                  id: true,
+                  username: true,
+                  first_name: true,
+                  last_name: true,
+                  profile_image: true,
+                },
+              },
+            },
+          },
+        },
+      }),
       this.prisma.transactions.count({ where }),
     ]);
     const payload = {
@@ -36,6 +81,13 @@ export class TransactionsService {
           t.description,
         );
 
+        const senderUser = this.buildUserSummary(
+          t.wallets_transactions_sender_wallet_idTowallets?.users,
+        );
+        const recipientUser = this.buildUserSummary(
+          t.wallets_transactions_receiver_wallet_idTowallets?.users,
+        );
+
         return {
           ...t,
           status: normalizedStatus,
@@ -44,6 +96,12 @@ export class TransactionsService {
           fee: Number(t.fee),
           net_amount: Number(t.net_amount),
           is_outgoing: t.sender_wallet_id === wallet.id,
+          sender_username: senderUser?.username ?? '',
+          recipient_username: recipientUser?.username ?? '',
+          sender_user: senderUser,
+          recipient_user: recipientUser,
+          users_sender: senderUser,
+          users_recipient: recipientUser,
         };
       }),
       meta: paginate(total, page, limit),
@@ -59,10 +117,44 @@ export class TransactionsService {
         id: txId,
         OR: [{ sender_wallet_id: wallet?.id }, { receiver_wallet_id: wallet?.id }],
       },
-      include: { ledger_entries: true },
+      include: {
+        ledger_entries: true,
+        wallets_transactions_sender_wallet_idTowallets: {
+          select: {
+            id: true,
+            user_id: true,
+            users: {
+              select: {
+                id: true,
+                username: true,
+                first_name: true,
+                last_name: true,
+                profile_image: true,
+              },
+            },
+          },
+        },
+        wallets_transactions_receiver_wallet_idTowallets: {
+          select: {
+            id: true,
+            user_id: true,
+            users: {
+              select: {
+                id: true,
+                username: true,
+                first_name: true,
+                last_name: true,
+                profile_image: true,
+              },
+            },
+          },
+        },
+      },
     });
     if (!txn) throw new NotFoundException('Transaction not found');
     const normalizedStatus = this.normalizeTransactionStatus(txn.status, txn.transaction_type);
+    const senderUser = this.buildUserSummary((txn as any).wallets_transactions_sender_wallet_idTowallets?.users);
+    const recipientUser = this.buildUserSummary((txn as any).wallets_transactions_receiver_wallet_idTowallets?.users);
     return {
       data: {
         ...txn,
@@ -72,7 +164,24 @@ export class TransactionsService {
         fee: Number(txn.fee),
         net_amount: Number(txn.net_amount),
         is_outgoing: txn.sender_wallet_id === wallet?.id,
+        sender_username: senderUser?.username ?? '',
+        recipient_username: recipientUser?.username ?? '',
+        sender_user: senderUser,
+        recipient_user: recipientUser,
+        users_sender: senderUser,
+        users_recipient: recipientUser,
       },
+    };
+  }
+
+  private buildUserSummary(user: any): TransactionUserSummary | null {
+    if (!user) return null;
+    return {
+      id: user.id,
+      username: user.username ?? '',
+      first_name: user.first_name ?? null,
+      last_name: user.last_name ?? null,
+      profile_image: user.profile_image ?? null,
     };
   }
 
