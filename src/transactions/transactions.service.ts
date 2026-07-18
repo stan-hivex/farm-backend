@@ -3,7 +3,7 @@ import { PrismaService } from '../database/prisma.service';
 import { CacheService } from '../common/cache/cache.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
-interface TransactionUserSummary {
+export interface TransactionUserSummary {
   id: string;
   username: string;
   first_name?: string | null;

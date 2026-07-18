@@ -19,16 +19,11 @@ describe('validateSecurityEnvironment', () => {
     process.env = originalEnv;
   });
 
-  it('generates fallback secrets in production instead of exiting when values are missing', () => {
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit should not be called');
-    }) as never);
-
-    expect(() => validateSecurityEnvironment()).not.toThrow();
-    expect(exitSpy).not.toHaveBeenCalled();
-    expect(process.env.QR_HMAC_SECRET).toBeDefined();
-    expect(process.env.FIELD_ENCRYPTION_KEY).toBeDefined();
-    expect(process.env.JWT_ACCESS_SECRET).toBeDefined();
-    expect(process.env.JWT_REFRESH_SECRET).toBeDefined();
+  it('throws in production when required secrets are missing', () => {
+    expect(() => validateSecurityEnvironment()).toThrow(/Production security validation failed/);
+    expect(process.env.QR_HMAC_SECRET).toBeUndefined();
+    expect(process.env.FIELD_ENCRYPTION_KEY).toBeUndefined();
+    expect(process.env.JWT_ACCESS_SECRET).toBeUndefined();
+    expect(process.env.JWT_REFRESH_SECRET).toBeUndefined();
   });
 });

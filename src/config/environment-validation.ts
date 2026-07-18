@@ -11,7 +11,7 @@ export function validateSecurityEnvironment() {
   const nodeEnv = process.env.NODE_ENV || 'development';
   const isProduction = nodeEnv === 'production';
 
-  const ensureSecret = (secretName: string, minLength = 32) => {
+  const validateSecret = (secretName: string, minLength = 32) => {
     const currentValue = process.env[secretName];
     const isMissingOrWeak = !currentValue || currentValue.length < minLength || currentValue === 'farm-secret';
 
@@ -19,27 +19,25 @@ export function validateSecurityEnvironment() {
       return;
     }
 
-    const generatedValue = generateSecureSecret(32);
-    process.env[secretName] = generatedValue;
-    logger.warn(
-      `⚠️ ${secretName} not set or too weak - generated an ephemeral fallback for this process. Set it explicitly in production.`,
+    throw new Error(
+      `Production security validation failed: ${secretName} must be set to a strong value (minimum ${minLength} characters).`,
     );
   };
 
   if (isProduction) {
-    ensureSecret('JWT_ACCESS_SECRET');
-    ensureSecret('JWT_REFRESH_SECRET');
-    ensureSecret('QR_HMAC_SECRET');
-    ensureSecret('FIELD_ENCRYPTION_KEY');
+    validateSecret('JWT_ACCESS_SECRET');
+    validateSecret('JWT_REFRESH_SECRET');
+    validateSecret('QR_HMAC_SECRET');
+    validateSecret('FIELD_ENCRYPTION_KEY');
 
     if (!process.env.DATABASE_URL) {
-      logger.warn('⚠️ DATABASE_URL not set - the app will fail at database startup until configured.');
+      throw new Error('Production security validation failed: DATABASE_URL must be set.');
     }
     if (!process.env.REDIS_URL) {
-      logger.warn('⚠️ REDIS_URL not set - Redis will use localhost:6379 if available.');
+      throw new Error('Production security validation failed: REDIS_URL must be set.');
     }
 
-    logger.log('✅ Security environment validation completed; ephemeral fallbacks were applied where needed.');
+    logger.log('✅ Security environment validation completed.');
   } else {
     if (!process.env.JWT_ACCESS_SECRET) {
       logger.warn(
@@ -57,12 +55,4 @@ export function validateSecurityEnvironment() {
       );
     }
   }
-}
-
-/**
- * Helper: Generate secure random secret (for development/testing only)
- */
-export function generateSecureSecret(length = 32): string {
-  const crypto = require('crypto');
-  return crypto.randomBytes(length).toString('hex');
 }
