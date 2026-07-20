@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Post, Body, UseGuards, Logger, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Put, Post, Body, UseGuards, Logger, BadRequestException, Delete } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsBoolean, IsString, IsOptional } from 'class-validator';
 import { SecurityService } from './security.service';
@@ -22,6 +22,15 @@ class UpdateBiometricsDto {
 class VerifyDeviceDto {
   @IsString()
   deviceFingerprint!: string;
+}
+
+class CreateBiometricsDto {
+  @IsString()
+  deviceFingerprint!: string;
+
+  @IsOptional()
+  @IsString()
+  biometricType?: string;
 }
 
 @ApiTags('Security')
@@ -72,6 +81,24 @@ export class SecurityController {
     return this.svc.verifyDevice(user.id, dto.deviceFingerprint);
   }
 
+  @Permissions('security:write')
+  @Post('biometrics')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enable biometric authentication for this device' })
+  async createBiometrics(
+    @CurrentUser() user: any,
+    @Body() dto: CreateBiometricsDto,
+  ) {
+    this.logger.log(`Create biometric requested by user=${user?.id}`);
+
+    if (!dto.deviceFingerprint) {
+      throw new BadRequestException('deviceFingerprint is required');
+    }
+
+    return this.svc.enableBiometrics(user.id, dto.deviceFingerprint, dto.biometricType);
+  }
+
   @Permissions('security:read')
   @Get('biometrics')
   @UseGuards(JwtGuard)
@@ -80,5 +107,15 @@ export class SecurityController {
   async getBiometricStatus(@CurrentUser() user: any) {
     this.logger.log(`Biometric status requested by user=${user?.id}`);
     return this.svc.getBiometricStatus(user.id);
+  }
+
+  @Permissions('security:write')
+  @Delete('biometrics')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete biometric trusted device or disable biometrics' })
+  async deleteBiometrics(@CurrentUser() user: any) {
+    this.logger.log(`Delete biometric requested by user=${user?.id}`);
+    return this.svc.deleteBiometrics(user.id);
   }
 }

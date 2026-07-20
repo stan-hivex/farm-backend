@@ -182,6 +182,28 @@ export class SecurityService {
     };
   }
 
+  async deleteBiometrics(userId: string) {
+    const settings = await this.prisma.biometric_settings.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!settings) {
+      return {
+        success: true,
+        message: 'No biometric settings found for user',
+      };
+    }
+
+    await this.prisma.biometric_settings.delete({ where: { id: settings.id } });
+
+    this.logger.log(`Biometrics deleted for user=${userId}`);
+
+    return {
+      success: true,
+      message: 'Biometric settings removed',
+    };
+  }
+
   private hashFingerprint(fingerprint: string): string {
     return crypto.createHash('sha256').update(fingerprint).digest('hex');
   }
