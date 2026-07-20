@@ -112,6 +112,22 @@ export class WalletsService {
       if (available < totalOut)
         throw new BadRequestException(`Insufficient balance. Available: ${available.toFixed(2)} FARM`);
 
+      const cooldownWindow = new Date(Date.now() - 60_000);
+      const recentDuplicate = await tx.transactions.findFirst({
+        where: {
+          sender_wallet_id: senderWallet.id,
+          transaction_type: 'transfer',
+          amount: dto.amount,
+          status: 'completed',
+          created_at: { gte: cooldownWindow },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+
+      if (recentDuplicate) {
+        throw new BadRequestException('You can only resend the same amount after 1 minute.');
+      }
+
       const reference = generateTxReference();
       const txn = await tx.transactions.create({
         data: {
@@ -186,18 +202,81 @@ export class WalletsService {
     if (query.status) where.status = query.status;
 
     const [txns, total] = await Promise.all([
-      this.prisma.transactions.findMany({ where, skip, take, orderBy: { created_at: 'desc' } }),
+      this.prisma.transactions.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
+        include: {
+          wallets_transactions_sender_wallet_idTowallets: {
+            select: {
+              id: true,
+              user_id: true,
+              users: {
+                select: {
+                  id: true,
+                  username: true,
+                  first_name: true,
+                  last_name: true,
+                  profile_image: true,
+                },
+              },
+            },
+          },
+          wallets_transactions_receiver_wallet_idTowallets: {
+            select: {
+              id: true,
+              user_id: true,
+              users: {
+                select: {
+                  id: true,
+                  username: true,
+                  first_name: true,
+                  last_name: true,
+                  profile_image: true,
+                },
+              },
+            },
+          },
+        },
+      }),
       this.prisma.transactions.count({ where }),
     ]);
     return {
-      data: txns.map((t) => ({
-        ...t,
-        amount: Number(t.amount),
-        fee: Number(t.fee),
-        net_amount: Number(t.net_amount),
-        is_outgoing: t.sender_wallet_id === wallet.id,
-      })),
+      data: txns.map((t) => {
+        const senderUser = this.buildUserSummary(
+          t.wallets_transactions_sender_wallet_idTowallets?.users,
+        );
+        const recipientUser = this.buildUserSummary(
+          t.wallets_transactions_receiver_wallet_idTowallets?.users,
+        );
+
+        return {
+          ...t,
+          amount: Number(t.amount),
+          fee: Number(t.fee),
+          net_amount: Number(t.net_amount),
+          is_outgoing: t.sender_wallet_id === wallet.id,
+          sender_username: senderUser?.username ?? '',
+          recipient_username: recipientUser?.username ?? '',
+          sender_user: senderUser,
+          recipient_user: recipientUser,
+          users_sender: senderUser,
+          users_recipient: recipientUser,
+        };
+      }),
       meta: paginate(total, page, limit),
+    };
+  }
+
+  private buildUserSummary(user: any) {
+    if (!user) return null;
+    return {
+      id: user.id,
+      username: user.username ?? '',
+      first_name: user.first_name ?? null,
+      last_name: user.last_name ?? null,
+      profile_image: user.profile_image ?? null,
     };
   }
 }
