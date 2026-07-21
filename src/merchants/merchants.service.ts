@@ -39,6 +39,7 @@ export class MerchantsService {
     const merchant = await this.getMerchantByUser(userId);
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     const today = new Date(); today.setHours(0, 0, 0, 0);
+    const qrData = await this.qrService.getMerchantQr(merchant.id);
 
     const [salesToday, totalRevenue, recentTxns] = await Promise.all([
       this.prisma.transactions.aggregate({
@@ -66,6 +67,8 @@ export class MerchantsService {
         merchant: {
           id: merchant.id, business_name: merchant.business_name,
           status: merchant.status, qr_code: merchant.qr_code,
+          qr_payload: qrData?.data?.qr_payload ?? merchant.qr_code,
+          qr_image_base64: qrData?.data?.qr_image_base64,
         },
         stats: {
           sales_today: Number(salesToday._sum.amount || 0),
@@ -137,13 +140,11 @@ export class MerchantsService {
 
   async regenerateQr(userId: string) {
     const merchant = await this.getMerchantByUser(userId);
-    if (merchant.status !== 'approved') throw new ForbiddenException('Merchant not approved');
     return this.qrService.generateMerchantQr(merchant.id);
   }
 
   async getMerchantQr(userId: string) {
     const merchant = await this.getMerchantByUser(userId);
-    if (merchant.status !== 'approved') throw new ForbiddenException('Merchant not approved');
     if (!merchant.qr_code) {
       return this.qrService.generateMerchantQr(merchant.id);
     }
