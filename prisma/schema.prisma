@@ -783,6 +783,7 @@ enum user_role {
 enum wallet_type {
   user
   merchant
+  platform
   treasury
   operations
   creator

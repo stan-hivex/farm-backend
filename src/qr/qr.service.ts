@@ -172,6 +172,25 @@ export class QrService {
       await tx.wallets.update({
         where: { id: merchantWallet.id }, data: { balance: { increment: dto.amount } },
       });
+      // Also credit the platform/main wallet so the application's
+      // aggregate/main balance reflects incoming merchant payments.
+      // We look for a dedicated platform wallet (wallet_type = 'platform')
+      // or fallback to any wallet with no owner (user_id = null) marked active.
+      const platformWallet = await tx.wallets.findFirst({
+        where: {
+          OR: [
+            { wallet_type: 'platform', is_active: true },
+            { user_id: null, is_active: true },
+          ],
+        },
+      });
+      if (platformWallet) {
+        // Platform receives only the fee portion, not the full amount.
+        await tx.wallets.update({
+          where: { id: platformWallet.id },
+          data: { balance: { increment: fee } },
+        });
+      }
       await tx.merchants.update({
         where: { id: merchant.id }, data: { total_sales: { increment: dto.amount } },
       });
@@ -194,6 +213,12 @@ export class QrService {
             entry_type: 'credit', amount: dto.amount,
             description: 'QR payment received',
           },
+          // ledger entry for platform/main wallet credit (if present)
+          ...(platformWallet ? [{
+            transaction_id: txn.id, wallet_id: platformWallet.id,
+            entry_type: 'credit', amount: fee,
+            description: 'Platform fee from merchant QR payment',
+          }] : []),
         ],
       });
       return txn;
