@@ -36,6 +36,7 @@ import { QrModule } from './qr/qr.module';
 import { WebsocketModule } from './websocket/websocket.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
+import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 
 
 @Module({
@@ -113,6 +114,7 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
     WebsocketModule,
     EscrowModule,
     TransferRequestsModule,
+    PaymentRequestsModule,
   ],
   providers: [
     {
