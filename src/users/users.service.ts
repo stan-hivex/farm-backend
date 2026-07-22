@@ -166,6 +166,23 @@ export class UsersService {
     return { message: 'All notifications marked as read' };
   }
 
+  async deleteNotification(userId: string, notifId: string) {
+    const result = await this.prisma.notifications.deleteMany({
+      where: { id: notifId, user_id: userId },
+    });
+    if (result.count === 0) {
+      throw new NotFoundException('Notification not found');
+    }
+    return { message: 'Notification deleted' };
+  }
+
+  async deleteAllNotifications(userId: string) {
+    const result = await this.prisma.notifications.deleteMany({
+      where: { user_id: userId },
+    });
+    return { message: 'All notifications deleted', deletedCount: result.count };
+  }
+
   async changeEmail(userId: string, dto: { new_email: string; current_password: string }) {
     // Validate new email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

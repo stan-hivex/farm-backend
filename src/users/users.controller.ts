@@ -176,4 +176,17 @@ export class UsersController {
   markAllRead(@CurrentUser() u: any) {
     return this.svc.markAllNotificationsRead(u.id);
   }
+
+  @Delete('notifications/:id')
+  deleteNotification(
+    @CurrentUser() u: any,
+    @Param('id') id: string,
+  ) {
+    return this.svc.deleteNotification(u.id, id);
+  }
+
+  @Delete('notifications')
+  deleteAllNotifications(@CurrentUser() u: any) {
+    return this.svc.deleteAllNotifications(u.id);
+  }
 }
