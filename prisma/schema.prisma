@@ -411,6 +411,7 @@ model transactions {
   qr_payments                                      qr_payments[]
   roi_payouts                                      roi_payouts[]
   transfer_requests                                transfer_requests?
+  payment_requests                                 payment_requests?
   wallets_transactions_receiver_wallet_idTowallets wallets?                  @relation("transactions_receiver_wallet_idTowallets", fields: [receiver_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   wallets_transactions_sender_wallet_idTowallets   wallets?                  @relation("transactions_sender_wallet_idTowallets", fields: [sender_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   user_investments                                 user_investments[]
@@ -547,6 +548,8 @@ model users {
 
   transfer_requests_requester transfer_requests[] @relation("transfer_requests_requester")
   transfer_requests_sender    transfer_requests[] @relation("transfer_requests_sender")
+  payment_requests_requester  payment_requests[] @relation("payment_requests_requester")
+  payment_requests_recipient payment_requests[] @relation("payment_requests_recipient")
   biometric_settings          biometric_settings?
 
   @@index([email], map: "idx_users_email")
@@ -578,6 +581,8 @@ model wallets {
 
   transfer_requests_requester_wallet transfer_requests[] @relation("transfer_requests_requester_wallet")
   transfer_requests_sender_wallet    transfer_requests[] @relation("transfer_requests_sender_wallet")
+  payment_requests_requester_wallet  payment_requests[] @relation("payment_requests_requester_wallet")
+  payment_requests_recipient_wallet payment_requests[] @relation("payment_requests_recipient_wallet")
 
   @@index([wallet_address], map: "idx_wallets_address")
   @@index([user_id], map: "idx_wallets_user_id")
