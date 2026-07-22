@@ -746,6 +746,16 @@ enum notification_type {
   system
   admin
   transaction
+  transfer_received
+  transfer_sent
+  payment_request
+  request_completed
+  request_declined
+  deposit_completed
+  withdrawal_completed
+  merchant_payment
+  system_announcement
+  kyc_update
   security
   escrow
   investment

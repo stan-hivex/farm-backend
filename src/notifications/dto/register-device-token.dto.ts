@@ -7,5 +7,9 @@ export class RegisterDeviceTokenDto {
 
   @IsOptional()
   @IsString()
+  deviceToken?: string;
+
+  @IsOptional()
+  @IsString()
   platform?: string;
 }

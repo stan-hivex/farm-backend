@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { type notification_type } from '@prisma/client';
+import { paginationParams, paginate } from '../common/utils/pagination.util';
+import * as fs from 'fs';
 import * as nodemailer from 'nodemailer';
 import Twilio from 'twilio';
 import * as admin from 'firebase-admin';
@@ -36,11 +38,14 @@ export class NotificationsService {
     const fbCredPath = cfg.get<string>('FIREBASE_CREDENTIALS_PATH');
     if (fbServiceAccount || fbCredPath) {
       try {
-        if (fbServiceAccount) {
+        if (admin.apps.length > 0) {
+          this.fcmInitialized = true;
+        } else if (fbServiceAccount) {
           const parsed = JSON.parse(fbServiceAccount);
           admin.initializeApp({ credential: admin.credential.cert(parsed as any) });
         } else {
-          admin.initializeApp({ credential: admin.credential.applicationDefault() });
+          const serviceAccount = JSON.parse(fs.readFileSync(fbCredPath!, 'utf8'));
+          admin.initializeApp({ credential: admin.credential.cert(serviceAccount as any) });
         }
         this.fcmInitialized = true;
         this.logger.log('Firebase Admin initialized for FCM');
@@ -56,11 +61,34 @@ export class NotificationsService {
   }
 
   async registerDeviceToken(userId: string, token: string, platform?: string) {
-    await (this.prisma as any).device_tokens.upsert({
-      where: { token },
-      create: { user_id: userId, token, platform, is_active: true, last_seen: new Date() },
-      update: { user_id: userId, platform, is_active: true, last_seen: new Date() },
+    const normalizedToken = token.trim();
+    if (!normalizedToken) throw new Error('Device token is required');
+
+    const existing = await (this.prisma as any).device_tokens.findFirst({
+      where: { token: normalizedToken },
     });
+
+    if (existing) {
+      await (this.prisma as any).device_tokens.update({
+        where: { id: existing.id },
+        data: {
+          user_id: userId,
+          platform: platform || existing.platform,
+          is_active: true,
+          last_seen: new Date(),
+        },
+      });
+    } else {
+      await (this.prisma as any).device_tokens.create({
+        data: {
+          user_id: userId,
+          token: normalizedToken,
+          platform: platform || 'unknown',
+          is_active: true,
+          last_seen: new Date(),
+        },
+      });
+    }
     return { success: true };
   }
 
@@ -141,7 +169,7 @@ async updateSettings(userId: string, body: any) {
 }
 
   async createInApp(userId: string, dto: {
-    type: notification_type | string; title: string; body: string; metadata?: any;
+    type: notification_type | string; title: string; body: string; metadata?: any; entityId?: string;
   }) {
     return this.prisma.notifications.create({
       data: {
@@ -149,9 +177,36 @@ async updateSettings(userId: string, body: any) {
         type: dto.type as notification_type,
         title: dto.title,
         body: dto.body,
-        metadata: dto.metadata,
+        metadata: {
+          ...(dto.metadata ?? {}),
+          type: dto.type,
+          entityId: dto.entityId,
+          timestamp: new Date().toISOString(),
+        },
       },
     });
+  }
+
+  async getNotifications(userId: string, query: any) {
+    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const [items, total] = await Promise.all([
+      this.prisma.notifications.findMany({
+        where: { user_id: userId },
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.notifications.count({ where: { user_id: userId } }),
+    ]);
+    return { data: items, meta: paginate(total, page, limit) };
+  }
+
+  async markRead(userId: string, id: string) {
+    await this.prisma.notifications.updateMany({
+      where: { id, user_id: userId },
+      data: { is_read: true },
+    });
+    return { message: 'Notification marked as read' };
   }
 
   async sendEmail(to: string, subject: string, html: string) {
@@ -189,12 +244,33 @@ async updateSettings(userId: string, body: any) {
     try {
       const tokens = await this.getDeviceTokens(userId);
       if (!tokens || tokens.length === 0) return false;
+      const timestamp = new Date().toISOString();
+      const payloadData: Record<string, string> = Object.fromEntries(
+        Object.entries({ ...data, title, body, timestamp }).map(([key, value]) => [
+          key,
+          value == null ? '' : String(value),
+        ]),
+      );
       const payload: admin.messaging.MulticastMessage = {
         notification: { title, body },
-        data: data as any,
+        data: payloadData,
         tokens,
       };
-      const resp = await (admin.messaging() as any).sendMulticast(payload);
+      const resp = await admin.messaging().sendEachForMulticast(payload);
+      const invalidTokens = resp.responses
+        .map((result, index) => ({ result, token: tokens[index] }))
+        .filter(({ result }) => {
+          const code = result.error?.code;
+          return code === 'messaging/registration-token-not-registered' ||
+              code === 'messaging/invalid-registration-token';
+        })
+        .map(({ token }) => token);
+      if (invalidTokens.length > 0) {
+        await (this.prisma as any).device_tokens.updateMany({
+          where: { token: { in: invalidTokens } },
+          data: { is_active: false },
+        });
+      }
       this.logger.debug(`FCM sent: success=${resp.successCount} failure=${resp.failureCount}`);
       return resp.successCount > 0;
     } catch (e) {
@@ -205,14 +281,41 @@ async updateSettings(userId: string, body: any) {
 
   async notifyTransfer(senderId: string, receiverId: string, amount: number, reference: string) {
     await Promise.all([
-      this.createInApp(senderId, {
-        type: 'transaction', title: 'Transfer Sent',
-        body: `You sent ${amount} FARM (Ref: ${reference})`,
+      this.sendNotification(senderId, {
+        type: 'transfer_sent', entityId: reference, title: 'Transfer Successful',
+        body: `You sent ${amount} FARM.`,
       }),
-      this.createInApp(receiverId, {
-        type: 'transaction', title: 'Transfer Received',
-        body: `You received ${amount} FARM (Ref: ${reference})`,
+      this.sendNotification(receiverId, {
+        type: 'transfer_received', entityId: reference, title: 'Money Received',
+        body: `You received ${amount} FARM.`,
       }),
     ]);
+  }
+
+  async sendNotification(userId: string, dto: {
+    type: notification_type | string;
+    title: string;
+    body: string;
+    entityId?: string;
+    metadata?: Record<string, any>;
+  }) {
+    const timestamp = new Date().toISOString();
+    const metadata = {
+      ...(dto.metadata ?? {}),
+      type: dto.type,
+      entityId: dto.entityId ?? '',
+      timestamp,
+    };
+    const notification = await this.createInApp(userId, {
+      ...dto,
+      metadata,
+    });
+    await this.sendPush(userId, dto.title, dto.body, {
+      type: dto.type,
+      entityId: dto.entityId ?? '',
+      timestamp,
+      notificationId: notification.id,
+    });
+    return notification;
   }
 }

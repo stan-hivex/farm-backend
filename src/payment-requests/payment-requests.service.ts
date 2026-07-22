@@ -95,12 +95,19 @@ export class PaymentRequestsService {
 
     const req = result.request;
     if (req && req.users_requester && req.users_recipient) {
-      const title = 'Payment request received';
+      const title = 'Payment Request';
       const body = `${req.users_requester.username ?? 'A user'} requested ${dto.amount} FARM from you.`;
-      await Promise.all([
-        this.notificationsService.createInApp(req.users_recipient.id, { type: 'transfer_request', title, body, metadata: { request_id: req.id, requester_username: req.users_requester.username, amount: dto.amount } }),
-        this.notificationsService.sendPush(req.users_recipient.id, title, body, { request_id: req.id, type: 'transfer_request' }),
-      ]);
+      await this.notificationsService.sendNotification(req.users_recipient.id, {
+        type: 'payment_request',
+        entityId: req.id,
+        title,
+        body,
+        metadata: {
+          request_id: req.id,
+          requester_username: req.users_requester.username,
+          amount: dto.amount,
+        },
+      });
     }
 
     return { data: result.data, message: result.message };
@@ -183,7 +190,20 @@ export class PaymentRequestsService {
       return { data: { transaction_reference: reference, amount: amount, fee, status: 'completed', request_reference: request.request_reference }, message: 'Payment completed successfully', requesterUserId: request.requester_user_id };
     });
 
-    await this.notificationsService.notifyTransfer(senderUserId, result.requesterUserId!, Number(result.data.amount), result.data.transaction_reference);
+    await Promise.all([
+      this.notificationsService.notifyTransfer(
+        senderUserId,
+        result.requesterUserId!,
+        Number(result.data.amount),
+        result.data.transaction_reference,
+      ),
+      this.notificationsService.sendNotification(result.requesterUserId!, {
+        type: 'request_completed',
+        entityId: dto.request_id,
+        title: 'Request Completed',
+        body: 'Your payment request has been paid.',
+      }),
+    ]);
 
     return { data: result.data, message: result.message };
   }
@@ -194,6 +214,12 @@ export class PaymentRequestsService {
     if (request.recipient_user_id !== senderUserId) throw new ForbiddenException('You are not authorized for this request');
     if (request.status !== 'pending') throw new BadRequestException(`Request status is ${request.status}`);
     const updated = await this.prisma.payment_requests.update({ where: { id: requestId }, data: { status: 'rejected', rejected_at: new Date() } });
+    await this.notificationsService.sendNotification(request.requester_user_id!, {
+      type: 'request_declined',
+      entityId: request.id,
+      title: 'Request Declined',
+      body: 'Your payment request was declined.',
+    });
     return { data: { status: 'rejected', request_reference: updated.request_reference }, message: 'Payment request rejected' };
   }
 

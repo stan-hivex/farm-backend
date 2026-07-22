@@ -1,0 +1,10 @@
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'transfer_received';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'transfer_sent';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'payment_request';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'request_completed';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'request_declined';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'deposit_completed';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'withdrawal_completed';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'merchant_payment';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'system_announcement';
+ALTER TYPE "notification_type" ADD VALUE IF NOT EXISTS 'kyc_update';

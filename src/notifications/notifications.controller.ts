@@ -3,8 +3,11 @@ import {
   Controller,
   Delete,
   Get,
+  Patch,
+  Param,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -52,16 +55,29 @@ export class NotificationsController {
   }
 
   @Permissions('notifications:write')
-  @Post('device-token')
+  @Post(['device-token', 'register-device'])
   async registerDeviceToken(
     @Req() req,
     @Body() body: RegisterDeviceTokenDto,
   ) {
+    const token = body.deviceToken || body.token;
     return this.notificationsService.registerDeviceToken(
       req.user.id,
-      body.token,
+      token || '',
       body.platform,
     );
+  }
+
+  @Get()
+  @Permissions('notifications:read')
+  async getNotifications(@Req() req, @Query() query: any) {
+    return this.notificationsService.getNotifications(req.user.id, query);
+  }
+
+  @Patch(':id/read')
+  @Permissions('notifications:write')
+  async markRead(@Req() req, @Param('id') id: string) {
+    return this.notificationsService.markRead(req.user.id, id);
   }
 
   @Permissions('notifications:write')
