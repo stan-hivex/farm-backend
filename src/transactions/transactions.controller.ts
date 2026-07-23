@@ -2,13 +2,14 @@ import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { TransactionsService } from './transactions.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { RequireOwnership } from '../common/decorators/ownership.decorator';
 
 @ApiTags('Transactions')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, RolesGuard)
 @Controller({ path: 'transactions', version: '1' })
 export class TransactionsController {
   constructor(private readonly svc: TransactionsService) {}

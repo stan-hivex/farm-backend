@@ -1,0 +1,74 @@
+[
+  {
+    "filePath": "src\\auth\\auth.controller.ts",
+    "oldString": "   * ================= LOGOUT =================\n   */\n  @UseGuards(JwtGuard)\n  @Post('device-token')\n  @Permissions('sessions:write')",
+    "newString": "   * ================= LOGOUT =================\n   */\n  @UseGuards(JwtGuard, RolesGuard)\n  @Post('device-token')\n  @Permissions('sessions:write')",
+    "line": 418
+  },
+  {
+    "filePath": "src\\escrow\\escrow.controller.ts",
+    "oldString": "@ApiTags('Escrow')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({ path: 'escrow', version: '1' })\nexport class EscrowController {",
+    "newString": "@ApiTags('Escrow')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({ path: 'escrow', version: '1' })\nexport class EscrowController {",
+    "line": 24
+  },
+  {
+    "filePath": "src\\investments\\investments.controller.ts",
+    "oldString": "@ApiTags('Investments')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({ path: 'investments', version: '1' })\nexport class InvestmentsController {",
+    "newString": "@ApiTags('Investments')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({ path: 'investments', version: '1' })\nexport class InvestmentsController {",
+    "line": 16
+  },
+  {
+    "filePath": "src\\merchants\\merchants.controller.ts",
+    "oldString": "@ApiTags('Merchants')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({ path: 'merchant', version: '1' })\nexport class MerchantsController {",
+    "newString": "@ApiTags('Merchants')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({ path: 'merchant', version: '1' })\nexport class MerchantsController {",
+    "line": 26
+  },
+  {
+    "filePath": "src\\payment-requests\\payment-requests.controller.ts",
+    "oldString": "@ApiTags('Payment Requests')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({ path: 'payment-requests', version: '1' })\nexport class PaymentRequestsController {",
+    "newString": "@ApiTags('Payment Requests')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({ path: 'payment-requests', version: '1' })\nexport class PaymentRequestsController {",
+    "line": 15
+  },
+  {
+    "filePath": "src\\payments\\payments.controller.ts",
+    "oldString": "  @Get('deposits')\n  @ApiBearerAuth('JWT')\n  @UseGuards(JwtGuard)\n  @ApiOperation({ summary: 'Get deposit history' })\n  deposits(@CurrentUser() u: any) {",
+    "newString": "  @Get('deposits')\n  @ApiBearerAuth('JWT')\n  @UseGuards(JwtGuard, RolesGuard)\n  @ApiOperation({ summary: 'Get deposit history' })\n  deposits(@CurrentUser() u: any) {",
+    "line": 55
+  },
+  {
+    "filePath": "src\\projects\\projects.controller.ts",
+    "oldString": "@ApiTags('Projects')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({ path: 'projects', version: '1' })\nexport class ProjectsController {",
+    "newString": "@ApiTags('Projects')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({ path: 'projects', version: '1' })\nexport class ProjectsController {",
+    "line": 21
+  },
+  {
+    "filePath": "src\\qr\\qr.controller.ts",
+    "oldString": "@ApiTags('QR')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({ path: 'qr', version: '1' })\nexport class QrController {",
+    "newString": "@ApiTags('QR')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({ path: 'qr', version: '1' })\nexport class QrController {",
+    "line": 18
+  },
+  {
+    "filePath": "src\\security\\security.controller.ts",
+    "oldString": "  @Permissions('security:read')\n  @Get('settings')\n  @UseGuards(JwtGuard)\n  settings(@CurrentUser() user: any) {\n    this.logger.log(`settings requested by user=${user?.id || 'anon'}`);",
+    "newString": "  @Permissions('security:read')\n  @Get('settings')\n  @UseGuards(JwtGuard, RolesGuard)\n  settings(@CurrentUser() user: any) {\n    this.logger.log(`settings requested by user=${user?.id || 'anon'}`);",
+    "line": 44
+  },
+  {
+    "filePath": "src\\transactions\\transactions.controller.ts",
+    "oldString": "@ApiTags('Transactions')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({ path: 'transactions', version: '1' })\nexport class TransactionsController {",
+    "newString": "@ApiTags('Transactions')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({ path: 'transactions', version: '1' })\nexport class TransactionsController {",
+    "line": 11
+  },
+  {
+    "filePath": "src\\transfer-requests\\transfer-requests.controller.ts",
+    "oldString": "@ApiTags('Transfer Requests')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({ path: 'transfer-requests', version: '1' })\nexport class TransferRequestsController {",
+    "newString": "@ApiTags('Transfer Requests')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({ path: 'transfer-requests', version: '1' })\nexport class TransferRequestsController {",
+    "line": 41
+  },
+  {
+    "filePath": "src\\users\\users.controller.ts",
+    "oldString": "@ApiTags('Users')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard)\n@Controller({\n  path: 'users',",
+    "newString": "@ApiTags('Users')\n@ApiBearerAuth('JWT')\n@UseGuards(JwtGuard, RolesGuard)\n@Controller({\n  path: 'users',",
+    "line": 88
+  }
+]

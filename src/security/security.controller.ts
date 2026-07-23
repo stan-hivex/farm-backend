@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsBoolean, IsString, IsOptional } from 'class-validator';
 import { SecurityService } from './security.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
@@ -41,7 +42,7 @@ export class SecurityController {
 
   @Permissions('security:read')
   @Get('settings')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   settings(@CurrentUser() user: any) {
     this.logger.log(`settings requested by user=${user?.id || 'anon'}`);
     return this.svc.getSettings();

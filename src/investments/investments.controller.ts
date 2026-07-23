@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { IsNumber, IsPositive, IsNotEmpty, IsString, Length } from 'class-validator';
 import { InvestmentsService } from './investments.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
@@ -13,7 +14,7 @@ class InvestDto {
 
 @ApiTags('Investments')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, RolesGuard)
 @Controller({ path: 'investments', version: '1' })
 export class InvestmentsController {
   constructor(private readonly svc: InvestmentsService) {}

@@ -5,6 +5,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { RequireOwnership } from '../common/decorators/ownership.decorator';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CreatePaymentRequestDto } from './dto/create-payment-request.dto';
 import { AcceptPaymentRequestDto } from './dto/accept-payment-request.dto';
@@ -12,7 +13,7 @@ import { PaymentRequestsService } from './payment-requests.service';
 
 @ApiTags('Payment Requests')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, RolesGuard)
 @Controller({ path: 'payment-requests', version: '1' })
 export class PaymentRequestsController {
   constructor(private readonly svc: PaymentRequestsService) {}

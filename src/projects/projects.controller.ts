@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { ProjectsService } from './projects.service';
@@ -18,7 +19,7 @@ import type { Request } from 'express';
 
 @ApiTags('Projects')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, RolesGuard)
 @Controller({ path: 'projects', version: '1' })
 export class ProjectsController {
   constructor(private readonly svc: ProjectsService) {}

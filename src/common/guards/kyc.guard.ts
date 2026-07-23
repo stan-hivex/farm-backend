@@ -10,8 +10,8 @@ export class KycGuard implements CanActivate {
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
-    const userId = user?.id || request.headers['x-user-id'];
-    if (!userId) throw new UnauthorizedException('Authentication required');
+    if (!user?.id) throw new UnauthorizedException('Authentication required');
+    const userId = user.id;
 
     const dbUser = await this.prisma.users.findUnique({
       where: { id: userId },

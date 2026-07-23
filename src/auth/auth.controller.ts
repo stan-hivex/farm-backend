@@ -44,8 +44,10 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { RequireTurnstile } from '../common/decorators/require-turnstile.decorator';
 
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
 @ApiTags('Auth')
@@ -62,6 +64,7 @@ export class AuthController {
    * ================= REGISTER =================
    */
   @Public()
+  @RequireTurnstile()
   @Post('register')
   @Throttle({
     default: {
@@ -161,6 +164,7 @@ export class AuthController {
    * ================= FORGOT PASSWORD =================
    */
   @Public()
+  @RequireTurnstile()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -235,6 +239,7 @@ export class AuthController {
    * ================= LOGIN =================
    */
   @Public()
+  @RequireTurnstile()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -271,6 +276,7 @@ export class AuthController {
   }
 
   @Public()
+  @RequireTurnstile()
   @Post('firebase-login')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -302,6 +308,7 @@ export class AuthController {
    * Public endpoint: verifies Firebase ID token and issues FARM JWT
    */
   @Public()
+  @RequireTurnstile()
   @Post('verify-phone')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify phone using Firebase ID token' })
@@ -319,6 +326,7 @@ export class AuthController {
   }
 
   @Public()
+  @RequireTurnstile()
   @Post('supabase')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -415,7 +423,7 @@ export class AuthController {
   /**
    * ================= LOGOUT =================
    */
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Post('device-token')
   @Permissions('sessions:write')
   @HttpCode(HttpStatus.OK)
@@ -428,7 +436,7 @@ export class AuthController {
     return this.authService.registerDeviceToken(user.id, body.token, body.platform);
   }
 
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Post('logout')
   @Permissions('sessions:write')
   @HttpCode(HttpStatus.OK)
@@ -451,7 +459,7 @@ export class AuthController {
     );
   }
 
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Post('change-password')
   @Permissions('auth:write')
   @HttpCode(HttpStatus.OK)
@@ -464,7 +472,7 @@ export class AuthController {
     return this.authService.changePassword(user.id, dto);
   }
 
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Delete('delete-account')
   @Permissions('auth:write')
   @HttpCode(HttpStatus.OK)
@@ -476,7 +484,7 @@ export class AuthController {
     return this.authService.deleteAccount(user.id);
   }
 
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Permissions('sessions:read')
   @Get('sessions')
   @ApiBearerAuth('JWT')
@@ -487,7 +495,7 @@ export class AuthController {
     return this.authService.getSessions(user.id);
   }
 
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Permissions('sessions:write')
   @Post('sessions/:id/revoke')
   @ApiBearerAuth('JWT')
@@ -502,7 +510,7 @@ export class AuthController {
     );
   }
 
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Permissions('sessions:write')
   @Post('sessions/revoke-others')
   @ApiBearerAuth('JWT')
@@ -516,7 +524,7 @@ export class AuthController {
     );
   }
 
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Permissions('sessions:write')
   @Post('sessions/revoke-all')
   @ApiBearerAuth('JWT')

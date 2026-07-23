@@ -10,6 +10,7 @@ import * as admin from 'firebase-admin';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { TurnstileService } from '../common/services/turnstile.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { FirebaseLoginDto } from './dto/firebase-login.dto';
@@ -34,10 +35,16 @@ export class AuthService {
     private jwt: JwtService,
     private cfg: ConfigService,
     private notifications: NotificationsService,
+    private turnstile: TurnstileService,
   ) {}
 
   // ── Register ────────────────────────────────────────────────────────────────
   async register(dto: RegisterDto, ip: string, turnstileToken?: string) {
+    // Validate Turnstile token (bot protection)
+    if (turnstileToken) {
+      await this.turnstile.verifyToken(turnstileToken, ip);
+    }
+
     const existing = await this.prisma.users.findFirst({
       where: {
         OR: [
@@ -153,6 +160,11 @@ if (new Date() > expiryDate) {
 
   // ── Login ────────────────────────────────────────────────────────────────────
   async login(dto: LoginDto, ip: string, userAgent: string, turnstileToken?: string) {
+    // Validate Turnstile token (bot protection)
+    if (turnstileToken) {
+      await this.turnstile.verifyToken(turnstileToken, ip);
+    }
+
     const normalizedIdentifier = dto.identifier.trim();
     const normalizedPhone = this.normalizePhoneNumber(normalizedIdentifier);
 
@@ -259,6 +271,10 @@ if (new Date() > expiryDate) {
   }
 
   async firebaseLogin(dto: FirebaseLoginDto, ip: string, userAgent: string, turnstileToken?: string) {
+    if (turnstileToken) {
+      await this.turnstile.verifyToken(turnstileToken, ip);
+    }
+
     const firebaseToken = (dto.firebase_token || dto.firebaseIdToken || '').trim();
     if (!firebaseToken) {
       throw new BadRequestException('Firebase token is required');
@@ -351,6 +367,10 @@ if (new Date() > expiryDate) {
     userAgent: string,
     turnstileToken?: string,
   ) {
+    if (turnstileToken) {
+      await this.turnstile.verifyToken(turnstileToken, ip);
+    }
+
     if (!firebaseToken) throw new BadRequestException('Firebase token is required');
 
     const decodedToken = await this.verifyFirebaseToken(firebaseToken);
@@ -434,10 +454,17 @@ if (new Date() > expiryDate) {
   }
 
   async supabaseLogin(supabaseToken: string, ip: string, userAgent: string, turnstileToken?: string) {
+    if (turnstileToken) {
+      await this.turnstile.verifyToken(turnstileToken, ip);
+    }
     return { message: 'Supabase auth is not configured in this environment', data: {} };
   }
 
   async sendPasswordResetOtp(email: string, ip: string, turnstileToken?: string) {
+    // Validate Turnstile token (bot protection)
+    if (turnstileToken) {
+      await this.turnstile.verifyToken(turnstileToken, ip);
+    }
     return { message: 'Password reset flow is not configured in this environment' };
   }
 

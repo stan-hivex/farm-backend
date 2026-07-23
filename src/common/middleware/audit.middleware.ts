@@ -3,7 +3,24 @@ import { Request, Response, NextFunction } from 'express';
 import { PrismaService } from '../../database/prisma.service';
 
 // Paths that trigger automatic audit logging regardless of service-level logging
-const AUDITED_PATHS = ['/admin', '/kyc', '/payments'];
+const AUDITED_PATHS = [
+  '/admin',
+  '/kyc',
+  '/payments',
+  '/auth',
+  '/security',
+  '/users',
+  '/transactions',
+  '/withdraw',
+  '/deposit',
+  '/transfer-requests',
+  '/settings',
+  '/merchant',
+  '/escrow',
+  '/investments',
+  '/wallet',
+  '/device-token',
+];
 
 @Injectable()
 export class AuditMiddleware implements NestMiddleware {

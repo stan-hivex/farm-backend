@@ -6,6 +6,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { TurnstileService } from '../common/services/turnstile.service';
+import { TurnstileGuard } from '../common/guards/turnstile.guard';
 
 @Module({
   imports: [
@@ -22,7 +24,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     NotificationsModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, TurnstileService, TurnstileGuard],
   exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

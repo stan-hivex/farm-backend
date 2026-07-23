@@ -5,6 +5,7 @@ import type { Request } from 'express';
 import { PaymentsService } from './payments.service';
 import { verifyDeviceToken } from '../common/utils/device-token.util';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -52,7 +53,7 @@ export class PaymentsController {
   @Permissions('payments:read')
   @Get('deposits')
   @ApiBearerAuth('JWT')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @ApiOperation({ summary: 'Get deposit history' })
   deposits(@CurrentUser() u: any) {
     return this.svc.getDepositHistory(u.id);

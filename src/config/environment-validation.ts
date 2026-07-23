@@ -30,6 +30,10 @@ export function validateSecurityEnvironment() {
     validateSecret('QR_HMAC_SECRET');
     validateSecret('FIELD_ENCRYPTION_KEY');
 
+    if (!process.env.TURNSTILE_SECRET_KEY) {
+      throw new Error('Production security validation failed: TURNSTILE_SECRET_KEY must be set (get from https://dash.cloudflare.com/).');
+    }
+
     if (!process.env.DATABASE_URL) {
       throw new Error('Production security validation failed: DATABASE_URL must be set.');
     }

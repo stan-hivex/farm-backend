@@ -20,6 +20,7 @@ import {
 } from 'class-validator';
 import { TransferRequestsService } from './transfer-requests.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -38,7 +39,7 @@ class AcceptTransferDto {
 
 @ApiTags('Transfer Requests')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, RolesGuard)
 @Controller({ path: 'transfer-requests', version: '1' })
 export class TransferRequestsController {
   constructor(private readonly svc: TransferRequestsService) {}

@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional, Length, IsInt, Min, Max } from 'class-validator';
 import { EscrowService } from './escrow.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -21,7 +22,7 @@ class MessageDto { @IsNotEmpty() @IsString() message!: string; }
 
 @ApiTags('Escrow')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, RolesGuard)
 @Controller({ path: 'escrow', version: '1' })
 export class EscrowController {
   constructor(private readonly svc: EscrowService) {}

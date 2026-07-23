@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-validator';
 import { MerchantsService } from './merchants.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
@@ -23,7 +24,7 @@ class PayoutDto {
 
 @ApiTags('Merchants')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, RolesGuard)
 @Controller({ path: 'merchant', version: '1' })
 export class MerchantsController {
   constructor(private readonly svc: MerchantsService) {}
