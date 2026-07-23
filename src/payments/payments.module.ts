@@ -7,11 +7,13 @@ import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { PaystackModule } from '../paystack/paystack.module';
 import { WithdrawModule } from '../withdraw/withdraw.module';
 import { KycGuard } from '../common/guards/kyc.guard';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
 	imports: [
 		WebsocketModule,
 		IvorypayModule,
+		AuthModule,
 		forwardRef(() => PaystackModule),
 		forwardRef(() => WithdrawModule),
 	],
