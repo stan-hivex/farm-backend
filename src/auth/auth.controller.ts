@@ -44,7 +44,6 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { RequireTurnstile } from '../common/decorators/require-turnstile.decorator';
 
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -64,7 +63,6 @@ export class AuthController {
    * ================= REGISTER =================
    */
   @Public()
-  @RequireTurnstile()
   @Post('register')
   @Throttle({
     default: {
@@ -88,10 +86,7 @@ export class AuthController {
       );
     }
 
-    const turnstileToken = (body as RegisterDto & { cf_turnstile_response?: string; turnstile_token?: string }).cf_turnstile_response
-      || (body as RegisterDto & { cf_turnstile_response?: string; turnstile_token?: string }).turnstile_token;
-
-    return this.authService.register(body as RegisterDto, req.ip || '', turnstileToken);
+    return this.authService.register(body as RegisterDto, req.ip || '');
   }
 
   /**
@@ -164,7 +159,6 @@ export class AuthController {
    * ================= FORGOT PASSWORD =================
    */
   @Public()
-  @RequireTurnstile()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -179,8 +173,7 @@ export class AuthController {
     @Body() dto: ForgotPasswordDto,
     @Req() req: Request,
   ) {
-    const turnstileToken = dto.cf_turnstile_response || dto.turnstile_token;
-    return this.authService.sendPasswordResetOtp(dto.email, req.ip || '', turnstileToken);
+    return this.authService.sendPasswordResetOtp(dto.email, req.ip || '');
   }
 
   @Public()
@@ -239,7 +232,6 @@ export class AuthController {
    * ================= LOGIN =================
    */
   @Public()
-  @RequireTurnstile()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -264,19 +256,14 @@ export class AuthController {
       );
     }
 
-    const turnstileToken = (body as LoginDto & { cf_turnstile_response?: string; turnstile_token?: string }).cf_turnstile_response
-      || (body as LoginDto & { cf_turnstile_response?: string; turnstile_token?: string }).turnstile_token;
-
     return this.authService.login(
       body as LoginDto,
       req.ip || '',
       req.headers['user-agent'] || '',
-      turnstileToken,
     );
   }
 
   @Public()
-  @RequireTurnstile()
   @Post('firebase-login')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -291,7 +278,6 @@ export class AuthController {
     @Body() dto: FirebaseLoginDto,
     @Req() req: Request,
   ) {
-    const turnstileToken = dto.cf_turnstile_response || dto.turnstile_token;
     return this.authService.firebaseLogin(
       {
         ...dto,
@@ -299,7 +285,6 @@ export class AuthController {
       },
       req.ip || '',
       req.headers['user-agent'] || '',
-      turnstileToken,
     );
   }
 
@@ -308,7 +293,6 @@ export class AuthController {
    * Public endpoint: verifies Firebase ID token and issues FARM JWT
    */
   @Public()
-  @RequireTurnstile()
   @Post('verify-phone')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify phone using Firebase ID token' })
@@ -316,17 +300,14 @@ export class AuthController {
     @Body() dto: VerifyPhoneDto,
     @Req() req: Request,
   ) {
-    const turnstileToken = dto.cf_turnstile_response || dto.turnstile_token;
     return this.authService.verifyPhone(
       dto.firebaseIdToken,
       req.ip || '',
       req.headers['user-agent'] || '',
-      turnstileToken,
     );
   }
 
   @Public()
-  @RequireTurnstile()
   @Post('supabase')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -343,12 +324,10 @@ export class AuthController {
     @Body() dto: SupabaseAuthDto,
     @Req() req: Request,
   ) {
-    const turnstileToken = dto.cf_turnstile_response || dto.turnstile_token;
     return this.authService.supabaseLogin(
       dto.supabase_token,
       req.ip || '',
       req.headers['user-agent'] || '',
-      turnstileToken,
     );
   }
 
