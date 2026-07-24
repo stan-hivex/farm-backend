@@ -13,6 +13,7 @@ import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
 import { OWNERSHIP_KEY, OwnershipConfig } from '../decorators/ownership.decorator';
 import { UserRole } from '../enums';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { PrismaService } from '../../database/prisma.service';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -20,6 +21,7 @@ export class RolesGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly prismaService?: PrismaService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -72,7 +74,7 @@ export class RolesGuard implements CanActivate {
     if (requiredPermissions && requiredPermissions.length > 0) {
       const role = String(user?.role || 'user').toLowerCase();
       if (role !== UserRole.ADMIN && role !== UserRole.SUPER_ADMIN) {
-        const granted = this.getPermissionsForRole(role);
+        const granted = await this.getEffectivePermissions(user, requiredPermissions);
         const missing = requiredPermissions.filter((permission) => !granted.includes(permission));
         if (missing.length > 0) {
           throw new ForbiddenException('Insufficient permissions');
@@ -163,6 +165,27 @@ export class RolesGuard implements CanActivate {
       default:
         return basePermissions;
     }
+  }
+
+  private async getEffectivePermissions(user: any, requiredPermissions: string[]): Promise<string[]> {
+    const granted = this.getPermissionsForRole(String(user?.role || 'user').toLowerCase());
+    if (requiredPermissions.some((permission) => permission.startsWith('merchant:')) && await this.userHasMerchantRecord(user?.id || user?.userId)) {
+      return [...new Set([...granted, 'merchant:read', 'merchant:write'])];
+    }
+    return granted;
+  }
+
+  private async userHasMerchantRecord(userId?: string): Promise<boolean> {
+    if (!userId || !this.prismaService) {
+      return false;
+    }
+
+    const merchant = await this.prismaService.merchants.findFirst({
+      where: { user_id: userId },
+      select: { id: true },
+    });
+
+    return Boolean(merchant);
   }
 
   private resolveOwnerId(user: any, ownership: OwnershipConfig): string | null {
