@@ -69,6 +69,9 @@ export class MerchantsService {
           status: merchant.status, qr_code: merchant.qr_code,
           qr_payload: qrData?.data?.qr_payload ?? merchant.qr_code,
           qr_image_base64: qrData?.data?.qr_image_base64,
+          qr_image_data_url: qrData?.data?.qr_image_data_url ?? qrData?.data?.qr_image_base64,
+          qrImageBase64: qrData?.data?.qr_image_base64,
+          qrImageDataUrl: qrData?.data?.qr_image_data_url ?? qrData?.data?.qr_image_base64,
         },
         stats: {
           sales_today: Number(salesToday._sum.amount || 0),

@@ -25,7 +25,13 @@ export class QrService {
     const signed = JSON.stringify({ ...payload, sig });
     const qr_image = await QRCode.toDataURL(signed);
     await this.prisma.merchants.update({ where: { id: merchantId }, data: { qr_code: signed } });
-    return { data: { qr_payload: signed, qr_image_base64: qr_image } };
+    return {
+      data: {
+        qr_payload: signed,
+        qr_image_base64: qr_image,
+        qr_image_data_url: qr_image,
+      },
+    };
   }
 
   async getMerchantQr(merchantId: string) {
@@ -35,7 +41,13 @@ export class QrService {
       return this.generateMerchantQr(merchantId);
     }
     const qr_image = await QRCode.toDataURL(merchant.qr_code);
-    return { data: { qr_payload: merchant.qr_code, qr_image_base64: qr_image } };
+    return {
+      data: {
+        qr_payload: merchant.qr_code,
+        qr_image_base64: qr_image,
+        qr_image_data_url: qr_image,
+      },
+    };
   }
 
   async generateReceiveQr(userId: string, amount?: number) {
