@@ -36,22 +36,17 @@ export class EscrowController {
   create(@CurrentUser() u: any, @Body() dto: CreateEscrowDto) { return this.svc.create(u.id, dto); }
 
   @Permissions('escrow:read')
-  @RequireOwnership('id')
   @Get(':id')              getOne(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.getOne(id, u.id); }
 
   @Permissions('escrow:write')
-  @RequireOwnership('id')
   @Post(':id/release')     release(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.release(id, u.id); }
 
   @Permissions('escrow:write')
-  @RequireOwnership('id')
   @Post(':id/dispute')     dispute(@CurrentUser() u: any, @Param('id') id: string, @Body() dto: DisputeDto) { return this.svc.dispute(id, u.id, dto); }
 
   @Permissions('escrow:write')
-  @RequireOwnership('id')
   @Post(':id/cancel')      cancel(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.cancel(id, u.id); }
 
   @Permissions('escrow:write')
-  @RequireOwnership('id')
   @Post(':id/message')     message(@CurrentUser() u: any, @Param('id') id: string, @Body() dto: MessageDto) { return this.svc.addMessage(id, u.id, dto.message); }
 }
