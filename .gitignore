@@ -67,3 +67,5 @@ prisma/generated
 # NestJS build output
 dist
 
+# Firebase credentials and generated files
+/firebase/

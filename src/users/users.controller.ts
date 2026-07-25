@@ -25,7 +25,6 @@ import {
 
 import { UsersService } from './users.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
@@ -86,7 +85,7 @@ class AddContactDto {
 
 @ApiTags('Users')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard, RolesGuard)
+@UseGuards(JwtGuard)
 @Controller({
   path: 'users',
   version: '1',

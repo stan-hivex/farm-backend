@@ -6,6 +6,8 @@ from './notifications.service';
 import { NotificationsController }
 from './notifications.controller';
 
+import { FirebaseService } from './firebase.service';
+
 @Module({
 
   controllers: [
@@ -14,10 +16,12 @@ from './notifications.controller';
 
   providers: [
     NotificationsService,
+    FirebaseService,
   ],
 
   exports: [
     NotificationsService,
+    FirebaseService,
   ],
 })
 

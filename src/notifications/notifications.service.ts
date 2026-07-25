@@ -3,19 +3,17 @@ import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { type notification_type } from '@prisma/client';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
-import * as fs from 'fs';
 import * as nodemailer from 'nodemailer';
 import Twilio from 'twilio';
-import * as admin from 'firebase-admin';
+import { FirebaseService } from './firebase.service';
 
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
   private mailer: nodemailer.Transporter;
   private twilioClient: any;
-  private fcmInitialized = false;
 
-  constructor(private prisma: PrismaService, private cfg: ConfigService) {
+  constructor(private prisma: PrismaService, private cfg: ConfigService, private firebase: FirebaseService) {
     this.mailer = nodemailer.createTransport({
       host: cfg.get('SMTP_HOST'),
       port: cfg.get<number>('SMTP_PORT', 587),
@@ -33,25 +31,9 @@ export class NotificationsService {
       }
     }
 
-    // Initialize Firebase Admin SDK if service account provided
-    const fbServiceAccount = cfg.get<string>('FIREBASE_SERVICE_ACCOUNT');
-    const fbCredPath = cfg.get<string>('FIREBASE_CREDENTIALS_PATH');
-    if (fbServiceAccount || fbCredPath) {
-      try {
-        if (admin.apps.length > 0) {
-          this.fcmInitialized = true;
-        } else if (fbServiceAccount) {
-          const parsed = JSON.parse(fbServiceAccount);
-          admin.initializeApp({ credential: admin.credential.cert(parsed as any) });
-        } else {
-          const serviceAccount = JSON.parse(fs.readFileSync(fbCredPath!, 'utf8'));
-          admin.initializeApp({ credential: admin.credential.cert(serviceAccount as any) });
-        }
-        this.fcmInitialized = true;
-        this.logger.log('Firebase Admin initialized for FCM');
-      } catch (e) {
-        this.logger.error('Failed to initialize Firebase Admin: ' + e);
-      }
+    // Firebase Admin is initialized by FirebaseService; ensure messaging is available
+    if (this.firebase) {
+      this.logger.log('FirebaseService provided for FCM');
     }
   }
 
@@ -237,8 +219,8 @@ async updateSettings(userId: string, body: any) {
   }
 
   async sendPush(userId: string, title: string, body: string, data?: Record<string, any>) {
-    if (!this.fcmInitialized) {
-      this.logger.debug('FCM not configured; skipping push send');
+    if (!this.firebase) {
+      this.logger.debug('FirebaseService not available; skipping push send');
       return false;
     }
     try {
@@ -251,12 +233,12 @@ async updateSettings(userId: string, body: any) {
           value == null ? '' : String(value),
         ]),
       );
-      const payload: admin.messaging.MulticastMessage = {
+      const payload: any = {
         notification: { title, body },
         data: payloadData,
         tokens,
       };
-      const resp = await admin.messaging().sendEachForMulticast(payload);
+      const resp = await this.firebase.messaging.sendEachForMulticast(payload as any);
       const invalidTokens = resp.responses
         .map((result, index) => ({ result, token: tokens[index] }))
         .filter(({ result }) => {
