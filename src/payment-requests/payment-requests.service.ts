@@ -229,6 +229,12 @@ export class PaymentRequestsService {
     if (request.requester_user_id !== requesterUserId) throw new ForbiddenException('You are not authorized for this request');
     if (request.status !== 'pending') throw new BadRequestException(`Request status is ${request.status}`);
     const updated = await this.prisma.payment_requests.update({ where: { id: requestId }, data: { status: 'cancelled', updated_at: new Date() } });
+    await this.notificationsService.sendNotification(request.requester_user_id!, {
+      type: 'request_declined',
+      entityId: request.id,
+      title: 'Payment Request Cancelled',
+      body: 'Your payment request was cancelled.',
+    });
     return { data: { status: 'cancelled', request_reference: updated.request_reference }, message: 'Payment request cancelled' };
   }
 

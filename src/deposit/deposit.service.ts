@@ -7,6 +7,7 @@ import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { v4 as uuidv4 } from 'uuid';
 import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class DepositService {
@@ -18,6 +19,7 @@ export class DepositService {
     private ivorypay: IvorypayService,
     private websocket: WebsocketGateway,
     private cache: CacheService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async createDeposit(userId: string, dto: any) {
@@ -369,6 +371,13 @@ export class DepositService {
           status: 'FAILED',
           reason: failureMetadata.failure_reason ?? reason,
         });
+        await this.notificationsService.sendNotification(userId, {
+          type: 'transaction',
+          title: 'Deposit failed',
+          body: reason ? `Your deposit could not be completed: ${reason}` : 'Your deposit could not be completed.',
+          entityId: reference,
+          metadata: { reference },
+        });
       }
     } catch (e) {
       this.logger.debug('Failed to emit websocket update for failed deposit', e as any);
@@ -561,6 +570,15 @@ export class DepositService {
     if (result.ok) {
       const metadata = (transaction?.metadata as any) ?? {};
       await this.invalidateFinancialCaches(metadata?.user_id ?? undefined);
+      if (metadata?.user_id) {
+        await this.notificationsService.sendNotification(metadata.user_id, {
+          type: 'deposit_completed',
+          title: 'Deposit completed',
+          body: `Your deposit of ${Number(transaction.amount ?? 0)} ${transaction.currency || 'FARM'} has been credited to your wallet.`,
+          entityId: transaction.id,
+          metadata: { reference, amount: Number(transaction.amount ?? 0), currency: transaction.currency || 'FARM' },
+        });
+      }
     }
 
     return result.ok;
@@ -640,6 +658,15 @@ export class DepositService {
 
     if (result.ok) {
       await this.invalidateFinancialCaches(deposit?.userId);
+      if (deposit?.userId) {
+        await this.notificationsService.sendNotification(deposit.userId, {
+          type: 'deposit_completed',
+          title: 'Deposit completed',
+          body: `Your deposit of ${Number(deposit.amount ?? 0)} ${deposit.currency || 'FARM'} has been credited to your wallet.`,
+          entityId: deposit.id,
+          metadata: { amount: Number(deposit.amount ?? 0), currency: deposit.currency || 'FARM' },
+        });
+      }
     }
 
     return result.ok;

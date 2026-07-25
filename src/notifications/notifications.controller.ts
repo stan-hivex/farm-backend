@@ -80,6 +80,24 @@ export class NotificationsController {
     return this.notificationsService.markRead(req.user.id, id);
   }
 
+  @Patch('read-all')
+  @Permissions('notifications:write')
+  async markAllRead(@Req() req) {
+    return this.notificationsService.markAllRead(req.user.id);
+  }
+
+  @Delete(':id')
+  @Permissions('notifications:write')
+  async deleteNotification(@Req() req, @Param('id') id: string) {
+    return this.notificationsService.deleteNotification(req.user.id, id);
+  }
+
+  @Delete()
+  @Permissions('notifications:write')
+  async deleteAllNotifications(@Req() req) {
+    return this.notificationsService.deleteAllNotifications(req.user.id);
+  }
+
   @Permissions('notifications:write')
   @Delete('device-token')
   async removeDeviceToken(

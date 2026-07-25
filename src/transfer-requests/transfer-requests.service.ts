@@ -435,6 +435,13 @@ export class TransferRequestsService {
       },
     });
 
+    await this.notificationsService.sendNotification(request.requester_user_id!, {
+      type: 'request_declined',
+      entityId: request.id,
+      title: 'Transfer Request Declined',
+      body: 'Your transfer request was declined.',
+    });
+
     return {
       data: { status: 'rejected', request_reference: updated.request_reference },
       message: 'Transfer request rejected',

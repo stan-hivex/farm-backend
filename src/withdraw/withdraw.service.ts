@@ -8,6 +8,7 @@ import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class WithdrawService {
@@ -19,6 +20,7 @@ export class WithdrawService {
     private paystack: PaystackService,
     private ivorypay: IvorypayService,
     private cache: CacheService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
@@ -353,6 +355,14 @@ export class WithdrawService {
       this.cache.cacheDelete('admin:superadmin-dashboard'),
     ]);
 
+    await this.notificationsService.sendNotification(withdrawal.userId, {
+      type: 'withdrawal_completed',
+      title: 'Withdrawal completed',
+      body: `Your withdrawal of ${Number(withdrawal.amount ?? 0)} FARM has been processed successfully.`,
+      entityId: withdrawal.id,
+      metadata: { reference, amount: Number(withdrawal.amount ?? 0), currency: withdrawal.currency || 'FARM' },
+    });
+
     return true;
   }
 
@@ -414,6 +424,14 @@ export class WithdrawService {
       this.cache.cacheDelete('admin:analytics'),
       this.cache.cacheDelete('admin:superadmin-dashboard'),
     ]);
+
+    await this.notificationsService.sendNotification(withdrawal.userId, {
+      type: 'transaction',
+      title: 'Withdrawal failed',
+      body: reason ? `Your withdrawal could not be completed: ${reason}` : 'Your withdrawal could not be completed.',
+      entityId: withdrawal.id,
+      metadata: { reference, reason },
+    });
 
     return true;
   }
