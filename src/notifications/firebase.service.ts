@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { Messaging } from 'firebase-admin/messaging';
-import * as path from 'path';
 
 @Injectable()
 export class FirebaseService {
@@ -10,13 +9,11 @@ export class FirebaseService {
   constructor() {
     if (admin.apps.length === 0) {
       admin.initializeApp({
-        credential: admin.credential.cert(
-          path.join(
-            process.cwd(),
-            'firebase',
-            'farmapp-e2145-firebase-adminsdk-fbsvc-326931e048.json',
-          ),
-        ),
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        }),
       });
     }
 
