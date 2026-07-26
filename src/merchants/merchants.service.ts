@@ -41,26 +41,57 @@ export class MerchantsService {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const qrData = await this.qrService.getMerchantQr(merchant.id);
 
-    const [salesToday, totalRevenue, recentTxns] = await Promise.all([
+    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const previousMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+
+    const [salesToday, totalRevenue, currentMonthRevenue, previousMonthRevenue, recentTxns] = await Promise.all([
       this.prisma.transactions.aggregate({
         where: {
-          receiver_wallet_id: wallet?.id, transaction_type: 'merchant_payment',
-          status: 'completed', created_at: { gte: today },
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          created_at: { gte: today },
         },
         _sum: { amount: true }, _count: true,
       }),
       this.prisma.transactions.aggregate({
         where: {
           receiver_wallet_id: wallet?.id,
-          transaction_type: 'merchant_payment', status: 'completed',
+          transaction_type: 'merchant_payment',
+          status: 'completed',
         },
         _sum: { amount: true }, _count: true,
+      }),
+      this.prisma.transactions.aggregate({
+        where: {
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          created_at: { gte: currentMonthStart, lt: nextMonthStart },
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.transactions.aggregate({
+        where: {
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          created_at: { gte: previousMonthStart, lt: currentMonthStart },
+        },
+        _sum: { amount: true },
       }),
       this.prisma.transactions.findMany({
         where: { receiver_wallet_id: wallet?.id, transaction_type: 'merchant_payment' },
         orderBy: { created_at: 'desc' }, take: 10,
       }),
     ]);
+
+    const currentMonthRevenueValue = Number(currentMonthRevenue._sum.amount || 0);
+    const previousMonthRevenueValue = Number(previousMonthRevenue._sum.amount || 0);
+    const monthlyGrowth = previousMonthRevenueValue === 0
+      ? (currentMonthRevenueValue === 0 ? 0 : 100)
+      : Number((((currentMonthRevenueValue - previousMonthRevenueValue) / previousMonthRevenueValue) * 100).toFixed(2));
 
     return {
       data: {
@@ -79,6 +110,9 @@ export class MerchantsService {
           total_revenue: Number(totalRevenue._sum.amount || 0),
           total_transactions: totalRevenue._count,
           wallet_balance: Number(wallet?.balance || 0),
+          current_month_revenue: currentMonthRevenueValue,
+          previous_month_revenue: previousMonthRevenueValue,
+          monthly_growth_percentage: monthlyGrowth,
         },
         recent_transactions: recentTxns.map((t) => ({ ...t, amount: Number(t.amount) })),
       },
