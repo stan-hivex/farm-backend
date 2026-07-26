@@ -23,22 +23,27 @@ export class DepositService {
   ) {}
 
   async createDeposit(userId: string, dto: any) {
+    const paymentMethod = (
+      dto.paymentMethod ||
+      dto.payment_method ||
+      dto.method ||
+      dto.payment_channel ||
+      dto.payment_provider ||
+      'CARD'
+    ).toUpperCase();
+
+    if (paymentMethod === 'CRYPTO') {
+      this.logger.log(`DepositService: delegating crypto deposit to dedicated IvoryPay flow for user=${userId}`);
+      throw new BadRequestException('Crypto deposits must use the dedicated /api/v1/crypto/deposit endpoint');
+    }
+
     const amount = Number(dto.amount_fiat);
     if (!Number.isFinite(amount) || amount < 10) {
       throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
     }
 
     const reference = uuidv4();
-    // Map frontend field names to backend: paymentMethod, payment_method, method, payment_channel, payment_provider, provider
-    const paymentMethod = (
-      dto.paymentMethod || 
-      dto.payment_method || 
-      dto.method || 
-      dto.payment_channel || 
-      dto.payment_provider || 
-      'CARD'
-    ).toUpperCase();
-    const provider = paymentMethod === 'CRYPTO' ? 'ivorypay' : 'paystack';
+    const provider = 'paystack';
     const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
     const fee = amount * feeRate;
     const total = amount + fee;
