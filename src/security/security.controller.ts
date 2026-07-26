@@ -45,7 +45,7 @@ export class SecurityController {
   @UseGuards(JwtGuard, RolesGuard)
   settings(@CurrentUser() user: any) {
     this.logger.log(`settings requested by user=${user?.id || 'anon'}`);
-    return this.svc.getSettings();
+    return this.svc.getSettings(user.id);
   }
 
   @Permissions('security:write')

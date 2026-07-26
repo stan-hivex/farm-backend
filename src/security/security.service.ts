@@ -8,8 +8,19 @@ export class SecurityService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  getSettings() {
-    this.logger.log('Returning security settings');
+  async getSettings(userId: string) {
+    this.logger.log(`Returning security settings for user=${userId}`);
+
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { pin_hash: true, failed_pin_attempts: true },
+    });
+
+    const biometricSettings = await this.prisma.biometric_settings.findUnique({
+      where: { user_id: userId },
+      select: { enabled: true },
+    });
+
     return {
       two_factor: {
         enabled: false,
@@ -17,6 +28,9 @@ export class SecurityService {
         enforce_for_withdrawals: true,
       },
       require_pin_for_transactions: true,
+      has_pin: !!user?.pin_hash,
+      pin_locked: (user?.failed_pin_attempts ?? 0) >= 5,
+      biometrics_enabled: biometricSettings?.enabled ?? false,
       session: {
         timeout_minutes: 60,
         refresh_grace_minutes: 5,
