@@ -226,6 +226,7 @@ export class EscrowService {
         orderBy: { created_at: 'desc' },
         include: {
           escrow_messages: { orderBy: { created_at: 'asc' } },
+          users_escrow_contracts_buyer_idTousers: true,
           users_escrow_contracts_seller_idTousers: true,
         },
       }),
