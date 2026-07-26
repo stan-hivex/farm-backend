@@ -106,20 +106,25 @@ export class QrService {
 
     if (parsed.merchant_id) {
       const merchant = await this.prisma.merchants.findUnique({ where: { id: parsed.merchant_id } });
-      if (!merchant || merchant.status !== 'approved')
-        throw new BadRequestException('Merchant not found or not approved');
+      if (!merchant) {
+        throw new BadRequestException('Merchant not found');
+      }
+
       const { sig, ...data } = parsed;
       const expected = this.sign(
         JSON.stringify(data),
         merchant.qr_secret || this.cfg.get('QR_HMAC_SECRET', ''),
       );
       if (sig !== expected) throw new BadRequestException('QR signature invalid');
+
       return {
         data: {
-          valid: true, type: 'merchant',
-          merchant_id: merchant.id, business_name: merchant.business_name,
-          fee_percent: Number(merchant.transaction_fee_percent),
-          daily_limit: Number(merchant.daily_limit),
+          valid: true,
+          type: 'merchant',
+          merchant_id: merchant.id,
+          business_name: merchant.business_name || parsed.business_name || 'Merchant',
+          fee_percent: Number(merchant.transaction_fee_percent || 0),
+          daily_limit: Number(merchant.daily_limit || 0),
         },
       };
     }
