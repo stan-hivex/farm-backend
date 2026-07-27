@@ -4,6 +4,7 @@ import { createHmac } from 'crypto';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class QrService {
     private prisma: PrismaService,
     private authService: AuthService,
     private cfg: ConfigService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async generateMerchantQr(merchantId: string) {
@@ -240,7 +242,41 @@ export class QrService {
       });
       return txn;
     });
-    
+
+    const customer = await this.prisma.users.findUnique({
+      where: { id: customerId },
+      select: { username: true },
+    });
+    const payerName = customer?.username != null ? `@${customer.username}` : 'A customer';
+
+    await Promise.all([
+      this.notificationsService.sendNotification(customerId, {
+        type: 'merchant_payment_sent',
+        entityId: result.transaction_reference,
+        title: 'Merchant payment sent',
+        body: `You sent ${dto.amount} FARM to ${merchant.business_name}.`,
+        metadata: {
+          merchant_id: merchant.id,
+          merchant_name: merchant.business_name,
+          amount: dto.amount,
+        },
+      }),
+      merchant.user_id
+        ? this.notificationsService.sendNotification(merchant.user_id, {
+            type: 'merchant_payment_received',
+            entityId: result.transaction_reference,
+            title: 'Merchant payment received',
+            body: `You received ${dto.amount} FARM from ${payerName}.`,
+            metadata: {
+              merchant_id: merchant.id,
+              customer_id: customerId,
+              customer_username: customer?.username,
+              amount: dto.amount,
+            },
+          })
+        : Promise.resolve(null),
+    ]).catch((error) => this.logger.error('Merchant payment notification failed', error));
+
     return {
       data: { reference: result.transaction_reference, amount: dto.amount, fee, status: 'completed' },
       message: `Payment to ${merchant.business_name} successful`,

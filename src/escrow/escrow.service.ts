@@ -4,6 +4,7 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { PaystackService } from '../paystack/paystack.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { generateEscrowReference, generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
@@ -15,6 +16,7 @@ export class EscrowService {
     private prisma: PrismaService,
     private authService: AuthService,
     private paystack: PaystackService,
+    private notificationsService: NotificationsService,
   ) {}
 
   private async getSuperadminWallet() {
@@ -155,6 +157,31 @@ export class EscrowService {
       }
       return c;
     });
+
+    await Promise.all([
+      this.notificationsService.sendNotification(buyerId, {
+        type: 'escrow_created',
+        title: 'Escrow created',
+        body: `Your escrow for ${seller.username} has been funded with ${dto.amount} FARM.`,
+        entityId: contract.id,
+        metadata: {
+          escrow_id: contract.id,
+          amount: dto.amount,
+          seller_username: seller.username,
+        },
+      }),
+      this.notificationsService.sendNotification(seller.id, {
+        type: 'escrow_received',
+        title: 'New escrow received',
+        body: `${buyer.username} funded an escrow for ${dto.amount} FARM.`,
+        entityId: contract.id,
+        metadata: {
+          escrow_id: contract.id,
+          amount: dto.amount,
+          buyer_username: buyer.username,
+        },
+      }),
+    ]).catch((error) => this.logger.error('Escrow notification failed', error));
 
     return {
       data: { ...contract, amount: Number(contract.amount), fee: Number(contract.fee) },
@@ -323,6 +350,33 @@ export class EscrowService {
         );
       }
     });
+
+    await Promise.all([
+      this.notificationsService.sendNotification(escrow.buyer_id, {
+        type: 'escrow_released',
+        title: 'Escrow released',
+        body: `Your escrow for ${escrow.title} was released and ${amountToSeller} FARM was paid to ${escrow.seller_id === escrow.buyer_id ? 'the seller' : 'the seller'}.`,
+        entityId: escrow.id,
+        metadata: {
+          escrow_id: escrow.id,
+          amount: Number(escrow.amount),
+          released_amount: amountToSeller,
+          seller_id: escrow.seller_id,
+        },
+      }),
+      this.notificationsService.sendNotification(escrow.seller_id, {
+        type: 'escrow_received',
+        title: 'Escrow payment released',
+        body: `Escrow for ${escrow.title} was released and ${amountToSeller} FARM credited to your wallet.`,
+        entityId: escrow.id,
+        metadata: {
+          escrow_id: escrow.id,
+          amount: Number(escrow.amount),
+          net_amount: amountToSeller,
+          buyer_id: escrow.buyer_id,
+        },
+      }),
+    ]).catch((error) => this.logger.error('Escrow release notification failed', error));
   }
 
   async executeRefund(escrow: any) {
@@ -350,6 +404,17 @@ export class EscrowService {
         where: { id: escrow.id }, data: { status: 'refunded', resolved_at: new Date() },
       });
     });
+
+    await this.notificationsService.sendNotification(escrow.buyer_id, {
+      type: 'escrow_refunded',
+      title: 'Escrow refunded',
+      body: `Your escrow for ${escrow.title} has been refunded. ${amount} FARM is now unlocked.`,
+      entityId: escrow.id,
+      metadata: {
+        escrow_id: escrow.id,
+        amount,
+      },
+    }).catch((error) => this.logger.error('Escrow refund notification failed', error));
   }
 
   private async getEscrowOrFail(id: string) {

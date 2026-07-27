@@ -1,12 +1,19 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
 @Injectable()
 export class InvestmentsService {
-  constructor(private prisma: PrismaService, private authService: AuthService) {}
+  private readonly logger = new Logger(InvestmentsService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private authService: AuthService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   async listProjects(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
@@ -109,6 +116,19 @@ export class InvestmentsService {
       });
       return investment;
     });
+
+    await this.notificationsService.sendNotification(userId, {
+      type: 'investment_made',
+      title: 'Investment successful',
+      body: `You invested ${dto.amount} FARM in ${project.project_name}.`,
+      entityId: result.id,
+      metadata: {
+        investment_id: result.id,
+        project_id: projectId,
+        project_name: project.project_name,
+        amount: dto.amount,
+      },
+    }).catch((error) => this.logger.error('Investment notification failed', error));
 
     return {
       data: { ...result, amount: Number(result.amount), expected_roi: Number(result.expected_roi) },
