@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
@@ -20,6 +21,7 @@ export class TransferRequestsService {
     private prisma: PrismaService,
     private authService: AuthService,
     private notificationsService: NotificationsService,
+    private securityService: SecurityService,
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────
@@ -240,13 +242,20 @@ export class TransferRequestsService {
   // ──────────────────────────────────────────────────────────────────────
   async acceptAndTransfer(
     senderUserId: string,
-    dto: {
-      request_id: string;
-      pin: string;
-    },
+    dto: { request_id: string; pin?: string; biometric_auth?: boolean; device_fingerprint?: string },
     ip: string,
   ) {
-    await this.authService.verifyPin(senderUserId, dto.pin);
+    // Support biometric authorization: verify device fingerprint when requested
+    if (dto.biometric_auth) {
+      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
+      const verified = await this.securityService.verifyDevice(senderUserId, dto.device_fingerprint);
+      if (!verified || (verified as any).trusted !== true) {
+        throw new BadRequestException('Biometric device verification failed');
+      }
+    } else {
+      if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
+      await this.authService.verifyPin(senderUserId, dto.pin);
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
       // Get the transfer request

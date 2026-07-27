@@ -34,7 +34,9 @@ class RequestFundsDto {
 
 class AcceptTransferDto {
   @IsNotEmpty() @IsString() request_id!: string;
-  @IsNotEmpty() @IsString() @Length(4, 6) pin!: string;
+  @IsOptional() @IsString() @Length(4, 6) pin?: string;
+  @IsOptional() biometric_auth?: boolean;
+  @IsOptional() @IsString() device_fingerprint?: string;
 }
 
 @ApiTags('Transfer Requests')

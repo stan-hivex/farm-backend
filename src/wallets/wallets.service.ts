@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
@@ -12,6 +13,7 @@ export class WalletsService {
   constructor(
     private prisma: PrismaService,
     private authService: AuthService,
+    private securityService: SecurityService,
     private notificationsService: NotificationsService,
   ) {}
 
@@ -38,11 +40,24 @@ export class WalletsService {
 
   async sendFunds(
     senderId: string,
-    dto: { recipient_identifier: string; amount: number; pin: string; description?: string },
+    dto: { recipient_identifier: string; amount: number; pin?: string; description?: string; biometric_auth?: boolean; device_fingerprint?: string },
     ip: string,
   ) {
     if (dto.amount <= 0) throw new BadRequestException('Amount must be greater than zero');
-    await this.authService.verifyPin(senderId, dto.pin);
+    // Support biometric-authenticated transactions: when `biometric_auth` is true,
+    // verify the device fingerprint server-side via SecurityService and skip PIN verification.
+    if (dto.biometric_auth) {
+      if (!dto.device_fingerprint) {
+        throw new BadRequestException('Device fingerprint required for biometric authorization');
+      }
+      const verified = await this.securityService.verifyDevice(senderId, dto.device_fingerprint);
+      if (!verified || !('trusted' in verified) || (verified as any).trusted !== true) {
+        throw new ForbiddenException('Biometric device verification failed');
+      }
+    } else {
+      if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
+      await this.authService.verifyPin(senderId, dto.pin);
+    }
 
     const receiverUser = await this.prisma.users.findFirst({
       where: {

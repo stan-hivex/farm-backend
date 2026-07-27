@@ -11,7 +11,9 @@ class ValidateQrDto { @IsNotEmpty() @IsString() qr_payload!: string; }
 class MerchantPayDto {
   @IsNotEmpty() @IsString() qr_payload!: string;
   @IsNumber() @IsPositive() amount!: number;
-  @IsNotEmpty() @IsString() @Length(4, 6) pin!: string;
+  @IsOptional() @IsString() @Length(4, 6) pin?: string;
+  @IsOptional() biometric_auth?: boolean;
+  @IsOptional() @IsString() device_fingerprint?: string;
 }
 
 @ApiTags('QR')

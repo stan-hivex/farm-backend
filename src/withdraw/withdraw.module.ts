@@ -6,6 +6,7 @@ import { AuthModule } from '../auth/auth.module';
 import { PaystackModule } from '../paystack/paystack.module';
 import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { SecurityModule } from '../security/security.module';
 import { KycGuard } from '../common/guards/kyc.guard';
 
 @Module({
@@ -15,6 +16,7 @@ import { KycGuard } from '../common/guards/kyc.guard';
     forwardRef(() => PaystackModule),
     NotificationsModule,
     IvorypayModule,
+    SecurityModule,
   ],
   controllers: [WithdrawController],
   providers: [WithdrawService, KycGuard],

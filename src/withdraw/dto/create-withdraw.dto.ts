@@ -36,6 +36,14 @@ export class CreateWithdrawDto {
   @IsString()
   network?: string;
 
+  @IsOptional()
   @IsString()
-  pin!: string; // Transaction PIN required for security
+  pin?: string; // Transaction PIN (optional when biometric_auth is used)
+
+  @IsOptional()
+  biometric_auth?: boolean;
+
+  @IsOptional()
+  @IsString()
+  device_fingerprint?: string;
 }

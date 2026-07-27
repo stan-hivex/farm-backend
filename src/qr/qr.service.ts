@@ -4,6 +4,7 @@ import { createHmac } from 'crypto';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 
@@ -14,6 +15,7 @@ export class QrService {
   constructor(
     private prisma: PrismaService,
     private authService: AuthService,
+    private securityService: SecurityService,
     private cfg: ConfigService,
     private notificationsService: NotificationsService,
   ) {}
@@ -142,9 +144,18 @@ export class QrService {
     throw new BadRequestException('Unknown QR type');
   }
 
-  async merchantPay(customerId: string, dto: { qr_payload: string; amount: number; pin: string }) {
+  async merchantPay(customerId: string, dto: { qr_payload: string; amount: number; pin?: string; biometric_auth?: boolean; device_fingerprint?: string }) {
     if (dto.amount <= 0) throw new BadRequestException('Amount must be positive');
-    await this.authService.verifyPin(customerId, dto.pin);
+    if (dto.biometric_auth) {
+      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
+      const verified = await this.securityService.verifyDevice(customerId, dto.device_fingerprint);
+      if (!verified || (verified as any).trusted !== true) {
+        throw new BadRequestException('Biometric device verification failed');
+      }
+    } else {
+      if (!dto.pin) throw new BadRequestException('Transaction PIN required');
+      await this.authService.verifyPin(customerId, dto.pin);
+    }
 
     const validation = (await this.validate(dto.qr_payload, customerId)).data;
     if (!validation.valid || validation.type !== 'merchant')

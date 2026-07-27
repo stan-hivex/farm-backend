@@ -2,6 +2,7 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
@@ -17,6 +18,7 @@ export class WithdrawService {
   constructor(
     private prisma: PrismaService,
     private authService: AuthService,
+    private securityService: SecurityService,
     private paystack: PaystackService,
     private ivorypay: IvorypayService,
     private cache: CacheService,
@@ -24,7 +26,17 @@ export class WithdrawService {
   ) {}
 
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
-    await this.authService.verifyPin(userId, dto.pin);
+    // Support biometric-based authorization: verify device fingerprint server-side
+    if (dto.biometric_auth) {
+      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
+      const verified = await this.securityService.verifyDevice(userId, dto.device_fingerprint);
+      if (!verified || (verified as any).trusted !== true) {
+        throw new BadRequestException('Biometric device verification failed');
+      }
+    } else {
+      if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
+      await this.authService.verifyPin(userId, dto.pin);
+    }
 
     const amount = Number(dto.amount);
     if (!Number.isFinite(amount) || amount <= 0) {

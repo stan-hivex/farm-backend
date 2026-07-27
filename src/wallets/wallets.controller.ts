@@ -12,7 +12,9 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 class SendFundsDto {
   @IsNotEmpty() @IsString() recipient_identifier!: string;
   @IsNumber() @IsPositive() amount!: number;
-  @IsNotEmpty() @IsString() @Length(4, 6) pin!: string;
+  @IsOptional() @IsString() @Length(4, 6) pin?: string;
+  @IsOptional() biometric_auth?: boolean;
+  @IsOptional() @IsString() device_fingerprint?: string;
   @IsOptional() @IsString() description?: string;
 }
 
