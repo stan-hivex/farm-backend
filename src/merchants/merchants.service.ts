@@ -114,9 +114,9 @@ export class MerchantsService {
         // Fallback: fetch sender wallet and its user
         const senderWallet = await this.prisma.wallets.findUnique({
           where: { id: txn.sender_wallet_id },
-          include: { user: true },
+          include: { users: true },
         });
-        const u = senderWallet?.user as any | undefined;
+        const u = senderWallet?.users as any | undefined;
         if (u && u.username) customerName = `@${u.username}`;
       }
 
