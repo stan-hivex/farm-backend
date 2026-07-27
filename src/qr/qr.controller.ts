@@ -1,6 +1,6 @@
 import { Controller, Post, Get, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsOptional, IsNumber, IsPositive, Length } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsNumber, IsPositive, Length, IsBoolean } from 'class-validator';
 import { QrService } from './qr.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -8,11 +8,11 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 
 class ValidateQrDto { @IsNotEmpty() @IsString() qr_payload!: string; }
-class MerchantPayDto {
+export class MerchantPayDto {
   @IsNotEmpty() @IsString() qr_payload!: string;
   @IsNumber() @IsPositive() amount!: number;
   @IsOptional() @IsString() @Length(4, 6) pin?: string;
-  @IsOptional() biometric_auth?: boolean;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
   @IsOptional() @IsString() device_fingerprint?: string;
 }
 

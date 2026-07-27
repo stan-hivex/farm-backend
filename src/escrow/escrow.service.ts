@@ -3,6 +3,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateEscrowReference, generateTxReference } from '../common/utils/reference.util';
@@ -17,6 +18,7 @@ export class EscrowService {
     private authService: AuthService,
     private paystack: PaystackService,
     private notificationsService: NotificationsService,
+    private securityService: SecurityService,
   ) {}
 
   private async getSuperadminWallet() {
@@ -62,10 +64,20 @@ export class EscrowService {
 
   async create(buyerId: string, dto: {
     seller_identifier: string; amount: number; title: string;
-    description?: string; auto_release_days?: number; pin: string;
+    description?: string; auto_release_days?: number; pin?: string; biometric_auth?: boolean; device_fingerprint?: string;
   }) {
     if (dto.amount <= 0) throw new BadRequestException('Amount must be positive');
-    await this.authService.verifyPin(buyerId, dto.pin);
+
+    if (dto.biometric_auth) {
+      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
+      const verified = await this.securityService.verifyDevice(buyerId, dto.device_fingerprint);
+      if (!verified || (verified as any).trusted !== true) {
+        throw new BadRequestException('Biometric device verification failed');
+      }
+    } else {
+      if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
+      await this.authService.verifyPin(buyerId, dto.pin);
+    }
 
     const buyer = await this.prisma.users.findUnique({
       where: { id: buyerId },
@@ -189,7 +201,18 @@ export class EscrowService {
     };
   }
 
-  async release(escrowId: string, buyerId: string) {
+  async release(escrowId: string, buyerId: string, dto?: { pin?: string; biometric_auth?: boolean; device_fingerprint?: string }) {
+    if (dto?.biometric_auth) {
+      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
+      const verified = await this.securityService.verifyDevice(buyerId, dto.device_fingerprint);
+      if (!verified || (verified as any).trusted !== true) {
+        throw new BadRequestException('Biometric device verification failed');
+      }
+    } else {
+      if (!dto?.pin) throw new BadRequestException('Transaction PIN is required');
+      await this.authService.verifyPin(buyerId, dto.pin);
+    }
+
     const escrow = await this.getEscrowOrFail(escrowId);
     if (escrow.buyer_id !== buyerId) throw new ForbiddenException('Only the buyer can release');
     if (escrow.status !== 'active')
