@@ -72,6 +72,32 @@ export class TransactionsService {
       }),
       this.prisma.transactions.count({ where }),
     ]);
+
+    const merchantIds = [
+      ...new Set(
+        items
+          .map((t: any) => {
+            const metadata = t.metadata;
+            if (metadata && typeof metadata === 'object') {
+              return (metadata as any).merchant_id || (metadata as any).merchantId;
+            }
+            return null;
+          })
+          .filter((id: any) => id != null),
+      ),
+    ];
+
+    const merchantMap: Record<string, string> = {};
+    if (merchantIds.length > 0) {
+      const merchants = await this.prisma.merchants.findMany({
+        where: { id: { in: merchantIds } },
+        select: { id: true, business_name: true },
+      });
+      merchants.forEach((m) => {
+        if (m.id && m.business_name) merchantMap[m.id] = m.business_name;
+      });
+    }
+
     const payload = {
       data: items.map((t) => {
         const normalizedStatus = this.normalizeTransactionStatus(t.status, t.transaction_type);
@@ -88,6 +114,12 @@ export class TransactionsService {
           t.wallets_transactions_receiver_wallet_idTowallets?.users,
         );
 
+        let merchantBusinessName = '';
+        if (t.metadata && typeof t.metadata === 'object') {
+          const merchantId = (t.metadata as any).merchant_id || (t.metadata as any).merchantId;
+          if (merchantId) merchantBusinessName = merchantMap[merchantId] || '';
+        }
+
         return {
           ...t,
           status: normalizedStatus,
@@ -102,6 +134,7 @@ export class TransactionsService {
           recipient_user: recipientUser,
           users_sender: senderUser,
           users_recipient: recipientUser,
+          merchant_business_name: merchantBusinessName,
         };
       }),
       meta: paginate(total, page, limit),
@@ -155,6 +188,19 @@ export class TransactionsService {
     const normalizedStatus = this.normalizeTransactionStatus(txn.status, txn.transaction_type);
     const senderUser = this.buildUserSummary((txn as any).wallets_transactions_sender_wallet_idTowallets?.users);
     const recipientUser = this.buildUserSummary((txn as any).wallets_transactions_receiver_wallet_idTowallets?.users);
+
+    let merchantBusinessName = '';
+    if (txn.metadata && typeof txn.metadata === 'object') {
+      const merchantId = (txn.metadata as any).merchant_id || (txn.metadata as any).merchantId;
+      if (merchantId) {
+        const merchant = await this.prisma.merchants.findUnique({
+          where: { id: merchantId },
+          select: { business_name: true },
+        });
+        merchantBusinessName = merchant?.business_name || '';
+      }
+    }
+
     return {
       data: {
         ...txn,
@@ -170,6 +216,7 @@ export class TransactionsService {
         recipient_user: recipientUser,
         users_sender: senderUser,
         users_recipient: recipientUser,
+        merchant_business_name: merchantBusinessName,
       },
     };
   }

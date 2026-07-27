@@ -106,6 +106,7 @@ export class MerchantsService {
       }
 
       let customerName = '@user';
+      let merchantBusinessName = '';
 
       if (customerId) {
         const u = await this.prisma.users.findUnique({ where: { id: customerId } });
@@ -120,7 +121,19 @@ export class MerchantsService {
         if (u && u.username) customerName = `@${u.username}`;
       }
 
+      if (txn.metadata && typeof txn.metadata === 'object') {
+        const merchantId = (txn.metadata as any).merchant_id || (txn.metadata as any).merchantId;
+        if (merchantId) {
+          const merchant = await this.prisma.merchants.findUnique({
+            where: { id: merchantId },
+            select: { business_name: true },
+          });
+          if (merchant?.business_name) merchantBusinessName = merchant.business_name;
+        }
+      }
+
       txn.customer_name = customerName;
+      txn.merchant_business_name = merchantBusinessName;
       return txn;
     }));
 
