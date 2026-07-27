@@ -93,6 +93,37 @@ export class MerchantsService {
       ? (currentMonthRevenueValue === 0 ? 0 : 100)
       : Number((((currentMonthRevenueValue - previousMonthRevenueValue) / previousMonthRevenueValue) * 100).toFixed(2));
 
+    // Enrich recent transactions with customer username where possible
+    const enrichedRecent = await Promise.all(recentTxns.map(async (t: any) => {
+      const txn: any = { ...t };
+      txn.amount = Number(txn.amount || 0);
+
+      // Try to find a direct customer_id on the transaction or in metadata
+      let customerId: string | undefined;
+      if (txn.customer_id) customerId = txn.customer_id;
+      if (!customerId && txn.metadata && typeof txn.metadata === 'object') {
+        customerId = (txn.metadata as any).user_id || (txn.metadata as any).customer_id;
+      }
+
+      let customerName = '@user';
+
+      if (customerId) {
+        const u = await this.prisma.users.findUnique({ where: { id: customerId } });
+        if (u && u.username) customerName = `@${u.username}`;
+      } else if (txn.sender_wallet_id) {
+        // Fallback: fetch sender wallet and its user
+        const senderWallet = await this.prisma.wallets.findUnique({
+          where: { id: txn.sender_wallet_id },
+          include: { user: true },
+        });
+        const u = senderWallet?.user as any | undefined;
+        if (u && u.username) customerName = `@${u.username}`;
+      }
+
+      txn.customer_name = customerName;
+      return txn;
+    }));
+
     return {
       data: {
         merchant: {
@@ -114,7 +145,7 @@ export class MerchantsService {
           previous_month_revenue: previousMonthRevenueValue,
           monthly_growth_percentage: monthlyGrowth,
         },
-        recent_transactions: recentTxns.map((t) => ({ ...t, amount: Number(t.amount) })),
+        recent_transactions: enrichedRecent,
       },
     };
   }
