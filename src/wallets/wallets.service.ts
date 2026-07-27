@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
@@ -8,7 +9,11 @@ import { paginationParams, paginate } from '../common/utils/pagination.util';
 export class WalletsService {
   private readonly logger = new Logger(WalletsService.name);
 
-  constructor(private prisma: PrismaService, private authService: AuthService) {}
+  constructor(
+    private prisma: PrismaService,
+    private authService: AuthService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   async getMyWallet(userId: string) {
     const wallet = await this.prisma.wallets.findFirst({
@@ -39,7 +44,28 @@ export class WalletsService {
     if (dto.amount <= 0) throw new BadRequestException('Amount must be greater than zero');
     await this.authService.verifyPin(senderId, dto.pin);
 
-    return this.prisma.$transaction(async (tx) => {
+    const receiverUser = await this.prisma.users.findFirst({
+      where: {
+        OR: [{ username: dto.recipient_identifier }, { phone: dto.recipient_identifier }],
+        is_deleted: false,
+        is_active: true,
+      },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+
+    const receiverUserId = receiverUser?.id;
+    let receiverWalletId: string;
+    if (receiverUser?.wallets[0]) {
+      receiverWalletId = receiverUser.wallets[0].id;
+    } else {
+      const byAddress = await this.prisma.wallets.findUnique({
+        where: { wallet_address: dto.recipient_identifier },
+      });
+      if (!byAddress) throw new NotFoundException('Recipient not found');
+      receiverWalletId = byAddress.id;
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
       const senderWallet = await tx.wallets.findFirst({
         where: { user_id: senderId, is_active: true },
       });
@@ -72,28 +98,9 @@ export class WalletsService {
         throw new BadRequestException('Daily transfer limit exceeded');
       }
 
-      const receiverUser = await tx.users.findFirst({
-        where: {
-          OR: [{ username: dto.recipient_identifier }, { phone: dto.recipient_identifier }],
-          is_deleted: false,
-          is_active: true,
-        },
-        include: { wallets: { where: { is_active: true }, take: 1 } },
-      });
-
-      let receiverWalletId: string;
-      if (receiverUser?.wallets[0]) {
-        receiverWalletId = receiverUser.wallets[0].id;
-      } else {
-        const byAddress = await tx.wallets.findUnique({
-          where: { wallet_address: dto.recipient_identifier },
-        });
-        if (!byAddress) throw new NotFoundException('Recipient not found');
-        receiverWalletId = byAddress.id;
-      }
-
-      if (senderWallet.id === receiverWalletId)
+      if (senderWallet.id === receiverWalletId) {
         throw new BadRequestException('Cannot send to yourself');
+      }
 
       const feeCfg = await tx.fee_configurations.findFirst({
         where: { transaction_type: 'transfer', is_active: true },
@@ -109,8 +116,9 @@ export class WalletsService {
       const totalOut = dto.amount + fee;
 
       const available = Number(senderWallet.balance) - Number(senderWallet.locked_balance);
-      if (available < totalOut)
+      if (available < totalOut) {
         throw new BadRequestException(`Insufficient balance. Available: ${available.toFixed(2)} FARM`);
+      }
 
       const cooldownWindow = new Date(Date.now() - 60_000);
       const recentDuplicate = await tx.transactions.findFirst({
@@ -129,7 +137,7 @@ export class WalletsService {
       }
 
       const reference = generateTxReference();
-      const txn = await tx.transactions.create({
+      const transaction = await tx.transactions.create({
         data: {
           transaction_reference: reference,
           sender_wallet_id: senderWallet.id,
@@ -147,6 +155,7 @@ export class WalletsService {
       });
 
       const recvWallet = await tx.wallets.findUnique({ where: { id: receiverWalletId } });
+      if (!recvWallet) throw new NotFoundException('Recipient wallet not found');
 
       await tx.wallets.update({
         where: { id: senderWallet.id },
@@ -160,7 +169,7 @@ export class WalletsService {
       await tx.ledger_entries.createMany({
         data: [
           {
-            transaction_id: txn.id,
+            transaction_id: transaction.id,
             wallet_id: senderWallet.id,
             entry_type: 'debit',
             amount: totalOut,
@@ -169,19 +178,19 @@ export class WalletsService {
             description: `Transfer to ${dto.recipient_identifier}`,
           },
           {
-            transaction_id: txn.id,
+            transaction_id: transaction.id,
             wallet_id: receiverWalletId,
             entry_type: 'credit',
             amount: dto.amount,
-            balance_before: Number(recvWallet!.balance),
-            balance_after: Number(recvWallet!.balance) + dto.amount,
+            balance_before: Number(recvWallet.balance),
+            balance_after: Number(recvWallet.balance) + dto.amount,
             description: 'Transfer received',
           },
         ],
       });
 
       await tx.transactions.update({
-        where: { id: txn.id },
+        where: { id: transaction.id },
         data: { status: 'completed', processed_at: new Date() },
       });
 
@@ -190,6 +199,14 @@ export class WalletsService {
         message: 'Transfer successful',
       };
     });
+
+    if (receiverUserId) {
+      this.notificationsService
+        .notifyTransfer(senderId, receiverUserId, dto.amount, result.data.transaction_reference)
+        .catch((error) => this.logger.error('Transfer notification failed', error));
+    }
+
+    return result;
   }
 
   async getTransactions(userId: string, query: any) {
