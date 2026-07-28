@@ -28,8 +28,9 @@ export class WithdrawService {
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
     // Support biometric-based authorization: verify device fingerprint server-side
     if (dto.biometric_auth) {
-      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
-      const verified = await this.securityService.verifyDevice(userId, dto.device_fingerprint);
+      const deviceFingerprint = dto.device_fingerprint || (dto as any).deviceFingerprint;
+      if (!deviceFingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
+      const verified = await this.securityService.verifyDevice(userId, deviceFingerprint);
       if (!verified || (verified as any).trusted !== true) {
         throw new BadRequestException('Biometric device verification failed');
       }

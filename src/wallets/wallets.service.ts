@@ -47,10 +47,11 @@ export class WalletsService {
     // Support biometric-authenticated transactions: when `biometric_auth` is true,
     // verify the device fingerprint server-side via SecurityService and skip PIN verification.
     if (dto.biometric_auth) {
-      if (!dto.device_fingerprint) {
+      const deviceFingerprint = dto.device_fingerprint || (dto as any).deviceFingerprint;
+      if (!deviceFingerprint) {
         throw new BadRequestException('Device fingerprint required for biometric authorization');
       }
-      const verified = await this.securityService.verifyDevice(senderId, dto.device_fingerprint);
+      const verified = await this.securityService.verifyDevice(senderId, deviceFingerprint);
       if (!verified || !('trusted' in verified) || (verified as any).trusted !== true) {
         throw new ForbiddenException('Biometric device verification failed');
       }

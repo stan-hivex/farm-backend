@@ -147,8 +147,9 @@ export class QrService {
   async merchantPay(customerId: string, dto: { qr_payload: string; amount: number; pin?: string; biometric_auth?: boolean; device_fingerprint?: string }) {
     if (dto.amount <= 0) throw new BadRequestException('Amount must be positive');
     if (dto.biometric_auth) {
-      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
-      const verified = await this.securityService.verifyDevice(customerId, dto.device_fingerprint);
+      const deviceFingerprint = dto.device_fingerprint || (dto as any).deviceFingerprint;
+      if (!deviceFingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
+      const verified = await this.securityService.verifyDevice(customerId, deviceFingerprint);
       if (!verified || (verified as any).trusted !== true) {
         throw new BadRequestException('Biometric device verification failed');
       }
