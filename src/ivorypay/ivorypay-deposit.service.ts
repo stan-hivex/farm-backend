@@ -123,6 +123,27 @@ export class IvorypayDepositService {
       return { processed: false, reason: 'not_found' };
     }
 
+    // If the IvoryPay webhook provides the provider's transaction id, persist it
+    // so subsequent verification or stuck-deposit fixes use the provider's id
+    // rather than our internal reference.
+    try {
+      const providerId = payload?.id || payload?.data?.id || payload?.data?.transaction_id || payload?.data?.payment_id || null;
+      if (providerId && deposit.providerRef !== providerId) {
+        const metadata = (transaction.metadata as any) ?? {};
+        const updatedMetadata = { ...metadata, provider_ref: providerId };
+        await this.prisma.$transaction(async (tx) => {
+          await tx.deposit.update({ where: { id: deposit.id }, data: { providerRef: providerId } });
+          await tx.transactions.update({ where: { id: transaction.id }, data: { metadata: updatedMetadata } });
+        });
+        // refresh local variables to reflect persisted change
+        deposit.providerRef = providerId;
+        transaction.metadata = updatedMetadata;
+        this.logger.log(`IvoryPay webhook: synced provider id ${providerId} into deposit and transaction for ${reference}`);
+      }
+    } catch (e) {
+      this.logger.debug(`IvoryPay webhook: failed to sync provider id for ${reference}`, e as any);
+    }
+
     const depositStatus = deposit.status?.toString().toUpperCase();
     const txStatus = transaction.status?.toString().toLowerCase();
     const isSuccess = this.isSuccess(payload);
