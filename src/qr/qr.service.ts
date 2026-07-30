@@ -263,7 +263,7 @@ export class QrService {
 
     await Promise.all([
       this.notificationsService.sendNotification(customerId, {
-        type: 'merchant_payment_sent',
+        type: 'merchant',
         entityId: result.transaction_reference,
         title: 'Merchant payment sent',
         body: `You sent ${dto.amount} FARM to ${merchant.business_name}.`,
@@ -271,11 +271,12 @@ export class QrService {
           merchant_id: merchant.id,
           merchant_name: merchant.business_name,
           amount: dto.amount,
+          event: 'merchant_payment_sent',
         },
       }),
       merchant.user_id
         ? this.notificationsService.sendNotification(merchant.user_id, {
-            type: 'merchant_payment_received',
+            type: 'merchant',
             entityId: result.transaction_reference,
             title: 'Merchant payment received',
             body: `You received ${dto.amount} FARM from ${payerName}.`,
@@ -284,6 +285,7 @@ export class QrService {
               customer_id: customerId,
               customer_username: customer?.username,
               amount: dto.amount,
+              event: 'merchant_payment_received',
             },
           })
         : Promise.resolve(null),

@@ -150,13 +150,27 @@ async updateSettings(userId: string, body: any) {
   };
 }
 
+  private normalizeNotificationType(type: string | notification_type | undefined): notification_type {
+    const validTypes = new Set<notification_type>([
+      'system', 'admin', 'transaction', 'transfer_received', 'transfer_sent', 'payment_request',
+      'request_completed', 'request_declined', 'deposit_completed', 'withdrawal_completed', 'merchant',
+      'system_announcement', 'kyc_update', 'security', 'escrow', 'investment', 'transfer_request',
+    ]);
+    const normalized = type?.toString().trim().toLowerCase();
+    if (!normalized) return 'system';
+    if (validTypes.has(normalized as notification_type)) return normalized as notification_type;
+    if (normalized.startsWith('merchant_payment')) return 'merchant';
+    return 'system';
+  }
+
   async createInApp(userId: string, dto: {
     type: notification_type | string; title: string; body: string; metadata?: any; entityId?: string;
   }) {
+    const type = this.normalizeNotificationType(dto.type);
     return this.prisma.notifications.create({
       data: {
         user_id: userId,
-        type: dto.type as notification_type,
+        type,
         title: dto.title,
         body: dto.body,
         metadata: {
