@@ -1,5 +1,5 @@
 import { Processor, Process } from '@nestjs/bull';
-import { Job, Queue } from 'bull';
+import type { Job, Queue } from 'bull';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { TransferRequestsService } from '../../transfer-requests/transfer-requests.service';

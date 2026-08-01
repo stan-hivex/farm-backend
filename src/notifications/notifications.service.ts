@@ -320,13 +320,17 @@ async updateSettings(userId: string, body: any) {
     ]);
   }
 
-  async sendNotification(userId: string, dto: {
+  async sendNotification(userId: string | null, dto: {
     type: notification_type | string;
     title: string;
     body: string;
     entityId?: string;
     metadata?: Record<string, any>;
   }) {
+    if (!userId) {
+      return null;
+    }
+
     const timestamp = new Date().toISOString();
     const metadata = {
       ...(dto.metadata ?? {}),
