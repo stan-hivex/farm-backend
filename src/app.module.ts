@@ -37,6 +37,7 @@ import { WebsocketModule } from './websocket/websocket.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
+import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
 
 
 @Module({
@@ -84,6 +85,7 @@ import { PaymentRequestsModule } from './payment-requests/payment-requests.modul
         };
       },
     }),
+    BullModule.registerQueue({ name: 'expiry-tasks' }),
     DatabaseModule,
     PrismaModule,
     RedisModule,
@@ -117,6 +119,7 @@ import { PaymentRequestsModule } from './payment-requests/payment-requests.modul
     PaymentRequestsModule,
   ],
   providers: [
+    ExpiryTasksService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

@@ -337,30 +337,62 @@ export class AdminService {
     push?: boolean;
     email?: boolean;
     sms?: boolean;
+    audience?: string;
     target_role?: string;
+    recipientIds?: string[];
+    recipientEmails?: string[];
+    recipientPhones?: string[];
   }) {
     const where: any = { is_deleted: false, is_active: true };
-    if (dto.target_role) where.role = dto.target_role;
+    const audience = dto.audience?.trim().toLowerCase() || dto.target_role?.trim().toLowerCase();
+
+    if (dto.recipientIds?.length || dto.recipientEmails?.length || dto.recipientPhones?.length) {
+      where.OR = [];
+      if (dto.recipientIds?.length) {
+        where.OR.push({ id: { in: dto.recipientIds } });
+      }
+      if (dto.recipientEmails?.length) {
+        where.OR.push({ email: { in: dto.recipientEmails } });
+      }
+      if (dto.recipientPhones?.length) {
+        where.OR.push({ phone: { in: dto.recipientPhones } });
+      }
+    } else if (audience === 'verified') {
+      where.kyc_status = 'verified';
+    } else if (audience === 'merchants') {
+      where.role = 'merchant';
+    } else if (audience === 'investors') {
+      where.role = 'user';
+    } else if (audience && audience !== 'all') {
+      where.role = audience;
+    }
 
     const users = await this.prisma.users.findMany({ where, select: { id: true, email: true, phone: true } });
 
-    const notificationPromises = users.map((user) =>
-      this.notifications.createInApp(user.id, {
-        type: dto.type ?? 'admin',
+    const shouldPush = dto.push ?? true;
+    const shouldEmail = dto.email ?? false;
+    const shouldSms = dto.sms ?? false;
+
+    await Promise.all(users.map((user) =>
+      this.notifications.sendNotification(user.id, {
+        type: dto.type ?? 'system_announcement',
         title: dto.title,
         body: dto.body,
-        metadata: dto.metadata,
+        metadata: {
+          ...(dto.metadata ?? {}),
+          audience: audience || 'custom',
+          sentBy: adminId,
+        },
       }),
-    );
-    await Promise.all(notificationPromises);
+    ));
 
-    if (dto.push) {
-      await Promise.all(users.map((user) => this.notifications.sendPush(user.id, dto.title, dto.body, dto.metadata)));
+    if (shouldPush) {
+      await Promise.all(users.map((user) => this.notifications.sendPush(user.id, dto.title, dto.body, { ...(dto.metadata ?? {}), audience: audience || 'custom', sentBy: adminId })));
     }
-    if (dto.email) {
+    if (shouldEmail) {
       await Promise.all(users.filter((u) => u.email).map((user) => this.notifications.sendEmail(user.email!, dto.title, `<p>${dto.body}</p>`)));
     }
-    if (dto.sms) {
+    if (shouldSms) {
       await Promise.all(users.filter((u) => u.phone).map((user) => this.notifications.sendSms(user.phone!, dto.body)));
     }
 
@@ -370,7 +402,7 @@ export class AdminService {
         action: 'BROADCAST_NOTIFICATION',
         entity_type: 'users',
         entity_id: null,
-        new_values: { title: dto.title, body: dto.body, type: dto.type, push: dto.push, email: dto.email, sms: dto.sms, target_role: dto.target_role },
+        new_values: { title: dto.title, body: dto.body, type: dto.type, push: shouldPush, email: shouldEmail, sms: shouldSms, audience: audience || 'custom', target_role: dto.target_role, recipientIds: dto.recipientIds, recipientEmails: dto.recipientEmails, recipientPhones: dto.recipientPhones },
       },
     });
 

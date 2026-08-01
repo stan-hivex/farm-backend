@@ -298,14 +298,24 @@ async updateSettings(userId: string, body: any) {
   }
 
   async notifyTransfer(senderId: string, receiverId: string, amount: number, reference: string) {
+    const [sender, receiver, receiverWallet] = await Promise.all([
+      (this.prisma as any).users.findUnique({ where: { id: senderId }, select: { first_name: true, last_name: true, username: true } }),
+      (this.prisma as any).users.findUnique({ where: { id: receiverId }, select: { first_name: true, last_name: true, username: true } }),
+      (this.prisma as any).wallets.findFirst({ where: { user_id: receiverId }, select: { balance: true } }),
+    ]);
+
+    const senderName = [sender?.first_name, sender?.last_name].filter(Boolean).join(' ').trim() || sender?.username || 'Someone';
+    const receiverName = [receiver?.first_name, receiver?.last_name].filter(Boolean).join(' ').trim() || receiver?.username || 'you';
+    const balance = receiverWallet ? Number(receiverWallet.balance ?? 0) : 0;
+
     await Promise.all([
       this.sendNotification(senderId, {
-        type: 'transfer_sent', entityId: reference, title: 'Transfer Successful',
-        body: `You sent ${amount} FARM.`,
+        type: 'transfer_sent', entityId: reference, title: '✅ Transfer Sent',
+        body: `You sent ${amount} FARM to ${receiverName}.`,
       }),
       this.sendNotification(receiverId, {
-        type: 'transfer_received', entityId: reference, title: 'Money Received',
-        body: `You received ${amount} FARM.`,
+        type: 'transfer_received', entityId: reference, title: '💰 Money Received',
+        body: `${senderName} sent you ${amount} FARM. Your balance is ${balance} FARM. Tap to view.`,
       }),
     ]);
   }

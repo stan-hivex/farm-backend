@@ -227,6 +227,7 @@ export class EscrowService {
       throw new ForbiddenException('Not a party to this escrow');
     if (escrow.status !== 'active')
       throw new BadRequestException('Can only dispute an active escrow');
+    const otherPartyId = escrow.buyer_id === userId ? escrow.seller_id : escrow.buyer_id;
     await this.prisma.escrow_contracts.update({
       where: { id: escrowId },
       data: {
@@ -238,6 +239,32 @@ export class EscrowService {
     await this.prisma.escrow_messages.create({
       data: { escrow_id: escrowId, sender_id: userId, message: `DISPUTE RAISED: ${dto.reason}` },
     });
+
+    await Promise.all([
+      this.notificationsService.sendNotification(userId, {
+        type: 'escrow_disputed',
+        entityId: escrow.id,
+        title: 'Dispute Raised',
+        body: `You have raised a dispute for escrow: ${escrow.title}. Our admin team will review within 24 hours.`,
+        metadata: {
+          escrow_id: escrow.id,
+          reason: dto.reason,
+          amount: Number(escrow.amount),
+        },
+      }),
+      this.notificationsService.sendNotification(otherPartyId, {
+        type: 'escrow_disputed',
+        entityId: escrow.id,
+        title: 'Escrow Under Dispute',
+        body: `A dispute has been raised for escrow: ${escrow.title}. Our admin team will investigate.`,
+        metadata: {
+          escrow_id: escrow.id,
+          disputed_by: userId,
+          amount: Number(escrow.amount),
+        },
+      }),
+    ]).catch((error) => this.logger.error('Escrow dispute notification failed', error));
+
     return { message: 'Dispute raised. Admin will review within 24 hours.' };
   }
 
@@ -251,6 +278,20 @@ export class EscrowService {
     await this.prisma.escrow_contracts.update({
       where: { id: escrowId }, data: { status: 'cancelled' },
     });
+
+    await this.notificationsService.sendNotification(escrow.seller_id, {
+      type: 'escrow_cancelled',
+      entityId: escrow.id,
+      title: 'Escrow Cancelled',
+      body: `The escrow for ${escrow.title} has been cancelled by the buyer.`,
+      metadata: {
+        escrow_id: escrow.id,
+        title: escrow.title,
+        amount: Number(escrow.amount),
+        cancelled_by: userId,
+      },
+    }).catch((error) => this.logger.error('Escrow cancellation notification failed', error));
+
     return { message: 'Escrow cancelled' };
   }
 

@@ -6,11 +6,14 @@ import { KycGuard } from '../common/guards/kyc.guard';
 import { PaystackModule } from '../paystack/paystack.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SecurityModule } from '../security/security.module';
+import { TransferRequestsModule } from '../transfer-requests/transfer-requests.module';
+
+import { ExpiryTasksProcessor } from '../common/tasks/expiry-tasks.processor';
 
 @Module({
   imports: [AuthModule, PaystackModule, NotificationsModule, SecurityModule],
   controllers: [EscrowController],
-  providers: [EscrowService, KycGuard],
+  providers: [EscrowService, KycGuard, ExpiryTasksProcessor],
   exports: [EscrowService],
 })
 export class EscrowModule {}

@@ -67,7 +67,11 @@ class BroadcastNotificationDto {
   @IsOptional() @IsBoolean() push?: boolean;
   @IsOptional() @IsBoolean() email?: boolean;
   @IsOptional() @IsBoolean() sms?: boolean;
+  @IsOptional() @IsString() audience?: string;
   @IsOptional() @IsString() target_role?: string;
+  @IsOptional() recipientIds?: string[];
+  @IsOptional() recipientEmails?: string[];
+  @IsOptional() recipientPhones?: string[];
 }
 
 @ApiTags('Admin')

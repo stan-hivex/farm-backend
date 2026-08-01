@@ -1,11 +1,15 @@
 import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { CloudinaryService } from '../common/cloudinary.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
 @Injectable()
 export class KycService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   private normalizeValue(value?: string) {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -163,6 +167,17 @@ export class KycService {
       data: updateData,
     });
 
+    await this.notificationsService.sendNotification(userId, {
+      type: 'kyc_submitted',
+      entityId: doc.id,
+      title: 'KYC Submitted',
+      body: 'Your KYC documents have been submitted for review. You will receive updates as we process them.',
+      metadata: {
+        kyc_level: kycLevel,
+        kyc_id: doc.id,
+      },
+    }).catch((error) => console.error('KYC submission notification failed', error));
+
     return { data: doc, message: 'KYC submitted. Your documents will be reviewed shortly.' };
   }
 
@@ -240,6 +255,39 @@ export class KycService {
         kyc_level: kycLevel,
       },
     });
+
+    const notificationMap = {
+      'under_review': {
+        title: 'KYC Under Review',
+        body: 'Your KYC documents are now being reviewed by our team.',
+      },
+      'verified': {
+        title: 'KYC Verified',
+        body: 'Congratulations! Your KYC has been verified successfully.',
+      },
+      'rejected': {
+        title: 'KYC Rejected',
+        body: `Your KYC was rejected. Reason: ${dto.rejection_reason || 'Please contact support for more information.'}`,
+      },
+      'additional_info_required': {
+        title: 'Additional Information Required',
+        body: `We need more information to complete your KYC. Reason: ${dto.rejection_reason || 'Please provide the requested documents.'}`,
+      },
+    };
+
+    const notifData = notificationMap[dto.status] || notificationMap['under_review'];
+    await this.notificationsService.sendNotification(doc.user_id!, {
+      type: `kyc_${dto.status}`,
+      entityId: doc.id,
+      title: notifData.title,
+      body: notifData.body,
+      metadata: {
+        kyc_id: doc.id,
+        kyc_status: dto.status,
+        reviewed_by: reviewerId,
+      },
+    }).catch((error) => console.error('KYC review notification failed', error));
+
     return { message: `KYC ${dto.status}` };
   }
 }

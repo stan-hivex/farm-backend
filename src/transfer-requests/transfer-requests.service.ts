@@ -491,6 +491,53 @@ export class TransferRequestsService {
     };
   }
 
+  // Process expired transfer requests: mark expired and notify both parties
+  async processExpiredRequests(): Promise<number> {
+    const now = new Date();
+    const expired = await this.prisma.transfer_requests.findMany({
+      where: { status: 'pending', expires_at: { lte: now } },
+    });
+    if (!expired || expired.length === 0) return 0;
+
+    let processed = 0;
+    for (const request of expired) {
+      try {
+        await this.prisma.transfer_requests.update({
+          where: { id: request.id },
+          data: { status: 'expired' },
+        });
+
+        const amount = Number((request as any).amount ?? 0);
+        await Promise.all([
+          request.requester_user_id
+            ? this.notificationsService.sendNotification(request.requester_user_id, {
+                type: 'transfer_request_expired',
+                entityId: request.id,
+                title: 'Transfer Request Expired',
+                body: `Your transfer request for ${amount} FARM has expired.`,
+                metadata: { request_id: request.id, amount },
+              })
+            : Promise.resolve(null),
+          request.sender_user_id
+            ? this.notificationsService.sendNotification(request.sender_user_id, {
+                type: 'transfer_request_expired',
+                entityId: request.id,
+                title: 'Transfer Request Expired',
+                body: `A transfer request you received for ${amount} FARM has expired.`,
+                metadata: { request_id: request.id, amount },
+              })
+            : Promise.resolve(null),
+        ]).catch((err) => this.logger.error('Transfer request expiry notification failed', err));
+
+        processed++;
+      } catch (e) {
+        this.logger.error(`Failed to process expiry for request ${request.id}: ${e}`);
+      }
+    }
+
+    return processed;
+  }
+
   // ──────────────────────────────────────────────────────────────────────
   // GET REQUEST DETAILS
   // ──────────────────────────────────────────────────────────────────────

@@ -5,11 +5,12 @@ import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SecurityModule } from '../security/security.module';
 import { KycGuard } from '../common/guards/kyc.guard';
+import { ExpiryTasksProcessor } from '../common/tasks/expiry-tasks.processor';
 
 @Module({
   imports: [AuthModule, NotificationsModule, SecurityModule],
   controllers: [TransferRequestsController],
-  providers: [TransferRequestsService, KycGuard],
+  providers: [TransferRequestsService, KycGuard, ExpiryTasksProcessor],
   exports: [TransferRequestsService],
 })
 export class TransferRequestsModule {}

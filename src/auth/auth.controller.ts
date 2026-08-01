@@ -408,7 +408,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Register a device token for push notifications' })
-  registerDeviceToken(
+  async registerDeviceToken(
     @CurrentUser() user: any,
     @Body() body: { token: string; platform?: string },
   ) {
