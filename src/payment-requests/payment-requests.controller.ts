@@ -41,6 +41,22 @@ export class PaymentRequestsController {
   }
 
   @Permissions('transfer:write')
+  @Post('approve')
+  @UseGuards(JwtGuard, KycGuard)
+  @ApiOperation({ summary: 'Approve a money request' })
+  approveRequest(@CurrentUser() u: any, @Body() dto: AcceptPaymentRequestDto, @Req() req: Request) {
+    return this.svc.acceptAndTransfer(u.id, dto as any, req.ip || '');
+  }
+
+  @Permissions('transfer:write')
+  @RequireOwnership('id')
+  @Post(':id/decline')
+  @ApiOperation({ summary: 'Decline a payment request' })
+  declineRequest(@CurrentUser() u: any, @Param('id') id: string) {
+    return this.svc.rejectRequest(u.id, id);
+  }
+
+  @Permissions('transfer:write')
   @RequireOwnership('id')
   @Post(':id/reject')
   @ApiOperation({ summary: 'Reject a payment request' })

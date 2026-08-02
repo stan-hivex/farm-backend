@@ -121,6 +121,16 @@ async updateSettings(userId: string, body: any) {
 
         vibration_enabled:
           body.vibration_enabled,
+        receive_money_requests: body.receive_money_requests,
+        money_sent: body.money_sent,
+        money_received: body.money_received,
+        deposits: body.deposits,
+        withdrawals: body.withdrawals,
+        escrow: body.escrow,
+        merchant_payments: body.merchant_payments,
+        security_alerts: body.security_alerts,
+        promotions: body.promotions,
+        announcements: body.announcements,
       },
 
       create: {
@@ -141,6 +151,16 @@ async updateSettings(userId: string, body: any) {
 
         vibration_enabled:
           body.vibration_enabled,
+        receive_money_requests: body.receive_money_requests,
+        money_sent: body.money_sent,
+        money_received: body.money_received,
+        deposits: body.deposits,
+        withdrawals: body.withdrawals,
+        escrow: body.escrow,
+        merchant_payments: body.merchant_payments,
+        security_alerts: body.security_alerts,
+        promotions: body.promotions,
+        announcements: body.announcements,
       },
     });
 
@@ -153,7 +173,7 @@ async updateSettings(userId: string, body: any) {
   private normalizeNotificationType(type: string | notification_type | undefined): notification_type {
     const validTypes = new Set<notification_type>([
       'system', 'admin', 'transaction', 'transfer_received', 'transfer_sent', 'payment_request',
-      'request_completed', 'request_declined', 'deposit_completed', 'withdrawal_completed', 'merchant',
+      'request_completed', 'request_declined', 'request_expired', 'deposit_completed', 'withdrawal_completed', 'merchant',
       'system_announcement', 'kyc_update', 'security', 'escrow', 'investment', 'transfer_request',
     ]);
     const normalized = type?.toString().trim().toLowerCase();
@@ -259,6 +279,28 @@ async updateSettings(userId: string, body: any) {
       this.logger.debug('FirebaseService not available; skipping push send');
       return false;
     }
+
+    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
+    const pushEnabled = settings?.push_notifications ?? true;
+    const type = (data?.type as string | undefined)?.toLowerCase() ?? '';
+    const isSecurity = type.includes('security') || type.includes('kyc') || title.toLowerCase().includes('security');
+    const categoryAllowed = (() => {
+      if (type.includes('payment_request') || type.includes('request_') || type.includes('request')) return settings?.receive_money_requests ?? true;
+      if (type.includes('transfer_sent') || type.includes('transfer')) return settings?.money_sent ?? true;
+      if (type.includes('transfer_received') || type.includes('money_received')) return settings?.money_received ?? true;
+      if (type.includes('deposit')) return settings?.deposits ?? true;
+      if (type.includes('withdraw')) return settings?.withdrawals ?? true;
+      if (type.includes('escrow')) return settings?.escrow ?? true;
+      if (type.includes('merchant')) return settings?.merchant_payments ?? true;
+      if (isSecurity) return settings?.security_alerts ?? true;
+      if (type.includes('announcement') || type.includes('promotion')) return settings?.announcements ?? true;
+      return true;
+    })();
+
+    if (!pushEnabled || !categoryAllowed) {
+      this.logger.debug(`Push blocked for user ${userId} by preferences`);
+      return false;
+    }
     try {
       const tokens = await this.getDeviceTokens(userId);
       if (!tokens || tokens.length === 0) return false;
@@ -342,6 +384,13 @@ async updateSettings(userId: string, body: any) {
       ...dto,
       metadata,
     });
+    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
+    const isSecurity = dto.type.toString().toLowerCase().includes('security') || dto.title.toLowerCase().includes('security');
+    const shouldStoreInApp = isSecurity || settings?.push_notifications !== false || true;
+    if (!shouldStoreInApp) {
+      await this.prisma.notifications.delete({ where: { id: notification.id } });
+      return notification;
+    }
     await this.sendPush(userId, dto.title, dto.body, {
       type: dto.type,
       entityId: dto.entityId ?? '',

@@ -751,6 +751,7 @@ enum notification_type {
   payment_request
   request_completed
   request_declined
+  request_expired
   deposit_completed
   withdrawal_completed
   merchant_payment
@@ -907,6 +908,17 @@ model user_settings {
   push_notifications  Boolean @default(true)
   email_notifications Boolean @default(false)
   sms_notifications   Boolean @default(false)
+
+  receive_money_requests Boolean @default(true)
+  money_sent             Boolean @default(true)
+  money_received         Boolean @default(true)
+  deposits               Boolean @default(true)
+  withdrawals            Boolean @default(true)
+  escrow                 Boolean @default(true)
+  merchant_payments      Boolean @default(true)
+  security_alerts        Boolean @default(true)
+  promotions             Boolean @default(false)
+  announcements          Boolean @default(false)
 
   sound_enabled     Boolean @default(true)
   vibration_enabled Boolean @default(true)
