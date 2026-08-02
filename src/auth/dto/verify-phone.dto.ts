@@ -7,6 +7,11 @@ export class VerifyPhoneDto {
   @IsString()
   firebaseIdToken!: string;
 
+  @ApiProperty({ required: false, description: 'Temporary login token issued after password verification for regular users' })
+  @IsOptional()
+  @IsString()
+  temporaryLoginToken?: string;
+
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()

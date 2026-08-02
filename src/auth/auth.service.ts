@@ -158,6 +158,27 @@ if (new Date() > expiryDate) {
     return { message: 'OTP verified successfully', user_id: user.id };
   }
 
+  private async createTemporaryLoginToken(userId: string, role: string) {
+    const secret = this.cfg.get<string>('JWT_TEMPORARY_SECRET') || this.cfg.get<string>('JWT_ACCESS_SECRET');
+    if (!secret) {
+      throw new Error('JWT secret not configured for temporary login tokens');
+    }
+
+    return this.jwt.signAsync(
+      { sub: userId, role, type: 'temporary_login' },
+      { secret, expiresIn: '5m' },
+    );
+  }
+
+  private async verifyTemporaryLoginToken(token: string) {
+    const secret = this.cfg.get<string>('JWT_TEMPORARY_SECRET') || this.cfg.get<string>('JWT_ACCESS_SECRET');
+    if (!secret) {
+      throw new Error('JWT secret not configured for temporary login tokens');
+    }
+
+    return this.jwt.verifyAsync(token, { secret });
+  }
+
   // ── Login ────────────────────────────────────────────────────────────────────
   async login(dto: LoginDto, ip: string, userAgent: string, turnstileToken?: string) {
     // Validate Turnstile token (bot protection)
@@ -224,20 +245,55 @@ if (new Date() > expiryDate) {
     });
 
     const walletId = user.wallets[0]?.id;
-    const userRole = user.role ?? 'user';
-    const tokens = await this.issueTokens(user.id, userRole, walletId);
-    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    const userRole = (user.role ?? 'user').toString().toLowerCase();
 
-    await this.prisma.user_sessions.create({
-      data: {
-        user_id: user.id,
-        refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
-        jwt_id: tokens.jti,
-        ip_address: ip,
-        user_agent: userAgent,
-        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      },
-    });
+    if (userRole === 'admin' || userRole === 'super_admin') {
+      const tokens = await this.issueTokens(user.id, userRole, walletId);
+      const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+
+      await this.prisma.user_sessions.create({
+        data: {
+          user_id: user.id,
+          refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
+          jwt_id: tokens.jti,
+          ip_address: ip,
+          user_agent: userAgent,
+          expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      await this.prisma.activity_logs.create({
+        data: { user_id: user.id, activity: 'LOGIN_STEP_1', ip_address: ip },
+      });
+
+      return {
+        data: {
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          token_type: 'Bearer',
+          expires_in: 900,
+          otp_required: false,
+          phone: this.normalizePhoneNumber(user.phone),
+          user: {
+            id: user.id,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            username: user.username,
+            phone: user.phone,
+            email: user.email,
+            role: user.role,
+            kyc_status: user.kyc_status,
+            kyc_level: user.kyc_level,
+            phone_verified: user.phone_verified,
+            has_pin: !!user.pin_hash,
+            profile_image: user.profile_image,
+          },
+        },
+        message: 'Login successful',
+      };
+    }
+
+    const temporaryLoginToken = await this.createTemporaryLoginToken(user.id, userRole);
 
     await this.prisma.activity_logs.create({
       data: { user_id: user.id, activity: 'LOGIN_STEP_1', ip_address: ip },
@@ -245,11 +301,11 @@ if (new Date() > expiryDate) {
 
     return {
       data: {
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
         token_type: 'Bearer',
-        expires_in: 900,
+        expires_in: 300,
         otp_required: true,
+        temporary_login_token: temporaryLoginToken,
+        temporary_login_expires_in: 300,
         phone: this.normalizePhoneNumber(user.phone),
         user: {
           id: user.id,
@@ -363,6 +419,7 @@ if (new Date() > expiryDate) {
    */
   async verifyPhone(
     firebaseToken: string,
+    temporaryLoginToken: string | undefined,
     ip: string,
     userAgent: string,
     turnstileToken?: string,
@@ -372,6 +429,15 @@ if (new Date() > expiryDate) {
     }
 
     if (!firebaseToken) throw new BadRequestException('Firebase token is required');
+    if (!temporaryLoginToken) {
+      throw new BadRequestException('Temporary login token is required');
+    }
+
+    const decodedTemporaryToken = await this.verifyTemporaryLoginToken(temporaryLoginToken);
+    const temporaryUserId = decodedTemporaryToken?.sub?.toString();
+    if (!temporaryUserId) {
+      throw new UnauthorizedException('Invalid temporary login token');
+    }
 
     const decodedToken = await this.verifyFirebaseToken(firebaseToken);
     const firebasePhone = this.normalizePhoneNumber(decodedToken.phone_number || '');
@@ -382,6 +448,7 @@ if (new Date() > expiryDate) {
 
     const user = await this.prisma.users.findFirst({
       where: {
+        id: temporaryUserId,
         phone: firebasePhone,
         is_deleted: false,
       },
