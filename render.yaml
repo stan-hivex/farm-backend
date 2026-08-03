@@ -10,6 +10,7 @@ services:
       npm install -g @nestjs/cli
       node ./node_modules/prisma/build/index.js generate
       npx nest build
+      node ./scripts/ensure-render-entrypoint.js
 
     startCommand: bash ./start.sh
 
