@@ -3,6 +3,7 @@ import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { type notification_type } from '@prisma/client';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import { CacheService } from '../common/cache/cache.service';
 import * as nodemailer from 'nodemailer';
 import Twilio from 'twilio';
 import { FirebaseService } from './firebase.service';
@@ -13,7 +14,12 @@ export class NotificationsService {
   private mailer: nodemailer.Transporter;
   private twilioClient: any;
 
-  constructor(private prisma: PrismaService, private cfg: ConfigService, private firebase: FirebaseService) {
+  constructor(
+    private prisma: PrismaService,
+    private cfg: ConfigService,
+    private firebase: FirebaseService,
+    private cache: CacheService,
+  ) {
     this.mailer = nodemailer.createTransport({
       host: cfg.get('SMTP_HOST'),
       port: cfg.get<number>('SMTP_PORT', 587),
@@ -83,19 +89,20 @@ export class NotificationsService {
   }
 
   async getSettings(userId: string) {
+    const cacheKey = `notifications-settings:${userId}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return { success: true, data: cached };
 
-  const settings =
-    await this.prisma.user_settings.findUnique({
-      where: {
-        user_id: userId,
-      },
-    });
+    const settings = await this.prisma.user_settings.findUnique({
+      where: { user_id: userId },
+    }) as any;
 
-  return {
-    success: true,
-    data: settings,
-  };
-}
+    await this.cache.cacheSet(cacheKey, settings, 60);
+    return {
+      success: true,
+      data: settings,
+    };
+  }
 
 async updateSettings(userId: string, body: any) {
 
@@ -171,9 +178,9 @@ async updateSettings(userId: string, body: any) {
 }
 
   private normalizeNotificationType(type: string | notification_type | undefined): notification_type {
-    const validTypes = new Set<notification_type>([
+    const validTypes = new Set<string>([
       'system', 'admin', 'transaction', 'transfer_received', 'transfer_sent', 'payment_request',
-      'request_completed', 'request_declined', 'request_expired', 'deposit_completed', 'withdrawal_completed', 'merchant',
+      'request_completed', 'request_declined', 'deposit_completed', 'withdrawal_completed', 'merchant',
       'system_announcement', 'kyc_update', 'security', 'escrow', 'investment', 'transfer_request',
     ]);
     const normalized = type?.toString().trim().toLowerCase();
@@ -187,7 +194,7 @@ async updateSettings(userId: string, body: any) {
     type: notification_type | string; title: string; body: string; metadata?: any; entityId?: string;
   }) {
     const type = this.normalizeNotificationType(dto.type);
-    return this.prisma.notifications.create({
+    const notification = await this.prisma.notifications.create({
       data: {
         user_id: userId,
         type,
@@ -201,10 +208,16 @@ async updateSettings(userId: string, body: any) {
         },
       },
     });
+    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
+    return notification;
   }
 
   async getNotifications(userId: string, query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const cacheKey = `notifications-list:${userId}:${page}:${limit}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const [items, total] = await Promise.all([
       this.prisma.notifications.findMany({
         where: { user_id: userId },
@@ -214,7 +227,9 @@ async updateSettings(userId: string, body: any) {
       }),
       this.prisma.notifications.count({ where: { user_id: userId } }),
     ]);
-    return { data: items, meta: paginate(total, page, limit) };
+    const payload = { data: items, meta: paginate(total, page, limit) };
+    await this.cache.cacheSet(cacheKey, payload, 30);
+    return payload;
   }
 
   async markRead(userId: string, id: string) {
@@ -222,6 +237,7 @@ async updateSettings(userId: string, body: any) {
       where: { id, user_id: userId },
       data: { is_read: true },
     });
+    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
     return { message: 'Notification marked as read' };
   }
 
@@ -230,6 +246,7 @@ async updateSettings(userId: string, body: any) {
       where: { user_id: userId, is_read: false },
       data: { is_read: true },
     });
+    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
     return { message: 'All notifications marked as read' };
   }
 
@@ -237,6 +254,7 @@ async updateSettings(userId: string, body: any) {
     await this.prisma.notifications.deleteMany({
       where: { id, user_id: userId },
     });
+    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
     return { message: 'Notification deleted' };
   }
 
@@ -244,6 +262,7 @@ async updateSettings(userId: string, body: any) {
     await this.prisma.notifications.deleteMany({
       where: { user_id: userId },
     });
+    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
     return { message: 'All notifications deleted' };
   }
 
@@ -280,7 +299,7 @@ async updateSettings(userId: string, body: any) {
       return false;
     }
 
-    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
+    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } }) as any;
     const pushEnabled = settings?.push_notifications ?? true;
     const type = (data?.type as string | undefined)?.toLowerCase() ?? '';
     const isSecurity = type.includes('security') || type.includes('kyc') || title.toLowerCase().includes('security');
@@ -352,11 +371,11 @@ async updateSettings(userId: string, body: any) {
 
     await Promise.all([
       this.sendNotification(senderId, {
-        type: 'transfer_sent', entityId: reference, title: '✅ Transfer Sent',
+        type: 'transfer_sent', entityId: reference, title: 'Transfer Sent',
         body: `You sent ${amount} FARM to ${receiverName}.`,
       }),
       this.sendNotification(receiverId, {
-        type: 'transfer_received', entityId: reference, title: '💰 Money Received',
+        type: 'transfer_received', entityId: reference, title: 'Money Received',
         body: `${senderName} sent you ${amount} FARM. Your balance is ${balance} FARM. Tap to view.`,
       }),
     ]);

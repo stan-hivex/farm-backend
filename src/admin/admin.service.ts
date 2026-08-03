@@ -4,6 +4,7 @@ import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class AdminService {
@@ -12,6 +13,7 @@ export class AdminService {
     private escrowService: EscrowService,
     private notifications: NotificationsService,
     private withdrawService: WithdrawService,
+    private cache: CacheService,
   ) {}
 
   async getDashboardStats() {
@@ -452,16 +454,28 @@ export class AdminService {
   }
 
   async getSettings() {
-    return {
+    const cacheKey = 'app-settings:all';
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
+    const payload = {
       data: await this.prisma.system_settings.findMany({ orderBy: { setting_key: 'asc' } }),
     };
+    await this.cache.cacheSet(cacheKey, payload, 300);
+    return payload;
   }
 
   async getExchangeRates() {
+    const cacheKey = 'exchange-rates:all';
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const rates = await this.prisma.exchange_rates.findMany({
       orderBy: [{ base_currency: 'asc' }, { target_currency: 'asc' }],
     });
-    return { data: rates };
+    const payload = { data: rates };
+    await this.cache.cacheSet(cacheKey, payload, 300);
+    return payload;
   }
 
   async updateExchangeRates(rates: { base_currency: string; target_currency: string; rate: number }[], adminId: string): Promise<{ data: any[]; message: string }> {
@@ -491,6 +505,7 @@ export class AdminService {
         upserted.push(entry as any);
       }
     }
+    await this.cache.cacheDelete('exchange-rates:all');
     return { data: upserted, message: 'Exchange rates updated' };
   }
 
@@ -500,6 +515,7 @@ export class AdminService {
       update: { setting_value: value, updated_by: adminId },
       create: { setting_key: key, setting_value: value, updated_by: adminId },
     });
+    await this.cache.cacheDelete('app-settings:all');
     return { data: setting, message: 'Setting updated' };
   }
 

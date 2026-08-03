@@ -30,8 +30,6 @@ import { AuthService } from './auth.service';
 
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { FirebaseLoginDto } from './dto/firebase-login.dto';
-import { VerifyPhoneDto } from './dto/verify-phone.dto';
 import { SupabaseAuthDto } from './dto/supabase-auth.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { SetPinDto } from './dto/set-pin.dto';
@@ -258,51 +256,6 @@ export class AuthController {
 
     return this.authService.login(
       body as LoginDto,
-      req.ip || '',
-      req.headers['user-agent'] || '',
-    );
-  }
-
-  @Public()
-  @Post('firebase-login')
-  @HttpCode(HttpStatus.OK)
-  @Throttle({
-    default: {
-      limit: 5,
-      ttl: 60,
-      generateKey: authThrottleKey,
-    },
-  })
-  @ApiOperation({ summary: 'Complete login with a verified Firebase ID token' })
-  firebaseLogin(
-    @Body() dto: FirebaseLoginDto,
-    @Req() req: Request,
-  ) {
-    return this.authService.firebaseLogin(
-      {
-        ...dto,
-        identifier: dto.identifier || '',
-      },
-      req.ip || '',
-      req.headers['user-agent'] || '',
-    );
-  }
-
-  /**
-   * ================= VERIFY PHONE (Firebase) =================
-   * Public endpoint: verifies Firebase ID token and issues FARM JWT
-   */
-  @Public()
-  @Post('verify-phone')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify phone using Firebase ID token' })
-  async verifyPhone(
-    @Body() dto: VerifyPhoneDto,
-    @Req() req: Request,
-  ) {
-    return this.authService.verifyPhone(
-      dto.firebaseIdToken,
-      dto.temporaryLoginToken,
       req.ip || '',
       req.headers['user-agent'] || '',
     );

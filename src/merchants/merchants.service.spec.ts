@@ -15,7 +15,7 @@ describe('MerchantsService QR access', () => {
       generateMerchantQr: jest.fn(),
       getMerchantQr: jest.fn(),
     };
-    service = new MerchantsService(prisma, qrService);
+    service = new MerchantsService(prisma, qrService, { cacheGet: jest.fn(), cacheSet: jest.fn() } as any);
   });
 
   it('allows fetching a QR image for a merchant that is still pending approval', async () => {

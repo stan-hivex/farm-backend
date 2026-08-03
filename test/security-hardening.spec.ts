@@ -6,7 +6,7 @@ import { AuthService } from '../src/auth/auth.service';
 import { ApiKeyHashService } from '../src/common/security/api-key-hash.service';
 import { FieldEncryption } from '../src/common/encryption/field-encryption';
 import * as bcrypt from 'bcrypt';
-import * as request from 'supertest';
+import request from 'supertest';
 
 describe('🔒 Security Hardening Tests (Production)', () => {
   let app: INestApplication;

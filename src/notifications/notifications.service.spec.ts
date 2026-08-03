@@ -21,7 +21,12 @@ describe('NotificationsService.notifyTransfer', () => {
       },
     };
 
-    const service = new NotificationsService(prisma as any, { get: jest.fn() } as any, {} as any);
+    const service = new NotificationsService(
+      prisma as any,
+      { get: jest.fn() } as any,
+      {} as any,
+      { cacheGet: jest.fn(), cacheSet: jest.fn() } as any,
+    );
     const sendNotificationSpy = jest.spyOn(service, 'sendNotification').mockResolvedValue({ id: 'notify-1' } as any);
 
     await service.notifyTransfer('sender-id', 'receiver-id', 250, 'tx-123');

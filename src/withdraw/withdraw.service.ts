@@ -135,28 +135,46 @@ export class WithdrawService {
     await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
     await this.cache.cacheInvalidatePattern(`dashboard:${userId}`);
     await this.cache.cacheInvalidatePattern(`transactions:${userId}:*`);
+    await this.cache.cacheInvalidatePattern(`withdrawals:${userId}`);
+    await this.cache.cacheInvalidatePattern(`withdrawal-status:${reference}:*`);
 
     return { success: true, reference, withdrawal };
   }
 
   async getUserWithdrawals(userId: string) {
-    return this.prisma.withdrawal.findMany({
+    const cacheKey = `withdrawals:${userId}`;
+    const cached = await this.cache.cacheGet<any[]>(cacheKey);
+    if (cached) return cached;
+
+    const withdrawals = await this.prisma.withdrawal.findMany({
       where: { userId, status: { not: 'FAILED' } },
       orderBy: { createdAt: 'desc' },
     });
+
+    await this.cache.cacheSet(cacheKey, withdrawals, 45);
+    return withdrawals;
   }
 
   async getWithdrawal(id: string, userId?: string) {
+    const cacheKey = `withdrawal:${id}:${userId ?? 'anonymous'}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const withdrawal = await this.prisma.withdrawal.findUnique({ where: { id } });
     if (!withdrawal) {
       return null;
     }
 
     assertResourceAccess(withdrawal.userId, userId, 'withdrawal');
+    await this.cache.cacheSet(cacheKey, withdrawal, 60);
     return withdrawal;
   }
 
   async getWithdrawalStatus(reference: string, userId: string) {
+    const cacheKey = `withdrawal-status:${reference}:${userId}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const withdrawal = await this.prisma.withdrawal.findFirst({
       where: { reference, userId },
     });
@@ -195,6 +213,7 @@ export class WithdrawService {
       }
     }
 
+    await this.cache.cacheSet(cacheKey, statusResult, 30);
     return statusResult;
   }
 

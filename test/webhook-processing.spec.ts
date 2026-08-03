@@ -11,6 +11,7 @@ describe('WebhookService processing', () => {
   const mockWebsocket: any = { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn(), server: { emit: jest.fn() } };
   const mockCfg: any = { get: (k: string, d?: any) => d };
   const mockPaystackService: any = { verifyTransaction: jest.fn() };
+  const mockIvorypayService: any = {};
   const mockQueue: any = { add: jest.fn().mockResolvedValue(true) };
   const mockRedis: any = { set: jest.fn().mockResolvedValue('OK'), del: jest.fn().mockResolvedValue(1) };
 
@@ -23,6 +24,7 @@ describe('WebhookService processing', () => {
       mockWebsocket,
       mockCfg,
       mockPaystackService,
+      mockIvorypayService,
       mockQueue,
       mockRedis,
     );

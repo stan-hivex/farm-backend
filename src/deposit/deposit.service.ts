@@ -205,6 +205,9 @@ export class DepositService {
       throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
     }
 
+    await this.cache.cacheInvalidatePattern(`deposits:${userId}`);
+    await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
+
     return {
       success: true,
       payment_url: paymentUrl,
@@ -215,27 +218,46 @@ export class DepositService {
   }
 
   async getUserDeposits(userId: string) {
+    const cacheKey = `deposits:${userId}`;
+    const cached = await this.cache.cacheGet<any[]>(cacheKey);
+    if (cached) return cached;
+
     // Return only successfully completed deposits to users.
     // Failed, pending or processing deposits are intentionally hidden
     // so the frontend shows only confirmed funds the webhook has validated.
-    return this.prisma.deposit.findMany({
+    const deposits = await this.prisma.deposit.findMany({
       where: { userId, status: 'SUCCESS' },
       orderBy: { createdAt: 'desc' },
     });
+
+    await this.cache.cacheSet(cacheKey, deposits, 45);
+    return deposits;
   }
 
   async getWalletBalance(userId: string) {
+    const cacheKey = `wallet:${userId}:balance`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
-    return { balance: wallet?.balance ?? 0, locked_balance: wallet?.locked_balance ?? 0 };
+    const payload = { balance: wallet?.balance ?? 0, locked_balance: wallet?.locked_balance ?? 0 };
+    await this.cache.cacheSet(cacheKey, payload, 30);
+    return payload;
   }
 
   async getDepositById(id: string, userId?: string) {
+    const cacheKey = `deposit:${id}:${userId ?? 'anonymous'}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const deposit = await this.prisma.deposit.findUnique({ where: { id } });
     if (!deposit) return null;
     assertResourceAccess(deposit.userId, userId, 'deposit');
     if (deposit.status !== 'SUCCESS') return null;
+
+    await this.cache.cacheSet(cacheKey, deposit, 60);
     return deposit;
   }
 
@@ -684,6 +706,9 @@ export class DepositService {
       this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`),
       this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
       this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
+      this.cache.cacheInvalidatePattern(`deposits:${userId}`),
+      this.cache.cacheInvalidatePattern(`withdrawals:${userId}`),
+      this.cache.cacheInvalidatePattern('deposit:*'),
       this.cache.cacheDelete('admin:dashboard:stats'),
       this.cache.cacheDelete('admin:analytics'),
       this.cache.cacheDelete('admin:superadmin-dashboard'),

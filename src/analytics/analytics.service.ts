@@ -1,11 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class AnalyticsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cache: CacheService,
+  ) {}
 
   async getPlatformStats(period: 'day' | 'week' | 'month' = 'month') {
+    const cacheKey = `analytics:platform-stats:${period}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const from = new Date();
     if (period === 'day') from.setDate(from.getDate() - 1);
     else if (period === 'week') from.setDate(from.getDate() - 7);
@@ -24,7 +32,7 @@ export class AnalyticsService {
       }),
     ]);
 
-    return {
+    const payload = {
       data: {
         period,
         transaction_volume: Number(txVolume._sum.amount || 0),
@@ -35,9 +43,16 @@ export class AnalyticsService {
         merchant_payment_count: merchantPayments._count,
       },
     };
+
+    await this.cache.cacheSet(cacheKey, payload, 90);
+    return payload;
   }
 
   async getTransactionVolume(days = 30) {
+    const cacheKey = `analytics:transaction-volume:${days}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const from = new Date();
     from.setDate(from.getDate() - days);
     const txns = await this.prisma.transactions.findMany({
@@ -52,13 +67,19 @@ export class AnalyticsService {
       byDay[day].total += Number(t.amount);
       byDay[day].count++;
     }
-    return { data: Object.values(byDay) };
+    const payload = { data: Object.values(byDay) };
+    await this.cache.cacheSet(cacheKey, payload, 90);
+    return payload;
   }
   async getUserGrowthHistory(
     userId: string,
     days = 7,
     period = 'daily',
   ) {
+    const cacheKey = `analytics:user-growth:${userId}:${days}:${period}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
     const normalizedPeriod = period?.toString().trim().toLowerCase() || 'daily';
 
     const from = new Date();
@@ -172,11 +193,14 @@ export class AnalyticsService {
         ? 100
         : 0;
 
-    return {
+    const payload = {
       data: sorted.map((item) => ({ date: item.date, total: item.total })),
       growth_percentage: growthPercentage,
       period: normalizedPeriod,
     };
+
+    await this.cache.cacheSet(cacheKey, payload, 90);
+    return payload;
   }
 
 }

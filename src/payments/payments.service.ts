@@ -5,6 +5,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { PaymentMethod } from '@prisma/client';
+import { CacheService } from '../common/cache/cache.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -17,6 +18,7 @@ export class PaymentsService {
     private cfg: ConfigService,
     private ivorypay: IvorypayService,
     private paystack: PaystackService,
+    private cache: CacheService,
   ) {}
 
   async initiateDeposit(
@@ -441,20 +443,31 @@ export class PaymentsService {
     const toCode = to.toUpperCase();
     if (fromCode === toCode) return 1;
 
+    const cacheKey = `exchange-rate:${fromCode}:${toCode}`;
+    const cached = await this.cache.cacheGet<number>(cacheKey);
+    if (cached !== null && cached !== undefined) return cached;
+
     const directRate = await this.prisma.exchange_rates.findFirst({
       where: { base_currency: fromCode, target_currency: toCode },
       orderBy: { fetched_at: 'desc' },
     });
-    if (directRate) return Number(directRate.rate);
+    if (directRate) {
+      const rate = Number(directRate.rate);
+      await this.cache.cacheSet(cacheKey, rate, 300);
+      return rate;
+    }
 
     const reverseRate = await this.prisma.exchange_rates.findFirst({
       where: { base_currency: toCode, target_currency: fromCode },
       orderBy: { fetched_at: 'desc' },
     });
     if (reverseRate && Number(reverseRate.rate) !== 0) {
-      return 1 / Number(reverseRate.rate);
+      const rate = 1 / Number(reverseRate.rate);
+      await this.cache.cacheSet(cacheKey, rate, 300);
+      return rate;
     }
 
+    await this.cache.cacheSet(cacheKey, 1, 300);
     return 1;
   }
 
