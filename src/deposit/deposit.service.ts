@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { resolveDepositCreditAmount } from './deposit.utils';
 
 @Injectable()
 export class DepositService {
@@ -440,7 +441,7 @@ export class DepositService {
         return { ok: false };
       }
 
-      const amount = this.normalizeAmount(Number(deposit.amount));
+      const amount = this.normalizeAmount(resolveDepositCreditAmount(transaction, deposit));
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
 
       await tx.wallets.update({
@@ -562,7 +563,7 @@ export class DepositService {
       if (!wallet) return { ok: false };
 
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const amount = this.normalizeAmount(Number(transaction.amount));
+      const amount = this.normalizeAmount(resolveDepositCreditAmount(transaction));
 
       const updated = await tx.transactions.updateMany({
         where: { id: transaction.id, status: { not: 'completed' } },
@@ -650,7 +651,7 @@ export class DepositService {
       }
 
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const amount = this.normalizeAmount(Number(deposit.amount));
+      const amount = this.normalizeAmount(resolveDepositCreditAmount(transaction, deposit));
 
       await tx.wallets.update({
         where: { id: wallet.id },

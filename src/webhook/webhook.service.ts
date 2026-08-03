@@ -13,6 +13,7 @@ import { QUEUES } from '../common/constants';
 import type { Queue } from 'bull';
 import type { Redis } from 'ioredis';
 import { verifyPaystackSignature } from '../payments/utils/paystack-webhook.util';
+import { resolveDepositCreditAmount } from '../deposit/deposit.utils';
 
 @Injectable()
 export class WebhookService {
@@ -781,7 +782,7 @@ export class WebhookService {
           return { ok: false };
         }
 
-        const amount = this.getFarmAmountForCredit(transaction, deposit);
+        const amount = this.normalizeAmount(resolveDepositCreditAmount(transaction, deposit));
         const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
 
         await tx.wallets.update({
@@ -913,7 +914,7 @@ export class WebhookService {
       if (!wallet) return { ok: false };
 
       const prev = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const amt = this.getFarmAmountForCredit(transaction);
+      const amt = this.normalizeAmount(resolveDepositCreditAmount(transaction));
 
       const updated = await tx.transactions.updateMany({
         where: { id: transaction.id, status: { not: 'completed' } },
@@ -1011,7 +1012,7 @@ export class WebhookService {
       }
 
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const creditAmount = this.getFarmAmountForCredit(transaction, deposit);
+      const creditAmount = this.normalizeAmount(resolveDepositCreditAmount(transaction, deposit));
 
       // WALLET CREDIT: This is the ONLY authorized place to credit wallets on deposit success
       await tx.wallets.update({
