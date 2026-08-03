@@ -84,11 +84,24 @@ export class CacheService {
 
     try {
       const fullPattern = this.buildKey(pattern);
-      const keys = await this.redis!.keys(fullPattern);
-      if (keys.length > 0) {
-        await this.redis!.del(...keys);
-        this.logger.debug(`[cache-invalidate] ${pattern} (${keys.length} keys)`);
+      const stream = this.redis!.scanStream({ match: fullPattern, count: 100 });
+      const keysToDelete: string[] = [];
+
+      for await (const keys of stream) {
+        if (keys.length > 0) {
+          keysToDelete.push(...keys);
+        }
+
+        if (keysToDelete.length >= 100) {
+          await this.redis!.del(...keysToDelete.splice(0, keysToDelete.length));
+        }
       }
+
+      if (keysToDelete.length > 0) {
+        await this.redis!.del(...keysToDelete);
+      }
+
+      this.logger.debug(`[cache-invalidate] ${pattern}`);
     } catch (error) {
       this.logger.warn(`[cache-error] invalidate pattern failed for ${pattern}: ${error}`);
     }

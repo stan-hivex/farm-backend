@@ -1,4 +1,4 @@
-import { Module, Logger } from '@nestjs/common';
+import { Module, Logger, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -38,7 +38,7 @@ import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
-
+import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 
 @Module({
   imports: [
@@ -130,4 +130,8 @@ import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(IdempotencyMiddleware).forRoutes('*');
+  }
+}

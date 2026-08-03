@@ -48,6 +48,16 @@ export class NotificationsService {
     return tokens.map((t) => t.token);
   }
 
+  async getUserSettings(userId: string) {
+    const cacheKey = `user-settings:${userId}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
+    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } }) as any;
+    await this.cache.cacheSet(cacheKey, settings ?? {}, 300);
+    return settings ?? {};
+  }
+
   async registerDeviceToken(userId: string, token: string, platform?: string) {
     const normalizedToken = token.trim();
     if (!normalizedToken) throw new Error('Device token is required');
@@ -89,19 +99,8 @@ export class NotificationsService {
   }
 
   async getSettings(userId: string) {
-    const cacheKey = `notifications-settings:${userId}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return { success: true, data: cached };
-
-    const settings = await this.prisma.user_settings.findUnique({
-      where: { user_id: userId },
-    }) as any;
-
-    await this.cache.cacheSet(cacheKey, settings, 60);
-    return {
-      success: true,
-      data: settings,
-    };
+    const settings = await this.getUserSettings(userId);
+    return { success: true, data: settings };
   }
 
 async updateSettings(userId: string, body: any) {
@@ -170,6 +169,11 @@ async updateSettings(userId: string, body: any) {
         announcements: body.announcements,
       },
     });
+
+  await Promise.all([
+    this.cache.cacheDelete(`notifications-settings:${userId}`),
+    this.cache.cacheDelete(`user-settings:${userId}`),
+  ]);
 
   return {
     success: true,
@@ -299,7 +303,7 @@ async updateSettings(userId: string, body: any) {
       return false;
     }
 
-    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } }) as any;
+    const settings = await this.getUserSettings(userId);
     const pushEnabled = settings?.push_notifications ?? true;
     const type = (data?.type as string | undefined)?.toLowerCase() ?? '';
     const isSecurity = type.includes('security') || type.includes('kyc') || title.toLowerCase().includes('security');
@@ -407,7 +411,7 @@ async updateSettings(userId: string, body: any) {
       ...dto,
       metadata,
     });
-    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
+    const settings = await this.getUserSettings(userId);
     const isSecurity = dto.type.toString().toLowerCase().includes('security') || dto.title.toLowerCase().includes('security');
     const shouldStoreInApp = isSecurity || settings?.push_notifications !== false || true;
     if (!shouldStoreInApp) {

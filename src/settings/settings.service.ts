@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../database/prisma.service';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class SettingsService {
 
   constructor(
     private prisma: PrismaService,
+    private cache: CacheService,
   ) {}
 
   async updateLanguage(
@@ -30,6 +32,8 @@ export class SettingsService {
       },
     });
 
+    await this.cache.cacheDelete(`user-settings:${userId}`);
+
     return {
       success: true,
       message: 'Language updated successfully',
@@ -50,6 +54,8 @@ export class SettingsService {
       update: { theme: themeValue },
       create: { user_id: userId, theme: themeValue },
     });
+
+    await this.cache.cacheDelete(`user-settings:${userId}`);
 
     return {
       success: true,

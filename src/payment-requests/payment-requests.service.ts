@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CacheService } from '../common/cache/cache.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
@@ -20,6 +21,7 @@ export class PaymentRequestsService {
     private prisma: PrismaService,
     private authService: AuthService,
     private notificationsService: NotificationsService,
+    private cache: CacheService,
   ) {}
 
   async createRequest(requesterUserId: string, dto: { recipient_identifier: string; amount: number; description?: string }, ip: string) {
@@ -174,7 +176,7 @@ export class PaymentRequestsService {
       const requesterWallet = request.wallets_requester;
       const amount = request.amount as any;
 
-      const feeCfg = await tx.fee_configurations.findFirst({ where: { transaction_type: 'transfer', is_active: true } });
+      const feeCfg = await this.getTransferFeeConfig(tx);
       const pctFee = feeCfg ? Number(feeCfg.percentage_fee) / 100 : 0;
       const flatFee = feeCfg ? Number(feeCfg.flat_fee) : 0;
       let fee = new Prisma.Decimal(flatFee);
@@ -227,6 +229,20 @@ export class PaymentRequestsService {
     ]);
 
     return { data: result.data, message: result.message };
+  }
+
+  private async getTransferFeeConfig(tx?: any) {
+    const cacheKey = 'fee-config:transfer';
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
+    const feeCfg = await (tx ?? this.prisma).fee_configurations.findFirst({
+      where: { transaction_type: 'transfer', is_active: true },
+    });
+    if (feeCfg) {
+      await this.cache.cacheSet(cacheKey, feeCfg, 300);
+    }
+    return feeCfg;
   }
 
   async rejectRequest(senderUserId: string, requestId: string) {

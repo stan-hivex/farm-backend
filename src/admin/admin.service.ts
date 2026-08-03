@@ -505,7 +505,10 @@ export class AdminService {
         upserted.push(entry as any);
       }
     }
-    await this.cache.cacheDelete('exchange-rates:all');
+    await Promise.all([
+      this.cache.cacheDelete('exchange-rates:all'),
+      this.cache.cacheInvalidatePattern('exchange-rate:*'),
+    ]);
     return { data: upserted, message: 'Exchange rates updated' };
   }
 
@@ -515,7 +518,10 @@ export class AdminService {
       update: { setting_value: value, updated_by: adminId },
       create: { setting_key: key, setting_value: value, updated_by: adminId },
     });
-    await this.cache.cacheDelete('app-settings:all');
+    await Promise.all([
+      this.cache.cacheDelete('app-settings:all'),
+      this.cache.cacheInvalidatePattern('system-settings:*'),
+    ]);
     return { data: setting, message: 'Setting updated' };
   }
 

@@ -472,22 +472,34 @@ export class PaymentsService {
   }
 
   // Simple fraud assessment: velocity and amount thresholds.
-  private async assessFraudRisk(userId: string, ctx: { amount_fiat: number; currency: string; ip?: string; deviceRisk?: number; country?: string }) {
-    // Load configurable thresholds from system_settings
+  private async getSystemSettings() {
+    const cacheKey = 'system-settings:fraud';
+    const cached = await this.cache.cacheGet<Record<string, any>>(cacheKey);
+    if (cached) return cached;
+
     const keys = ['fraud.amount_threshold', 'fraud.velocity_limit', 'fraud.max_daily_amount'];
     const settings = await this.prisma.system_settings.findMany({ where: { setting_key: { in: keys } } });
-    const getSetting = (k: string) => {
-      const s = settings.find((x: any) => x.setting_key === k);
-      if (!s || s.setting_value == null) return null;
-      // Try parse JSON then number
-      try { return JSON.parse(s.setting_value); } catch { /* ignore */ }
-      const n = Number(s.setting_value);
-      return Number.isFinite(n) ? n : s.setting_value;
-    };
+    const result: Record<string, any> = {};
+    settings.forEach((setting: any) => {
+      const value = setting.setting_value;
+      if (value == null) return;
+      try {
+        result[setting.setting_key] = JSON.parse(value);
+      } catch {
+        const n = Number(value);
+        result[setting.setting_key] = Number.isFinite(n) ? n : value;
+      }
+    });
 
-    const amountThreshold = Number(getSetting('fraud.amount_threshold') ?? 5000);
-    const velocityLimit = Number(getSetting('fraud.velocity_limit') ?? 5);
-    const maxDailyAmount = Number(getSetting('fraud.max_daily_amount') ?? 20000);
+    await this.cache.cacheSet(cacheKey, result, 300);
+    return result;
+  }
+
+  private async assessFraudRisk(userId: string, ctx: { amount_fiat: number; currency: string; ip?: string; deviceRisk?: number; country?: string }) {
+    const settings = await this.getSystemSettings();
+    const amountThreshold = Number(settings['fraud.amount_threshold'] ?? 5000);
+    const velocityLimit = Number(settings['fraud.velocity_limit'] ?? 5);
+    const maxDailyAmount = Number(settings['fraud.max_daily_amount'] ?? 20000);
 
     // Count recent deposits by this user in the last 1 hour
     const oneHourAgo = new Date(Date.now() - 1000 * 60 * 60);

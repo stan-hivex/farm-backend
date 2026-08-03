@@ -776,12 +776,13 @@ async sendOtp(userId: string, phone: string, purpose: string) {
       expires_at,
     },
   });
+
   // Send OTP via configured SMS provider (do not log OTP contents)
   try {
     const message = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
     // Prefer push if user has push notifications enabled and device tokens registered
     try {
-      const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
+      const settings = await this.notifications.getUserSettings(userId);
       if (settings?.push_notifications) {
         const pushBody = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
         const pushed = await this.notifications.sendPush(userId, 'Your FARM OTP', pushBody, {
@@ -806,16 +807,6 @@ async sendOtp(userId: string, phone: string, purpose: string) {
   return { message: 'OTP sent to your phone' };
 }
 
-  // Add this method inside the AuthService class
-
-async resendOtp(userId: string) {
-  const user = await this.prisma.users.findUnique({
-    where: { id: userId },
-    select: { phone: true },
-  });
-  if (!user) throw new NotFoundException('User not found');
-  return this.sendOtp(userId, user.phone, 'phone_verification');
-}
   // ── Private helpers ───────────────────────────────────────────────────────────
   private normalizePhoneNumber(phone?: string | null) {
     if (!phone) return '';

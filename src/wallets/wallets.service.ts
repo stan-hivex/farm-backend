@@ -129,9 +129,7 @@ export class WalletsService {
         throw new BadRequestException('Cannot send to yourself');
       }
 
-      const feeCfg = await tx.fee_configurations.findFirst({
-        where: { transaction_type: 'transfer', is_active: true },
-      });
+      const feeCfg = await this.getTransferFeeConfig(tx);
       const pctFee = feeCfg ? Number(feeCfg.percentage_fee) / 100 : 0;
       const flatFee = feeCfg ? Number(feeCfg.flat_fee) : 0;
       let fee = dto.amount * pctFee + flatFee;
@@ -254,7 +252,7 @@ export class WalletsService {
     if (query.type) where.transaction_type = query.type;
     if (query.status) where.status = query.status;
 
-    const cacheKey = `transactions:${userId}:${page}:${limit}`;
+    const cacheKey = `transactions:${userId}:${page}:${limit}:${query.type ?? 'all'}:${query.status ?? 'all'}`;
     const cached = await this.cache.cacheGet<any>(cacheKey);
     if (cached) {
       return cached;
@@ -340,5 +338,19 @@ export class WalletsService {
       last_name: user.last_name ?? null,
       profile_image: user.profile_image ?? null,
     };
+  }
+
+  private async getTransferFeeConfig(tx?: any) {
+    const cacheKey = 'fee-config:transfer';
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return cached;
+
+    const feeCfg = await (tx ?? this.prisma).fee_configurations.findFirst({
+      where: { transaction_type: 'transfer', is_active: true },
+    });
+    if (feeCfg) {
+      await this.cache.cacheSet(cacheKey, feeCfg, 300);
+    }
+    return feeCfg;
   }
 }

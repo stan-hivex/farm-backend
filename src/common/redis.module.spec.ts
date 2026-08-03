@@ -1,0 +1,31 @@
+import { ConfigService } from '@nestjs/config';
+import { buildRedisConnectionConfig } from './redis.module';
+
+describe('buildRedisConnectionConfig', () => {
+  it('throws in production when no Redis configuration is available', () => {
+    expect(() => buildRedisConnectionConfig(new ConfigService({}), true)).toThrow(
+      'REDIS_URL must be set in production',
+    );
+  });
+
+  it('builds a host-based configuration when only host and port are provided', () => {
+    const config = buildRedisConnectionConfig(
+      new ConfigService({
+        REDIS_HOST: 'redis.internal',
+        REDIS_PORT: '6380',
+        REDIS_PASSWORD: 'secret',
+        REDIS_DB: '2',
+        REDIS_TLS: 'true',
+      }),
+      false,
+    );
+
+    expect(config).toEqual({
+      host: 'redis.internal',
+      port: 6380,
+      password: 'secret',
+      db: 2,
+      tls: {},
+    });
+  });
+});
