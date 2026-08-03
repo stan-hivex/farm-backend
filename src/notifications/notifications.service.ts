@@ -335,6 +335,10 @@ async updateSettings(userId: string, body: any) {
         data: payloadData,
         tokens,
       };
+      if (!this.firebase.messaging) {
+        this.logger.warn('Firebase messaging unavailable; skipping push notification');
+        return false;
+      }
       const resp = await this.firebase.messaging.sendEachForMulticast(payload as any);
       const invalidTokens = resp.responses
         .map((result, index) => ({ result, token: tokens[index] }))
