@@ -8,8 +8,8 @@ services:
     buildCommand: |
       npm ci
       npm install -g @nestjs/cli
-      npx prisma generate
-      npm run build
+      node ./node_modules/prisma/build/index.js generate
+      npx nest build
 
     startCommand: bash ./start.sh
 
