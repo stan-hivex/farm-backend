@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "prestart": "echo 'Skipping migrations for now'",
-    "build": "npx prisma generate && nest build",
+    "build": "node ./node_modules/prisma/build/index.js generate && nest build",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "node dist/src/main.js",
     "start:dev": "nest start --watch",
@@ -18,11 +18,11 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate:dev": "prisma migrate dev",
-    "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:studio": "prisma studio",
-    "prisma:reset": "prisma migrate reset",
+    "prisma:generate": "node ./node_modules/prisma/build/index.js generate",
+    "prisma:migrate:dev": "node ./node_modules/prisma/build/index.js migrate dev",
+    "prisma:migrate:deploy": "node ./node_modules/prisma/build/index.js migrate deploy",
+    "prisma:studio": "node ./node_modules/prisma/build/index.js studio",
+    "prisma:reset": "node ./node_modules/prisma/build/index.js migrate reset",
     "seed": "ts-node -r tsconfig-paths/register prisma/seed/index.ts"
   },
   "dependencies": {
@@ -132,7 +132,7 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": "tsconfig.spec.json" }]
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

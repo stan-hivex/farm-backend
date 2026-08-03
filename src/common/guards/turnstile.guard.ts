@@ -32,7 +32,8 @@ export class TurnstileGuard implements CanActivate {
       return true;
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
-      this.logger.error(`Turnstile verification error: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Turnstile verification error: ${message}`);
       throw new BadRequestException('Captcha verification failed');
     }
   }
