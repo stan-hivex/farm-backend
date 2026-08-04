@@ -1111,11 +1111,12 @@ export class AdminService {
     const escrow_total_earnings = Number(escrow_creation_earnings + escrow_release_earnings);
     const withdraw_fee_earnings = Number(withdrawAgg._sum.fee ?? 0);
     const withdraw_transaction_count = Number(withdrawAgg._count.id ?? 0);
+    const total_revenue = Number(escrow_total_earnings + withdraw_fee_earnings);
 
     return {
       data: {
         total_users: totalUsers,
-        total_revenue: Number(totalRevenue._sum.amount ?? 0),
+        total_revenue,
         active_transactions: activeTransactions,
         flagged_transactions: flaggedTx,
         support_tickets: supportTickets,
