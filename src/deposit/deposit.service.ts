@@ -49,6 +49,25 @@ export class DepositService {
       );
     }
 
+    if (paymentMethod === 'BANK_TRANSFER' && amount < 5000) {
+      throw new BadRequestException('Bank transfer deposits must be at least 5000 KES');
+    }
+    if (paymentMethod === 'BANK_TRANSFER' && amount > 1000000) {
+      throw new BadRequestException('Bank transfer deposits cannot exceed 1000000 KES');
+    }
+    if (paymentMethod === 'MOBILE_MONEY' && amount < 1500) {
+      throw new BadRequestException('Mobile money deposits must be at least 1500 KES');
+    }
+    if (paymentMethod === 'MOBILE_MONEY' && amount > 250000) {
+      throw new BadRequestException('Mobile money deposits cannot exceed 250000 KES');
+    }
+    if (paymentMethod === 'CARD' && amount < 10) {
+      throw new BadRequestException('Card deposits must be at least 10 KES');
+    }
+    if (paymentMethod === 'CARD' && amount > 100000) {
+      throw new BadRequestException('Card deposits cannot exceed 100000 KES');
+    }
+
     const reference = uuidv4();
     const provider = 'paystack';
     const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
@@ -701,5 +720,22 @@ export class DepositService {
     const n = Number(amount ?? 0);
     if (!isFinite(n)) return 0;
     return Math.round(n * 100) / 100;
+  }
+
+  private getDepositLimits(method: string) {
+    switch (method) {
+      case 'BANK_TRANSFER':
+        return { min: 4999, max: 999999 };
+      case 'MOBILE_MONEY':
+        return { min: 1499, max: 249999 };
+      case 'CRYPTO':
+        return { min: 100, max: null };
+      default:
+        return { min: 10, max: null };
+    }
+  }
+
+  private formatAmount(value: number) {
+    return new Intl.NumberFormat('en-US').format(value);
   }
 }

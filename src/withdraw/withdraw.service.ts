@@ -53,6 +53,22 @@ export class WithdrawService {
       );
     }
 
+    if (dto.method === 'BANK_TRANSFER' && amount < 4999) {
+      throw new BadRequestException('Bank transfer withdrawals must be at least 4999 FARM');
+    }
+    if (dto.method === 'BANK_TRANSFER' && amount > 999999) {
+      throw new BadRequestException('Bank transfer withdrawals cannot exceed 999999 FARM');
+    }
+    if (dto.method === 'MOBILE_MONEY' && amount < 1499) {
+      throw new BadRequestException('Mobile money withdrawals must be at least 1499 FARM');
+    }
+    if (dto.method === 'MOBILE_MONEY' && amount > 249999) {
+      throw new BadRequestException('Mobile money withdrawals cannot exceed 249999 FARM');
+    }
+    if (dto.method === 'CRYPTO' && amount < 100) {
+      throw new BadRequestException('Crypto withdrawals must be at least 100 FARM');
+    }
+
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
     if (!wallet) {
       throw new BadRequestException('Active wallet not found');
