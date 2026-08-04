@@ -11,6 +11,8 @@ import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
 
+const WITHDRAWAL_FEE_RATE = 0.015;
+
 @Injectable()
 export class WithdrawService {
   private readonly logger = new Logger(WithdrawService.name);
@@ -43,8 +45,12 @@ export class WithdrawService {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('Invalid withdrawal amount');
     }
-    if (amount < 10) {
-      throw new BadRequestException('Minimum withdrawal amount is 10 FARM');
+
+    const limits = this.getWithdrawalLimits(dto.method);
+    if (amount < limits.min || (limits.max !== null && amount > limits.max)) {
+      throw new BadRequestException(
+        `Invalid withdrawal amount for ${dto.method}. Allowed range is ${this.formatAmount(limits.min)}${limits.max !== null ? ` - ${this.formatAmount(limits.max)}` : '+'} FARM`,
+      );
     }
 
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
@@ -73,8 +79,7 @@ export class WithdrawService {
       throw new BadRequestException(`Unsupported withdrawal method: ${dto.method}`);
     }
 
-    const feePercent = dto.method === 'MOBILE_MONEY' ? 0.02 : 0.015;
-    const fee = Number((amount * feePercent).toFixed(8));
+    const fee = Number((amount * WITHDRAWAL_FEE_RATE).toFixed(8));
     const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
 
@@ -336,9 +341,11 @@ export class WithdrawService {
     if (!wallet) return false;
 
     const amount = Number(withdrawal.amount ?? 0);
+    const fee = Number((amount * WITHDRAWAL_FEE_RATE).toFixed(8));
     const previousBalance = Number(wallet.balance ?? 0);
     const previousLocked = Number(wallet.locked_balance ?? 0);
     const unlockAmount = Math.min(previousLocked, amount);
+    const superadminWallet = await this.findSuperadminWallet();
 
     await this.prisma.$transaction(async (tx) => {
       await tx.withdrawal.update({
@@ -353,6 +360,13 @@ export class WithdrawService {
           locked_balance: { decrement: unlockAmount },
         },
       });
+
+      if (superadminWallet) {
+        await tx.wallets.update({
+          where: { id: superadminWallet.id },
+          data: { balance: { increment: fee } },
+        });
+      }
 
       if (transaction) {
         await tx.transactions.update({
@@ -375,6 +389,20 @@ export class WithdrawService {
             description: `Withdrawal completed — ref: ${reference}`,
           },
         });
+
+        if (superadminWallet) {
+          await tx.ledger_entries.create({
+            data: {
+              transaction_id: transaction.id,
+              wallet_id: superadminWallet.id,
+              entry_type: 'credit',
+              amount: fee,
+              balance_before: Number(superadminWallet.balance ?? 0),
+              balance_after: Number(superadminWallet.balance ?? 0) + fee,
+              description: `Withdrawal fee credited — ref: ${reference}`,
+            },
+          });
+        }
       }
     });
 
@@ -466,6 +494,33 @@ export class WithdrawService {
     });
 
     return true;
+  }
+
+  private getWithdrawalLimits(method: string) {
+    switch (method) {
+      case 'BANK_TRANSFER':
+        return { min: 4999, max: 999999 };
+      case 'MOBILE_MONEY':
+        return { min: 1499, max: 249999 };
+      case 'CRYPTO':
+        return { min: 100, max: null };
+      default:
+        return { min: 10, max: null };
+    }
+  }
+
+  private async findSuperadminWallet() {
+    return this.prisma.wallets.findFirst({
+      where: {
+        wallet_type: 'operations',
+        is_active: true,
+      },
+      orderBy: { created_at: 'asc' },
+    });
+  }
+
+  private formatAmount(value: number) {
+    return new Intl.NumberFormat('en-US').format(value);
   }
 
   private formatMpesaNumber(phone: string | null) {

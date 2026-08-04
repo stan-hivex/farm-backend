@@ -8,7 +8,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
-import { resolveDepositCreditAmount } from './deposit.utils';
 
 @Injectable()
 export class DepositService {
@@ -39,8 +38,15 @@ export class DepositService {
     }
 
     const amount = Number(dto.amount_fiat);
-    if (!Number.isFinite(amount) || amount < 10) {
-      throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
+    if (!Number.isFinite(amount)) {
+      throw new BadRequestException('Invalid deposit amount');
+    }
+
+    const limits = this.getDepositLimits(paymentMethod);
+    if (amount < limits.min || (limits.max !== null && amount > limits.max)) {
+      throw new BadRequestException(
+        `Invalid deposit amount for ${paymentMethod}. Allowed range is ${this.formatAmount(limits.min)}${limits.max !== null ? ` - ${this.formatAmount(limits.max)}` : '+'} ${dto.currency || 'KES'}`,
+      );
     }
 
     const reference = uuidv4();
@@ -206,9 +212,6 @@ export class DepositService {
       throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
     }
 
-    await this.cache.cacheInvalidatePattern(`deposits:${userId}`);
-    await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
-
     return {
       success: true,
       payment_url: paymentUrl,
@@ -219,46 +222,27 @@ export class DepositService {
   }
 
   async getUserDeposits(userId: string) {
-    const cacheKey = `deposits:${userId}`;
-    const cached = await this.cache.cacheGet<any[]>(cacheKey);
-    if (cached) return cached;
-
     // Return only successfully completed deposits to users.
     // Failed, pending or processing deposits are intentionally hidden
     // so the frontend shows only confirmed funds the webhook has validated.
-    const deposits = await this.prisma.deposit.findMany({
+    return this.prisma.deposit.findMany({
       where: { userId, status: 'SUCCESS' },
       orderBy: { createdAt: 'desc' },
     });
-
-    await this.cache.cacheSet(cacheKey, deposits, 45);
-    return deposits;
   }
 
   async getWalletBalance(userId: string) {
-    const cacheKey = `wallet:${userId}:balance`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
-    const payload = { balance: wallet?.balance ?? 0, locked_balance: wallet?.locked_balance ?? 0 };
-    await this.cache.cacheSet(cacheKey, payload, 30);
-    return payload;
+    return { balance: wallet?.balance ?? 0, locked_balance: wallet?.locked_balance ?? 0 };
   }
 
   async getDepositById(id: string, userId?: string) {
-    const cacheKey = `deposit:${id}:${userId ?? 'anonymous'}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
     const deposit = await this.prisma.deposit.findUnique({ where: { id } });
     if (!deposit) return null;
     assertResourceAccess(deposit.userId, userId, 'deposit');
     if (deposit.status !== 'SUCCESS') return null;
-
-    await this.cache.cacheSet(cacheKey, deposit, 60);
     return deposit;
   }
 
@@ -441,7 +425,7 @@ export class DepositService {
         return { ok: false };
       }
 
-      const amount = this.normalizeAmount(resolveDepositCreditAmount(transaction, deposit));
+      const amount = this.normalizeAmount(Number(deposit.amount));
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
 
       await tx.wallets.update({
@@ -563,7 +547,7 @@ export class DepositService {
       if (!wallet) return { ok: false };
 
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const amount = this.normalizeAmount(resolveDepositCreditAmount(transaction));
+      const amount = this.normalizeAmount(Number(transaction.amount));
 
       const updated = await tx.transactions.updateMany({
         where: { id: transaction.id, status: { not: 'completed' } },
@@ -651,7 +635,7 @@ export class DepositService {
       }
 
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const amount = this.normalizeAmount(resolveDepositCreditAmount(transaction, deposit));
+      const amount = this.normalizeAmount(Number(deposit.amount));
 
       await tx.wallets.update({
         where: { id: wallet.id },
@@ -707,9 +691,6 @@ export class DepositService {
       this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`),
       this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
       this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
-      this.cache.cacheInvalidatePattern(`deposits:${userId}`),
-      this.cache.cacheInvalidatePattern(`withdrawals:${userId}`),
-      this.cache.cacheInvalidatePattern('deposit:*'),
       this.cache.cacheDelete('admin:dashboard:stats'),
       this.cache.cacheDelete('admin:analytics'),
       this.cache.cacheDelete('admin:superadmin-dashboard'),
