@@ -137,4 +137,37 @@ describe('AuthService', () => {
     expect(result.data.refresh_token).toBe('refresh-token');
     expect(prisma.user_sessions.create).toHaveBeenCalled();
   });
+
+  it('creates admin accounts with the admin role only', async () => {
+    const prisma = module.get(PrismaService);
+
+    jest.spyOn(prisma.users, 'findUnique').mockResolvedValue({ id: 'super-admin-1', role: 'super_admin' } as any);
+    jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
+    jest.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) => {
+      const tx = {
+        users: { create: jest.fn().mockResolvedValue({ id: 'admin-2', phone: '+254700123456', first_name: 'Ada' }) },
+        wallets: { create: jest.fn().mockResolvedValue({}) },
+        activity_logs: { create: jest.fn().mockResolvedValue({}) },
+      };
+      return callback(tx);
+    });
+    jest.spyOn(service as any, 'sendOtp').mockResolvedValue(undefined);
+    jest.spyOn((service as any).cfg, 'get').mockImplementation((key: string) => {
+      if (key === 'QR_HMAC_SECRET') return 'test-secret';
+      if (key === 'BCRYPT_ROUNDS') return '12';
+      return 'test';
+    });
+
+    const result = await service.createAdmin('super-admin-1', {
+      first_name: 'Ada',
+      last_name: 'Lovelace',
+      username: 'ada',
+      phone: '+254700123456',
+      email: 'ada@example.com',
+      password: 'Abc123!@#qwe123',
+      country: 'Kenya',
+    } as any);
+
+    expect(result.message).toContain('Admin account created');
+  });
 });

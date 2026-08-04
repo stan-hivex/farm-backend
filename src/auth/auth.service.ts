@@ -19,6 +19,7 @@ import { ResetPinDto } from './dto/reset-pin.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
+import { CreateAdminDto } from './dto/create-admin.dto';
 import {
   generateWalletAddress, generateOtp, generateReferralCode,
 } from '../common/utils/reference.util';
@@ -108,6 +109,75 @@ export class AuthService {
 
     await this.sendOtp(user.id, user.phone, 'phone_verification');
     return { message: 'Registration successful. OTP sent to your phone number.' };
+  }
+
+  async createAdmin(actorUserId: string, dto: CreateAdminDto) {
+    const actor = await this.prisma.users.findUnique({
+      where: { id: actorUserId },
+      select: { id: true, role: true },
+    });
+
+    if (!actor || !['super_admin', 'admin'].includes(String(actor.role || '').toLowerCase())) {
+      throw new ForbiddenException('Only superadmins can create admin accounts');
+    }
+
+    const existing = await this.prisma.users.findFirst({
+      where: {
+        OR: [
+          { phone: dto.phone },
+          { username: dto.username.toLowerCase() },
+          { email: dto.email },
+        ],
+      },
+    });
+
+    if (existing) {
+      if (existing.phone === dto.phone) throw new ConflictException('Phone already registered');
+      if (existing.username === dto.username.toLowerCase()) throw new ConflictException('Username taken');
+      throw new ConflictException('Email already registered');
+    }
+
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    const password_hash = await bcrypt.hash(dto.password, rounds);
+    const qrSecret = this.cfg.get<string>('QR_HMAC_SECRET');
+    if (!qrSecret) {
+      throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
+    }
+
+    const admin = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.users.create({
+        data: {
+          first_name: dto.first_name,
+          last_name: dto.last_name,
+          username: dto.username.toLowerCase(),
+          phone: dto.phone,
+          email: dto.email,
+          password_hash,
+          country: dto.country,
+          role: 'admin',
+          referral_code: generateReferralCode(),
+        },
+      });
+
+      await tx.wallets.create({
+        data: {
+          user_id: created.id,
+          wallet_name: `${created.first_name}'s Wallet`,
+          wallet_type: 'user',
+          wallet_address: generateWalletAddress(created.id, qrSecret),
+          currency: 'FARM',
+        },
+      });
+
+      await tx.activity_logs.create({
+        data: { user_id: created.id, activity: 'ADMIN_ACCOUNT_CREATED', ip_address: '127.0.0.1' },
+      });
+
+      return created;
+    });
+
+    await this.sendOtp(admin.id, admin.phone, 'phone_verification');
+    return { message: 'Admin account created successfully' };
   }
 
   // ── Verify OTP ───────────────────────────────────────────────────────────────

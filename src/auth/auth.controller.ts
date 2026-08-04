@@ -40,9 +40,12 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
+import { CreateAdminDto } from './dto/create-admin.dto';
 
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../common/enums';
 
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -404,6 +407,20 @@ export class AuthController {
     @Body() dto: ChangePasswordDto,
   ) {
     return this.authService.changePassword(user.id, dto);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Post('admin/create')
+  @Roles(UserRole.SUPER_ADMIN)
+  @Permissions('admin:write')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('JWT')
+  @ApiOperation({ summary: 'Create a new admin account' })
+  createAdmin(
+    @CurrentUser() user: any,
+    @Body() dto: CreateAdminDto,
+  ) {
+    return this.authService.createAdmin(user.id, dto);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
