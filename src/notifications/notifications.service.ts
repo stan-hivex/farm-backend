@@ -48,16 +48,6 @@ export class NotificationsService {
     return tokens.map((t) => t.token);
   }
 
-  async getUserSettings(userId: string) {
-    const cacheKey = `user-settings:${userId}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
-    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } }) as any;
-    await this.cache.cacheSet(cacheKey, settings ?? {}, 300);
-    return settings ?? {};
-  }
-
   async registerDeviceToken(userId: string, token: string, platform?: string) {
     const normalizedToken = token.trim();
     if (!normalizedToken) throw new Error('Device token is required');
@@ -99,8 +89,19 @@ export class NotificationsService {
   }
 
   async getSettings(userId: string) {
-    const settings = await this.getUserSettings(userId);
-    return { success: true, data: settings };
+    const cacheKey = `notifications-settings:${userId}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) return { success: true, data: cached };
+
+    const settings = await this.prisma.user_settings.findUnique({
+      where: { user_id: userId },
+    }) as any;
+
+    await this.cache.cacheSet(cacheKey, settings, 60);
+    return {
+      success: true,
+      data: settings,
+    };
   }
 
 async updateSettings(userId: string, body: any) {
@@ -169,11 +170,6 @@ async updateSettings(userId: string, body: any) {
         announcements: body.announcements,
       },
     });
-
-  await Promise.all([
-    this.cache.cacheDelete(`notifications-settings:${userId}`),
-    this.cache.cacheDelete(`user-settings:${userId}`),
-  ]);
 
   return {
     success: true,
@@ -303,7 +299,7 @@ async updateSettings(userId: string, body: any) {
       return false;
     }
 
-    const settings = await this.getUserSettings(userId);
+    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } }) as any;
     const pushEnabled = settings?.push_notifications ?? true;
     const type = (data?.type as string | undefined)?.toLowerCase() ?? '';
     const isSecurity = type.includes('security') || type.includes('kyc') || title.toLowerCase().includes('security');
@@ -329,7 +325,7 @@ async updateSettings(userId: string, body: any) {
       if (!tokens || tokens.length === 0) return false;
       const timestamp = new Date().toISOString();
       const payloadData: Record<string, string> = Object.fromEntries(
-        Object.entries({ ...data, title, body, timestamp }).map(([key, value]) => [
+        Object.entries({ ...(data ?? {}), title, body, timestamp }).map(([key, value]) => [
           key,
           value == null ? '' : String(value),
         ]),
@@ -373,8 +369,8 @@ async updateSettings(userId: string, body: any) {
       (this.prisma as any).wallets.findFirst({ where: { user_id: receiverId }, select: { balance: true } }),
     ]);
 
-    const senderName = [sender?.first_name, sender?.last_name].filter(Boolean).join(' ').trim() || sender?.username || 'Someone';
-    const receiverName = [receiver?.first_name, receiver?.last_name].filter(Boolean).join(' ').trim() || receiver?.username || 'you';
+    const senderName = sender?.username ?? 'Someone';
+    const receiverName = receiver?.username ?? 'you';
     const balance = receiverWallet ? Number(receiverWallet.balance ?? 0) : 0;
 
     await Promise.all([
@@ -411,9 +407,9 @@ async updateSettings(userId: string, body: any) {
       ...dto,
       metadata,
     });
-    const settings = await this.getUserSettings(userId);
+    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
     const isSecurity = dto.type.toString().toLowerCase().includes('security') || dto.title.toLowerCase().includes('security');
-    const shouldStoreInApp = isSecurity || settings?.push_notifications !== false || true;
+    const shouldStoreInApp = isSecurity || settings?.push_notifications !== false;
     if (!shouldStoreInApp) {
       await this.prisma.notifications.delete({ where: { id: notification.id } });
       return notification;
