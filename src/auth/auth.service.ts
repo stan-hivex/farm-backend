@@ -18,6 +18,7 @@ import { ChangePinDto } from './dto/change-pin.dto';
 import { ResetPinDto } from './dto/reset-pin.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 import {
   generateWalletAddress, generateOtp, generateReferralCode,
 } from '../common/utils/reference.util';
@@ -300,8 +301,88 @@ if (new Date() > expiryDate) {
     return { message: 'Password change flow is not configured in this environment' };
   }
 
-  async deleteAccount(userId: string) {
-    return { message: 'Account deletion flow is not configured in this environment' };
+  async deleteAccount(userId: string, dto: DeleteAccountDto) {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Account not found');
+    }
+
+    if (!dto?.password || !dto?.acknowledged || !dto?.confirm_delete) {
+      throw new BadRequestException('Password, acknowledgment, and final confirmation are required');
+    }
+
+    const passwordMatches = await bcrypt.compare(dto.password, user.password_hash);
+    if (!passwordMatches) {
+      throw new UnauthorizedException('Incorrect password');
+    }
+
+    const wallet = user.wallets?.[0];
+    if (wallet && Number(wallet.balance ?? 0) !== 0) {
+      throw new ForbiddenException('Account cannot be deleted while wallet balance is not zero');
+    }
+
+    const pendingWithdrawals = await this.prisma.withdrawal.count({
+      where: {
+        userId,
+        status: { in: ['PENDING', 'PROCESSING'] },
+      },
+    });
+
+    if (pendingWithdrawals > 0) {
+      throw new ForbiddenException('Please clear pending withdrawals before deleting your account');
+    }
+
+    const pendingDeposits = await this.prisma.deposit.count({
+      where: {
+        userId,
+        status: { in: ['PENDING', 'PROCESSING'] },
+      },
+    });
+
+    if (pendingDeposits > 0) {
+      throw new ForbiddenException('Please clear pending deposits before deleting your account');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user_sessions.updateMany({
+        where: { user_id: userId },
+        data: { is_revoked: true, expires_at: new Date() },
+      });
+
+      await tx.users.update({
+        where: { id: userId },
+        data: {
+          is_active: false,
+          is_deleted: true,
+          deleted_at: new Date(),
+          email: null,
+          phone: `deleted_${userId.slice(0, 12)}`,
+          username: `deleted_${userId}`,
+          password_hash: await bcrypt.hash(`deleted-${userId}-${Date.now()}`, 12),
+          profile_image: null,
+          bio: null,
+          country: null,
+          city: null,
+          address: null,
+          referral_code: null,
+          referred_by: null,
+          pin_hash: null,
+        },
+      });
+
+      await tx.device_tokens.deleteMany({ where: { user_id: userId } });
+      await tx.biometric_settings.deleteMany({ where: { user_id: userId } });
+      await tx.api_keys.deleteMany({ where: { user_id: userId } });
+      await tx.notifications.deleteMany({ where: { user_id: userId } });
+    });
+
+    await this.logger.log(`Account deleted for user ${userId}`);
+
+    return { message: 'Account deleted successfully' };
   }
 
   async registerDeviceToken(userId: string, token: string, platform?: string) {
@@ -776,13 +857,12 @@ async sendOtp(userId: string, phone: string, purpose: string) {
       expires_at,
     },
   });
-
   // Send OTP via configured SMS provider (do not log OTP contents)
   try {
     const message = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
     // Prefer push if user has push notifications enabled and device tokens registered
     try {
-      const settings = await this.notifications.getUserSettings(userId);
+      const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
       if (settings?.push_notifications) {
         const pushBody = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
         const pushed = await this.notifications.sendPush(userId, 'Your FARM OTP', pushBody, {
@@ -807,6 +887,16 @@ async sendOtp(userId: string, phone: string, purpose: string) {
   return { message: 'OTP sent to your phone' };
 }
 
+  // Add this method inside the AuthService class
+
+async resendOtp(userId: string) {
+  const user = await this.prisma.users.findUnique({
+    where: { id: userId },
+    select: { phone: true },
+  });
+  if (!user) throw new NotFoundException('User not found');
+  return this.sendOtp(userId, user.phone, 'phone_verification');
+}
   // ── Private helpers ───────────────────────────────────────────────────────────
   private normalizePhoneNumber(phone?: string | null) {
     if (!phone) return '';
