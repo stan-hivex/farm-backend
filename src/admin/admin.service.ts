@@ -1088,7 +1088,7 @@ export class AdminService {
       },
     });
     // Compute escrow fee aggregates: creation (escrow_lock) and release (escrow_release)
-    const [escrowCreationAgg, escrowReleaseAgg] = await Promise.all([
+    const [escrowCreationAgg, escrowReleaseAgg, withdrawAgg] = await Promise.all([
       this.prisma.transactions.aggregate({
         where: { transaction_type: 'escrow_lock', status: 'completed' },
         _sum: { fee: true },
@@ -1099,11 +1099,18 @@ export class AdminService {
         _sum: { fee: true },
         _count: { id: true },
       }),
+      this.prisma.transactions.aggregate({
+        where: { transaction_type: 'withdrawal', status: 'completed' },
+        _sum: { fee: true },
+        _count: { id: true },
+      }),
     ]);
 
     const escrow_creation_earnings = Number(escrowCreationAgg._sum.fee ?? 0);
     const escrow_release_earnings = Number(escrowReleaseAgg._sum.fee ?? 0);
     const escrow_total_earnings = Number(escrow_creation_earnings + escrow_release_earnings);
+    const withdraw_fee_earnings = Number(withdrawAgg._sum.fee ?? 0);
+    const withdraw_transaction_count = Number(withdrawAgg._count.id ?? 0);
 
     return {
       data: {
@@ -1124,7 +1131,11 @@ export class AdminService {
         escrow_total_earnings,
         escrow_creation_earnings,
         escrow_release_earnings,
+        escrow_creation_count: escrowCreationAgg._count.id ?? 0,
+        escrow_release_count: escrowReleaseAgg._count.id ?? 0,
         total_escrow_count: (escrowCreationAgg._count.id ?? 0) + (escrowReleaseAgg._count.id ?? 0),
+        withdraw_fee_earnings,
+        withdraw_transaction_count,
       },
     };
   }
