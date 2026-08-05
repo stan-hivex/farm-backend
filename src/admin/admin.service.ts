@@ -228,6 +228,26 @@ export class AdminService {
     return { data: items, meta: paginate(total, page, limit) };
   }
 
+  async getMerchant(merchantId: string) {
+    const merchant = await this.prisma.merchants.findUnique({
+      where: { id: merchantId },
+      include: {
+        users_merchants_user_idTousers: true,
+      },
+    });
+    if (!merchant) throw new NotFoundException('Merchant not found');
+    return { data: merchant };
+  }
+
+  async getKycDocument(kycDocId: string) {
+    const doc = await this.prisma.kyc_documents.findUnique({
+      where: { id: kycDocId },
+      include: { users_kyc_documents_user_idTousers: true },
+    });
+    if (!doc) throw new NotFoundException('KYC document not found');
+    return { data: doc };
+  }
+
   async approveMerchant(
     merchantId: string, adminId: string,
     dto: { status: 'approved' | 'rejected'; rejection_reason?: string },

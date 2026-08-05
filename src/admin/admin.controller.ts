@@ -104,6 +104,8 @@ export class AdminController {
   @Post('escrow/:id/resolve')     resolve(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.resolveDispute(id, u.id, dto); }
   @Permissions('admin:read')
   @Get('merchants')               merchants(@Query() q: any) { return this.svc.listMerchants(q); }
+  @Permissions('admin:read')
+  @Get('merchants/:id')           merchantDetail(@Param('id') id: string) { return this.svc.getMerchant(id); }
   @Permissions('admin:write')
   @Post('merchants/:id/decision') decision(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: MerchantDecisionDto) { return this.svc.approveMerchant(id, u.id, dto); }
   @Permissions('admin:read')
@@ -118,6 +120,8 @@ export class AdminController {
   @Get('kyc/queue')               kycQueue(@Query() q: any) { return this.svc.listKycQueue(q); }
   @Permissions('admin:write')
   @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
+  @Permissions('admin:read')
+  @Get('kyc/:id')                 kycDetail(@Param('id') id: string) { return this.svc.getKycDocument(id); }
   @Permissions('admin:read')
   @Get('analytics')               analytics() { return this.svc.getAdminAnalytics(); }
   @Permissions('admin:read')
