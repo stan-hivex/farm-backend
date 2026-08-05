@@ -606,65 +606,67 @@ export class WebhookService {
           provider = 'paystack';
         }
 
+        const rawProviderIds = [
+          metadata.provider_transaction_id,
+          metadata.provider_ref,
+          metadata.provider_reference,
+          metadata.payment_id,
+          metadata.transaction_id,
+          metadata.txn_id,
+          metadata.provider_payment_id,
+          metadata.provider_checkout_id,
+          deposit?.providerRef,
+        ]
+          .filter((v) => !!v)
+          .map((v) => v?.toString())
+          .filter((value, index, self) => self.indexOf(value) === index);
+
+        const actualProviderId = rawProviderIds.find((id) => id !== tx.transaction_reference) ?? null;
         const providerTransactionId = provider === 'ivorypay'
-          ? (metadata.provider_ref ?? deposit?.providerRef ?? tx.transaction_reference)?.toString()
+          ? actualProviderId ?? undefined
           : tx.transaction_reference;
 
-        this.logger.log(`fixStuckDeposits: ${provider} verify lookup for ${tx.transaction_reference} using providerTransactionId=${providerTransactionId}`);
+        this.logger.log(`fixStuckDeposits: ${provider} verify lookup for ${tx.transaction_reference} using primary providerTransactionId=${providerTransactionId ?? 'internal'} candidateRefs=${JSON.stringify(rawProviderIds)}`);
 
         let verifiedTransaction: any = null;
         try {
           if (provider === 'paystack') {
             verifiedTransaction = await this.paystackService.verifyTransaction(tx.transaction_reference);
           } else if (provider === 'ivorypay') {
-            try {
-              verifiedTransaction = await this.ivorypayService.verifyTransaction(tx.transaction_reference, providerTransactionId);
-            } catch (firstErr) {
-              // If initial lookup by the chosen providerTransactionId failed, attempt
-              // fallback candidates from deposit and transaction metadata.
-              this.logger.warn(`fixStuckDeposits: ivorypay verify primary id failed for ${tx.transaction_reference}, trying fallbacks`, firstErr as any);
-              const meta = (tx.metadata as any) ?? {};
-              const candidates = [
-                deposit?.providerRef,
-                meta.provider_ref,
-                meta.provider_reference,
-                meta.payment_id,
-                meta.transaction_id,
-                meta.txn_id,
-              ]
-                .filter((v) => !!v)
-                .map((v) => v?.toString());
+            const candidates = [
+              ...rawProviderIds,
+              tx.transaction_reference,
+            ].filter((value, index, self) => !!value && self.indexOf(value) === index);
 
-              for (const cand of candidates) {
-                if (!cand || cand === providerTransactionId) continue;
-                try {
-                  this.logger.log(`fixStuckDeposits: ivorypay retry verify for ${tx.transaction_reference} using candidate=${cand}`);
-                  verifiedTransaction = await this.ivorypayService.verifyTransaction(tx.transaction_reference, cand);
-                  if (verifiedTransaction) {
-                    // update deposit & transaction metadata to persist the working provider id
-                    try {
-                      const metadata = (tx.metadata as any) ?? {};
-                      const updatedMetadata = { ...metadata, provider_ref: cand };
-                      await this.prisma.deposit.update({ where: { reference: tx.transaction_reference }, data: { providerRef: cand } });
-                      await this.prisma.transactions.update({ where: { id: tx.id }, data: { metadata: updatedMetadata } });
-                      this.logger.log(`fixStuckDeposits: persisted fallback provider id ${cand} for ${tx.transaction_reference}`);
-                    } catch (updateErr) {
-                      this.logger.debug(`fixStuckDeposits: failed to persist fallback provider id ${cand}`, updateErr as any);
-                    }
-                    break;
-                  }
-                } catch (e) {
-                  this.logger.debug(`fixStuckDeposits: candidate ${cand} lookup failed`, e as any);
-                  continue;
-                }
-              }
-            }
+            verifiedTransaction = await this.ivorypayService.verifyTransaction(tx.transaction_reference, providerTransactionId, candidates);
           } else {
             this.logger.log(`fixStuckDeposits: skipping ${tx.transaction_reference}, unsupported provider=${provider}`);
             continue;
           }
-        } catch (verifyError) {
-          this.logger.warn(`fixStuckDeposits: ${provider} verify failed for ${tx.transaction_reference}, leaving pending`, verifyError as any);
+
+          if (verifiedTransaction && provider === 'ivorypay') {
+            const lookupId = verifiedTransaction.providerReference ?? verifiedTransaction.providerIdentifiers?.transaction_id ?? verifiedTransaction.providerIdentifiers?.id ?? verifiedTransaction.providerIdentifiers?.provider_reference ?? verifiedTransaction.providerIdentifiers?.payment_id ?? verifiedTransaction.providerIdentifiers?.checkout_id ?? null;
+            if (lookupId && lookupId !== tx.transaction_reference) {
+              const metadata = (tx.metadata as any) ?? {};
+              const updatedMetadata = {
+                ...metadata,
+                provider_ref: lookupId,
+                provider_transaction_id: verifiedTransaction.providerIdentifiers?.transaction_id ?? metadata.provider_transaction_id ?? null,
+                provider_payment_id: verifiedTransaction.providerIdentifiers?.payment_id ?? metadata.provider_payment_id ?? null,
+                provider_checkout_id: verifiedTransaction.providerIdentifiers?.checkout_id ?? metadata.provider_checkout_id ?? null,
+                provider_reference: verifiedTransaction.providerIdentifiers?.provider_reference ?? metadata.provider_reference ?? null,
+              };
+              try {
+                await this.prisma.deposit.update({ where: { reference: tx.transaction_reference }, data: { providerRef: lookupId } });
+                await this.prisma.transactions.update({ where: { id: tx.id }, data: { metadata: updatedMetadata } });
+                this.logger.log(`fixStuckDeposits: persisted verified provider id ${lookupId} for ${tx.transaction_reference}`);
+              } catch (updateErr) {
+                this.logger.debug(`fixStuckDeposits: failed to persist verified provider id ${lookupId}`, updateErr as any);
+              }
+            }
+          }
+        } catch (firstErr) {
+          this.logger.warn(`fixStuckDeposits: ${provider} verify lookup failed for ${tx.transaction_reference} using providerTransactionId=${providerTransactionId ?? 'internal'}`, firstErr as any);
           continue;
         }
 

@@ -56,8 +56,22 @@ export class IvorypayDepositService {
       },
     });
 
-    const providerRef = init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
-    await this.prisma.deposit.update({ where: { id: deposit.id }, data: { providerRef } });
+    const providerIdentifiers = (init as any).providerIdentifiers ?? {};
+    const providerTransactionId =
+      providerIdentifiers.transaction_id ??
+      providerIdentifiers.id ??
+      providerIdentifiers.provider_reference ??
+      providerIdentifiers.payment_id ??
+      providerIdentifiers.checkout_id ??
+      init.providerReference ??
+      init.data?.id ??
+      init.data?.transaction_id ??
+      init.data?.reference ??
+      null;
+
+    if (providerTransactionId) {
+      await this.prisma.deposit.update({ where: { id: deposit.id }, data: { providerRef: providerTransactionId } });
+    }
 
     await this.prisma.transactions.create({
       data: {
@@ -71,7 +85,11 @@ export class IvorypayDepositService {
         description: `Pending crypto deposit via Ivorypay (${amount} FARM → ${amountUsd} USD)`,
         metadata: {
           provider: 'ivorypay',
-          provider_ref: providerRef,
+          provider_ref: providerTransactionId,
+          provider_transaction_id: providerIdentifiers.transaction_id ?? null,
+          provider_payment_id: providerIdentifiers.payment_id ?? null,
+          provider_checkout_id: providerIdentifiers.checkout_id ?? null,
+          provider_reference: providerIdentifiers.provider_reference ?? null,
           amount_farm: amount,
           amount_usd: amountUsd,
           currency_fiat: 'USD',

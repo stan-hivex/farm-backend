@@ -14,6 +14,39 @@ export class IvorypayService {
     this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
   }
 
+  private extractProviderIdentifiers(data: any) {
+    if (!data || typeof data !== 'object') {
+      return {};
+    }
+
+    const transaction_id = data.transaction_id ?? data.transactionId ?? data.txn_id ?? data.txnId ?? null;
+    const payment_id = data.payment_id ?? data.paymentId ?? null;
+    const checkout_id = data.checkout_id ?? data.checkoutId ?? data.checkout_id ?? null;
+    const provider_reference = data.provider_reference ?? data.providerReference ?? null;
+    const reference = data.reference ?? null;
+    const id = data.id ?? null;
+
+    return {
+      transaction_id,
+      payment_id,
+      checkout_id,
+      provider_reference,
+      reference,
+      id,
+    };
+  }
+
+  private determinePrimaryProviderReference(identifiers: Record<string, any>) {
+    return (
+      identifiers.transaction_id ||
+      identifiers.id ||
+      identifiers.provider_reference ||
+      identifiers.payment_id ||
+      identifiers.checkout_id ||
+      null
+    );
+  }
+
   async createPayment(options: any) {
     if (!this.apiKey) {
       this.logger.warn('IVORYPAY_API_KEY not configured, returning mock checkout URL');
@@ -66,26 +99,20 @@ export class IvorypayService {
         throw new BadRequestException('Ivorypay checkout URL not provided');
       }
 
-      const providerReference =
-        data?.id ||
-        data?.transaction_id ||
-        data?.transactionId ||
-        data?.txn_id ||
-        data?.txnId ||
-        data?.payment_id ||
-        data?.paymentId ||
-        data?.invoice_id ||
-        data?.invoiceId ||
-        data?.tx_ref ||
-        data?.trxId ||
-        data?.reference ||
-        options.reference;
+      const providerIdentifiers = this.extractProviderIdentifiers(data);
+      const providerReference = this.determinePrimaryProviderReference(providerIdentifiers);
+
+      this.logger.log(
+        `Ivorypay createPayment success: internalReference=${options.reference} providerTransactionId=${providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? 'n/a'} ` +
+        `checkoutId=${providerIdentifiers.checkout_id ?? 'n/a'} paymentId=${providerIdentifiers.payment_id ?? 'n/a'} providerReference=${providerReference ?? 'n/a'}`,
+      );
 
       return {
         data,
         payment_link: paymentLink,
         checkout_url: paymentLink,
         providerReference,
+        providerIdentifiers,
       };
     } catch (e: any) {
       const message = e.response?.data?.message || e.response?.data?.error || e.message;
@@ -105,47 +132,84 @@ export class IvorypayService {
     }
   }
 
-  async verifyTransaction(reference: string, providerReference?: string) {
+  async verifyTransaction(reference: string, providerReference?: string, fallbackReferences: string[] = []) {
     if (!this.apiKey) {
       this.logger.warn('IVORYPAY_API_KEY not configured, returning mock verify');
       return { status: 'completed', reference };
     }
 
-    const lookupReference = providerReference?.toString()?.trim() || reference;
-    try {
-      this.logger.log(`Ivorypay: verifying transaction ${lookupReference} (internal reference=${reference})`);
-      const response = await axios.get(
-        `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupReference)}`,
-        {
-          headers: {
-            Authorization: `${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
+    const candidates = [
+      providerReference?.toString()?.trim(),
+      ...fallbackReferences.map((id) => id?.toString()?.trim()),
+    ]
+      .filter((id): id is string => !!id)
+      .map((id) => id.trim())
+      .filter((value, index, self) => self.indexOf(value) === index);
 
-      if (!response.data || response.data.success === false) {
-        throw new BadRequestException('Ivorypay verification failed');
-      }
-
-      const verifiedData = response.data.data ?? response.data;
-      const status = verifiedData?.status ?? response.data?.status;
-      if (!status) {
-        this.logger.warn(`Ivorypay verify response for ${lookupReference} missing status field: ${JSON.stringify(response.data)}`);
-        throw new BadRequestException('Ivorypay verification failed: missing status field');
-      }
-
-      verifiedData.reference = verifiedData.reference ?? reference;
-      this.logger.log(`Ivorypay: verified ${lookupReference}, status=${status}`);
-      return verifiedData;
-    } catch (e: any) {
-      const message = e.response?.data?.message || e.response?.data?.error || e.message;
-      this.logger.error(`Ivorypay verify error: ${message}`);
-      if (e.response?.data) {
-        this.logger.debug(`Ivorypay verify response body: ${JSON.stringify(e.response.data)}`);
-      }
-      throw new BadRequestException(`Ivorypay verification failed: ${message}`);
+    if (!candidates.includes(reference)) {
+      candidates.push(reference);
     }
+
+    let lastError: any = null;
+    for (const lookupReference of candidates) {
+      const verifyUrl = `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupReference)}`;
+      try {
+        this.logger.log(`Ivorypay: verifying transaction ${lookupReference} (internal reference=${reference}) via ${verifyUrl}`);
+        const response = await axios.get(verifyUrl,
+          {
+            headers: {
+              Authorization: `${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+
+        if (!response.data || response.data.success === false) {
+          const message = response.data?.message || response.data?.error || 'Ivorypay verification failed';
+          if (response.data?.statusCode === 404 || response.status === 404) {
+            this.logger.warn(`Ivorypay verify returned 404 for ${lookupReference}; trying alternate references if available`);
+            lastError = new Error(message);
+            continue;
+          }
+          throw new BadRequestException(`Ivorypay verification failed: ${message}`);
+        }
+
+        const verifiedData = response.data.data ?? response.data;
+        const status = verifiedData?.status ?? response.data?.status;
+        if (!status) {
+          this.logger.warn(`Ivorypay verify response for ${lookupReference} missing status field: ${JSON.stringify(response.data)}`);
+          throw new BadRequestException('Ivorypay verification failed: missing status field');
+        }
+
+        const providerIdentifiers = this.extractProviderIdentifiers(verifiedData);
+        verifiedData.providerIdentifiers = providerIdentifiers;
+        verifiedData.providerReference = lookupReference;
+        verifiedData.reference = verifiedData.reference ?? reference;
+
+        this.logger.log(
+          `Ivorypay: verified transaction ${lookupReference} (internalReference=${reference}) status=${status} ` +
+          `providerTransactionId=${providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? 'n/a'} checkoutId=${providerIdentifiers.checkout_id ?? 'n/a'} paymentId=${providerIdentifiers.payment_id ?? 'n/a'} providerReference=${providerIdentifiers.provider_reference ?? 'n/a'}`,
+        );
+
+        return verifiedData;
+      } catch (e: any) {
+        const message = e.response?.data?.message || e.response?.data?.error || e.message;
+        this.logger.error(`Ivorypay verify error for ${lookupReference}: ${message}`);
+        if (e.response?.data) {
+          this.logger.debug(`Ivorypay verify response body: ${JSON.stringify(e.response.data)}`);
+        }
+
+        if (e.response?.status === 404 || e.response?.data?.statusCode === 404) {
+          lastError = e;
+          continue;
+        }
+
+        throw new BadRequestException(`Ivorypay verification failed: ${message}`);
+      }
+    }
+
+    const finalMessage = lastError?.response?.data?.message || lastError?.message || 'Ivorypay verification failed';
+    throw new BadRequestException(`Ivorypay verification failed: ${finalMessage}`);
   }
 
   async createWithdrawal(options: any) {

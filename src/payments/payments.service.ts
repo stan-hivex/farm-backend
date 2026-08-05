@@ -196,11 +196,36 @@ export class PaymentsService {
         },
       });
 
-      const providerRef =
+      const providerIdentifiers = (payment as any).providerIdentifiers ?? {};
+      const providerTransactionId =
+        providerIdentifiers.transaction_id ??
+        providerIdentifiers.id ??
+        providerIdentifiers.provider_reference ??
+        providerIdentifiers.payment_id ??
+        providerIdentifiers.checkout_id ??
         (payment as any).providerReference ??
         (payment as any).data?.id ??
+        (payment as any).data?.transaction_id ??
         (payment as any).data?.reference ??
-        reference;
+        null;
+
+      const transactionMetadata: any = {
+        provider: 'ivorypay',
+        provider_ref: providerTransactionId,
+        provider_transaction_id: providerIdentifiers.transaction_id ?? null,
+        provider_payment_id: providerIdentifiers.payment_id ?? null,
+        provider_checkout_id: providerIdentifiers.checkout_id ?? null,
+        provider_reference: providerIdentifiers.provider_reference ?? null,
+        amount_farm: farmAmount,
+        amount_usd: amountUsd,
+        farm_to_usd_rate: farmToUsdRate,
+        currency_fiat: 'USD',
+        exchange_rate: rate,
+        user_id: userId,
+        device_risk: ctx?.deviceRisk ?? null,
+        ip: ctx?.ip ?? null,
+        payment_method: 'CRYPTO',
+      };
 
       const tx = await this.prisma.transactions.create({
         data: {
@@ -213,19 +238,7 @@ export class PaymentsService {
           net_amount: amount_farm,
           currency: 'FARM',
           description: `Pending crypto deposit via Ivorypay (${farmAmount} FARM → ${amountUsd} USD)`,
-          metadata: {
-            provider: 'ivorypay',
-            provider_ref: providerRef,
-            amount_farm: farmAmount,
-            amount_usd: amountUsd,
-            farm_to_usd_rate: farmToUsdRate,
-            currency_fiat: 'USD',
-            exchange_rate: rate,
-            user_id: userId,
-            device_risk: ctx?.deviceRisk ?? null,
-            ip: ctx?.ip ?? null,
-            payment_method: 'CRYPTO',
-          },
+          metadata: transactionMetadata,
         },
       });
 
@@ -251,7 +264,7 @@ export class PaymentsService {
           paymentMethod: 'CRYPTO',
           provider: 'ivorypay',
           reference,
-          providerRef,
+          providerRef: providerTransactionId,
           status: 'PENDING',
         },
       });
