@@ -201,12 +201,18 @@ export class PaymentsService {
         providerIdentifiers.transaction_id ??
         providerIdentifiers.id ??
         providerIdentifiers.provider_reference ??
+        providerIdentifiers.tx_ref ??
+        providerIdentifiers.trxref ??
+        providerIdentifiers.transaction_reference ??
         providerIdentifiers.payment_id ??
         providerIdentifiers.checkout_id ??
         (payment as any).providerReference ??
         (payment as any).data?.id ??
         (payment as any).data?.transaction_id ??
         (payment as any).data?.reference ??
+        (payment as any).data?.tx_ref ??
+        (payment as any).data?.trxref ??
+        (payment as any).data?.transaction_reference ??
         null;
 
       const transactionMetadata: any = {

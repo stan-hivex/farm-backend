@@ -61,12 +61,18 @@ export class IvorypayDepositService {
       providerIdentifiers.transaction_id ??
       providerIdentifiers.id ??
       providerIdentifiers.provider_reference ??
+      providerIdentifiers.tx_ref ??
+      providerIdentifiers.trxref ??
+      providerIdentifiers.transaction_reference ??
       providerIdentifiers.payment_id ??
       providerIdentifiers.checkout_id ??
       init.providerReference ??
       init.data?.id ??
       init.data?.transaction_id ??
       init.data?.reference ??
+      init.data?.tx_ref ??
+      init.data?.trxref ??
+      init.data?.transaction_reference ??
       null;
 
     if (providerTransactionId) {

@@ -21,8 +21,11 @@ export class IvorypayService {
 
     const transaction_id = data.transaction_id ?? data.transactionId ?? data.txn_id ?? data.txnId ?? null;
     const payment_id = data.payment_id ?? data.paymentId ?? null;
-    const checkout_id = data.checkout_id ?? data.checkoutId ?? data.checkout_id ?? null;
+    const checkout_id = data.checkout_id ?? data.checkoutId ?? null;
     const provider_reference = data.provider_reference ?? data.providerReference ?? null;
+    const tx_ref = data.tx_ref ?? data.txRef ?? null;
+    const trxref = data.trxref ?? data.trx_ref ?? null;
+    const transaction_reference = data.transaction_reference ?? data.transactionReference ?? null;
     const reference = data.reference ?? null;
     const id = data.id ?? null;
 
@@ -31,6 +34,9 @@ export class IvorypayService {
       payment_id,
       checkout_id,
       provider_reference,
+      tx_ref,
+      trxref,
+      transaction_reference,
       reference,
       id,
     };
@@ -41,8 +47,12 @@ export class IvorypayService {
       identifiers.transaction_id ||
       identifiers.id ||
       identifiers.provider_reference ||
+      identifiers.tx_ref ||
+      identifiers.trxref ||
+      identifiers.transaction_reference ||
       identifiers.payment_id ||
       identifiers.checkout_id ||
+      identifiers.reference ||
       null
     );
   }
