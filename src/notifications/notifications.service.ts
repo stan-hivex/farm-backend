@@ -327,7 +327,7 @@ async updateSettings(userId: string, body: any) {
       const payloadData: Record<string, string> = Object.fromEntries(
         Object.entries({ ...(data ?? {}), title, body, timestamp }).map(([key, value]) => [
           key,
-          value == null ? '' : String(value),
+          value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value),
         ]),
       );
       const payload: any = {
@@ -419,6 +419,7 @@ async updateSettings(userId: string, body: any) {
       entityId: dto.entityId ?? '',
       timestamp,
       notificationId: notification.id,
+      ...(dto.metadata ?? {}),
     });
     return notification;
   }

@@ -3,7 +3,6 @@ import type { Request } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
-import { RequireOwnership } from '../common/decorators/ownership.decorator';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CreatePaymentRequestDto } from './dto/create-payment-request.dto';
@@ -49,7 +48,6 @@ export class PaymentRequestsController {
   }
 
   @Permissions('transfer:write')
-  @RequireOwnership('id')
   @Post(':id/decline')
   @ApiOperation({ summary: 'Decline a payment request' })
   declineRequest(@CurrentUser() u: any, @Param('id') id: string) {
@@ -57,7 +55,6 @@ export class PaymentRequestsController {
   }
 
   @Permissions('transfer:write')
-  @RequireOwnership('id')
   @Post(':id/reject')
   @ApiOperation({ summary: 'Reject a payment request' })
   rejectRequest(@CurrentUser() u: any, @Param('id') id: string) {
@@ -65,7 +62,6 @@ export class PaymentRequestsController {
   }
 
   @Permissions('transfer:write')
-  @RequireOwnership('id')
   @Post(':id/cancel')
   @ApiOperation({ summary: 'Cancel a payment request I created' })
   cancelRequest(@CurrentUser() u: any, @Param('id') id: string) {
@@ -73,7 +69,6 @@ export class PaymentRequestsController {
   }
 
   @Permissions('transfer:read')
-  @RequireOwnership('id')
   @Get(':id')
   @ApiOperation({ summary: 'Get payment request details' })
   getRequestDetails(@CurrentUser() u: any, @Param('id') id: string) {
