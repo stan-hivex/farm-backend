@@ -209,6 +209,42 @@ export class AdminService {
     return { data: { ...escrow, amount: Number(escrow.amount), fee: Number(escrow.fee ?? 0) } };
   }
 
+  async listFees() {
+    const rows = await this.prisma.fee_configurations.findMany({ orderBy: { transaction_type: 'asc' } });
+    const items = rows.map((r) => ({
+      id: r.id,
+      fee_code: r.transaction_type ?? r.id,
+      name: r.transaction_type ?? r.id,
+      description: null,
+      percentage_fee: r.percentage_fee != null ? Number(r.percentage_fee) : null,
+      flat_fee: r.flat_fee != null ? Number(r.flat_fee) : null,
+      is_active: r.is_active,
+      value: r.percentage_fee != null ? `${Number(r.percentage_fee)}` : (r.flat_fee != null ? `${Number(r.flat_fee)}` : ''),
+    }));
+    return { data: items };
+  }
+
+  async updateFee(feeId: string, value: string, adminId: string) {
+    const fee = await this.prisma.fee_configurations.findUnique({ where: { id: feeId } });
+    if (!fee) throw new NotFoundException('Fee configuration not found');
+
+    const isPercent = value.trim().endsWith('%');
+    let updateData: any = {};
+    if (isPercent) {
+      const num = parseFloat(value.replace('%', '').trim());
+      if (Number.isNaN(num)) throw new BadRequestException('Invalid percentage value');
+      updateData.percentage_fee = num;
+    } else {
+      const num = parseFloat(value.trim());
+      if (Number.isNaN(num)) throw new BadRequestException('Invalid fee value');
+      updateData.flat_fee = num;
+    }
+
+    const updated = await this.prisma.fee_configurations.update({ where: { id: feeId }, data: updateData });
+    await this.prisma.audit_logs.create({ data: { user_id: adminId, action: 'UPDATE_FEE', entity_type: 'fee_configurations', entity_id: feeId, new_values: updateData as any } });
+    return { data: { id: updated.id, value: isPercent ? `${updated.percentage_fee}` : `${updated.flat_fee}` }, message: 'Fee updated' };
+  }
+
   async listMerchants(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const where: any = {};
