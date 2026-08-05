@@ -209,7 +209,6 @@ export class PaymentsService {
         (payment as any).providerReference ??
         (payment as any).data?.id ??
         (payment as any).data?.transaction_id ??
-        (payment as any).data?.reference ??
         (payment as any).data?.tx_ref ??
         (payment as any).data?.trxref ??
         (payment as any).data?.transaction_reference ??
@@ -222,6 +221,9 @@ export class PaymentsService {
         provider_payment_id: providerIdentifiers.payment_id ?? null,
         provider_checkout_id: providerIdentifiers.checkout_id ?? null,
         provider_reference: providerIdentifiers.provider_reference ?? null,
+        tx_ref: providerIdentifiers.tx_ref ?? null,
+        trxref: providerIdentifiers.trxref ?? null,
+        transaction_reference: providerIdentifiers.transaction_reference ?? null,
         amount_farm: farmAmount,
         amount_usd: amountUsd,
         farm_to_usd_rate: farmToUsdRate,

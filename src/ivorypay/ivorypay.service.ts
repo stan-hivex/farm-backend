@@ -15,31 +15,51 @@ export class IvorypayService {
   }
 
   private extractProviderIdentifiers(data: any) {
-    if (!data || typeof data !== 'object') {
-      return {};
-    }
-
-    const transaction_id = data.transaction_id ?? data.transactionId ?? data.txn_id ?? data.txnId ?? null;
-    const payment_id = data.payment_id ?? data.paymentId ?? null;
-    const checkout_id = data.checkout_id ?? data.checkoutId ?? null;
-    const provider_reference = data.provider_reference ?? data.providerReference ?? null;
-    const tx_ref = data.tx_ref ?? data.txRef ?? null;
-    const trxref = data.trxref ?? data.trx_ref ?? null;
-    const transaction_reference = data.transaction_reference ?? data.transactionReference ?? null;
-    const reference = data.reference ?? null;
-    const id = data.id ?? null;
-
-    return {
-      transaction_id,
-      payment_id,
-      checkout_id,
-      provider_reference,
-      tx_ref,
-      trxref,
-      transaction_reference,
-      reference,
-      id,
+    const identifiers: Record<string, any> = {
+      transaction_id: null,
+      payment_id: null,
+      checkout_id: null,
+      provider_reference: null,
+      tx_ref: null,
+      trxref: null,
+      transaction_reference: null,
+      reference: null,
+      id: null,
     };
+
+    const keys = new Set<string>();
+
+    const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const matchKey = (key: string) => {
+      const normalized = normalizeKey(key);
+      if (normalized === 'transactionid' || normalized === 'transactionid' || normalized === 'txnid') return 'transaction_id';
+      if (normalized === 'paymentid') return 'payment_id';
+      if (normalized === 'checkoutid') return 'checkout_id';
+      if (normalized === 'providerreference') return 'provider_reference';
+      if (normalized === 'txref' || normalized === 'tx_ref') return 'tx_ref';
+      if (normalized === 'trxref' || normalized === 'trx_ref') return 'trxref';
+      if (normalized === 'transactionreference') return 'transaction_reference';
+      if (normalized === 'reference') return 'reference';
+      if (normalized === 'id') return 'id';
+      return null;
+    };
+
+    const scan = (obj: any) => {
+      if (!obj || typeof obj !== 'object') return;
+      for (const [key, value] of Object.entries(obj)) {
+        const mapped = matchKey(key);
+        if (mapped && identifiers[mapped] == null && value != null && value !== '') {
+          identifiers[mapped] = value;
+          keys.add(mapped);
+        }
+        if (typeof value === 'object' && value !== null) {
+          scan(value);
+        }
+      }
+    };
+
+    scan(data);
+    return identifiers;
   }
 
   private determinePrimaryProviderReference(identifiers: Record<string, any>) {
@@ -52,7 +72,6 @@ export class IvorypayService {
       identifiers.transaction_reference ||
       identifiers.payment_id ||
       identifiers.checkout_id ||
-      identifiers.reference ||
       null
     );
   }

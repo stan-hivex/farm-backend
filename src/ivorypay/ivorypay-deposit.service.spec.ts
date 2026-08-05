@@ -142,4 +142,33 @@ describe('IvorypayDepositService', () => {
       data: expect.objectContaining({ payment_url: 'https://example.com/checkout-2' }),
     }));
   });
+
+  it('persists providerRef when Ivorypay returns tx_ref as the external identifier', async () => {
+    const deposit = { id: 'dep-3', userId: 'user-3', reference: 'ref-3' };
+    prisma.deposit.create.mockResolvedValue(deposit);
+    prisma.transactions.create.mockResolvedValue({ id: 'tx-3' });
+    ivorypay.createPayment.mockResolvedValue({
+      data: { payment_link: 'https://example.com/checkout-3' },
+      providerIdentifiers: { tx_ref: 'ivory-txref-456' },
+      providerReference: 'ivory-txref-456',
+    });
+
+    const result = await service.createDeposit('user-3', { amount_fiat: 100, email: 'user3@example.com' });
+
+    expect(prisma.deposit.update).toHaveBeenCalledWith({ where: { id: 'dep-3' }, data: { providerRef: 'ivory-txref-456' } });
+    expect(prisma.transactions.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({
+          provider_ref: 'ivory-txref-456',
+          tx_ref: 'ivory-txref-456',
+          trxref: null,
+          transaction_reference: null,
+        }),
+      }),
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({ payment_url: 'https://example.com/checkout-3' }),
+    }));
+  });
 });

@@ -34,7 +34,7 @@ export class IvorypayDepositService {
         provider: 'ivorypay',
         reference,
         status: 'PENDING',
-        providerRef: reference,
+        providerRef: null,
       },
     });
 
@@ -69,7 +69,6 @@ export class IvorypayDepositService {
       init.providerReference ??
       init.data?.id ??
       init.data?.transaction_id ??
-      init.data?.reference ??
       init.data?.tx_ref ??
       init.data?.trxref ??
       init.data?.transaction_reference ??
@@ -96,6 +95,9 @@ export class IvorypayDepositService {
           provider_payment_id: providerIdentifiers.payment_id ?? null,
           provider_checkout_id: providerIdentifiers.checkout_id ?? null,
           provider_reference: providerIdentifiers.provider_reference ?? null,
+          tx_ref: providerIdentifiers.tx_ref ?? null,
+          trxref: providerIdentifiers.trxref ?? null,
+          transaction_reference: providerIdentifiers.transaction_reference ?? null,
           amount_farm: amount,
           amount_usd: amountUsd,
           currency_fiat: 'USD',
@@ -151,7 +153,16 @@ export class IvorypayDepositService {
     // so subsequent verification or stuck-deposit fixes use the provider's id
     // rather than our internal reference.
     try {
-      const providerId = payload?.id || payload?.data?.id || payload?.data?.transaction_id || payload?.data?.payment_id || null;
+      const providerId =
+        payload?.id ||
+        payload?.data?.id ||
+        payload?.data?.transaction_id ||
+        payload?.data?.payment_id ||
+        payload?.data?.tx_ref ||
+        payload?.data?.trxref ||
+        payload?.data?.transaction_reference ||
+        payload?.data?.provider_reference ||
+        null;
       if (providerId && deposit.providerRef !== providerId) {
         const metadata = (transaction.metadata as any) ?? {};
         const updatedMetadata = { ...metadata, provider_ref: providerId };

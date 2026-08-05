@@ -143,7 +143,7 @@ export class DepositService {
         init.data?.trxref ??
         init.data?.transaction_reference ??
         null;
-      providerRef = providerTransactionId ?? reference;
+      providerRef = providerTransactionId ?? null;
 
       const transactionMetadata: any = {
         provider: 'ivorypay',
@@ -152,6 +152,9 @@ export class DepositService {
         provider_payment_id: providerIdentifiers.payment_id ?? null,
         provider_checkout_id: providerIdentifiers.checkout_id ?? null,
         provider_reference: providerIdentifiers.provider_reference ?? null,
+        tx_ref: providerIdentifiers.tx_ref ?? null,
+        trxref: providerIdentifiers.trxref ?? null,
+        transaction_reference: providerIdentifiers.transaction_reference ?? null,
         amount_farm: farmAmount,
         amount_usd: amountUsd,
         farm_to_usd_rate: farmToUsdRate,

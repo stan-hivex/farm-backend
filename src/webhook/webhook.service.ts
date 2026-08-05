@@ -374,6 +374,41 @@ export class WebhookService {
     return typeof ref === 'string' && ref.trim() ? ref.trim() : ref?.toString?.().trim() || null;
   }
 
+  private buildIvorypayReferenceCandidates(payload: any, metadata: any = {}): string[] {
+    return [
+      payload?.data?.id,
+      payload?.id,
+      payload?.data?.transaction_id,
+      payload?.data?.payment_id,
+      payload?.data?.tx_ref,
+      payload?.data?.trxref,
+      payload?.data?.transaction_reference,
+      payload?.data?.transactionReference,
+      payload?.data?.reference,
+      payload?.reference,
+      metadata.provider_ref,
+      metadata.provider_transaction_id,
+      metadata.provider_reference,
+    ]
+      .filter((value) => value !== undefined && value !== null && value !== '')
+      .map((value) => value?.toString?.().trim())
+      .filter((value, index, self) => !!value && self.indexOf(value) === index);
+  }
+
+  private async verifyIvorypayWebhookTransaction(reference: string, providerReference: string | undefined, candidateRefs: string[]) {
+    try {
+      const verifiedTransaction = await this.ivorypayService.verifyTransaction(reference, providerReference, candidateRefs);
+      const status = verifiedTransaction?.status?.toString().toLowerCase() ?? '';
+      if (!['success', 'completed'].includes(status)) {
+        return null;
+      }
+      return verifiedTransaction;
+    } catch (error) {
+      this.logger.warn(`Ivorypay webhook verification failed for ${reference}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
   private async resolveIvorypayInternalReference(reference: string): Promise<string | null> {
     const deposit = await this.prisma.deposit.findFirst({
       where: {
@@ -1405,17 +1440,50 @@ export class WebhookService {
       dataTransactionReferenceAlt: payload?.data?.transactionReference ?? null,
     })}`);
 
+    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const transactionMetadata = (transaction?.metadata as any) ?? {};
+    const providerRefFromMetadata = transactionMetadata.provider_ref ?? transactionMetadata.provider_transaction_id ?? transactionMetadata.provider_reference ?? undefined;
+    const candidateRefs = this.buildIvorypayReferenceCandidates(payload, transactionMetadata);
+
     try {
       const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);
       const isFailureEvent = this.isIvorypayFailureEvent(event, status);
 
+      if (isSuccessEvent) {
+        const verifiedTransaction = await this.verifyIvorypayWebhookTransaction(reference, providerRefFromMetadata, candidateRefs);
+        if (!verifiedTransaction) {
+          this.logger.warn(`Ivorypay webhook processing: verification did not confirm success for ${reference} providerRef=${providerRefFromMetadata ?? rawReference}`);
+          return;
+        }
+
+        const verifiedProviderId =
+          verifiedTransaction.providerReference ??
+          verifiedTransaction.providerIdentifiers?.transaction_id ??
+          verifiedTransaction.providerIdentifiers?.id ??
+          verifiedTransaction.providerIdentifiers?.provider_reference ??
+          verifiedTransaction.providerIdentifiers?.tx_ref ??
+          verifiedTransaction.providerIdentifiers?.trxref ??
+          verifiedTransaction.providerIdentifiers?.transaction_reference ??
+          null;
+
+        if (verifiedProviderId && transactionMetadata.provider_ref !== verifiedProviderId) {
+          try {
+            await this.prisma.$transaction(async (tx) => {
+              await tx.deposit.update({ where: { reference }, data: { providerRef: verifiedProviderId } });
+              await tx.transactions.update({ where: { id: transaction?.id }, data: { metadata: { ...transactionMetadata, provider_ref: verifiedProviderId } } });
+            });
+            this.logger.log(`Ivorypay webhook processing: persisted verified provider id ${verifiedProviderId} for ${reference}`);
+          } catch (syncError) {
+            this.logger.debug(`Ivorypay webhook processing: failed to persist verified provider id ${verifiedProviderId} for ${reference}`, syncError as any);
+          }
+        }
+      }
+
       // Amount validation before processing (defense-in-depth)
       if (isSuccessEvent) {
-        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
           const metadata = transaction.metadata as any ?? {};
           const webhookAmount = Number(payload.data?.amount ?? payload.amount);
-          // If metadata includes amount_usd, compare against it (we send USD to Ivorypay)
           const expectedUsd = metadata?.amount_usd !== undefined && metadata?.amount_usd !== null
             ? Number(metadata.amount_usd)
             : null;
@@ -1426,7 +1494,6 @@ export class WebhookService {
               throw new BadRequestException(`Amount mismatch: expected ${expectedUsd}, got ${webhookAmount}`);
             }
           } else if (isFinite(expectedFarm) && !isNaN(webhookAmount)) {
-            // Fallback: compare webhook amount to farm amount (unlikely for Ivorypay)
             if (Math.abs(webhookAmount - expectedFarm) > 0.01) {
               this.logger.warn(`Ivorypay processing amount validation skipped/fallback for ${reference} due to missing USD metadata`);
             }
