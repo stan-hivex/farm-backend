@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { enrichAdminListItem } from './admin-response-utils';
 import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
@@ -9,6 +9,7 @@ import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
   constructor(
     private prisma: PrismaService,
     private escrowService: EscrowService,
@@ -330,6 +331,7 @@ export class AdminService {
     const merchant = await this.prisma.merchants.update({
       where: { id: merchantId },
       data: { status: dto.status as any, approved_by: adminId, approved_at: new Date() },
+      include: { users_merchants_user_idTousers: true },
     });
     await this.prisma.audit_logs.create({
       data: {
@@ -338,6 +340,21 @@ export class AdminService {
         new_values: dto as any,
       },
     });
+    // Notify merchant owner of decision
+    try {
+      const ownerId = merchant.users_merchants_user_idTousers?.id ?? merchant.user_id;
+      if (ownerId) {
+        const title = dto.status === 'approved' ? 'Merchant Application Approved' : 'Merchant Application Rejected';
+        const body = dto.status === 'approved'
+          ? `Your merchant application for "${merchant.business_name ?? 'your business'}" has been approved.`
+          : `Your merchant application for "${merchant.business_name ?? 'your business'}" was rejected.${dto.rejection_reason ? ' Reason: ' + dto.rejection_reason : ''}`;
+        await this.notifications.sendNotification(ownerId, { type: 'merchant', title, body, entityId: merchantId, metadata: { status: dto.status, merchantId } });
+      }
+    } catch (e) {
+      // Non-fatal: log and continue
+      this.logger?.error?.(`Failed to send merchant decision notification: ${e}`);
+    }
+
     return { data: merchant, message: `Merchant ${dto.status}` };
   }
 
@@ -950,6 +967,22 @@ export class AdminService {
         new_values: dto as any,
       },
     });
+
+    // Notify the user about the KYC decision
+    try {
+      const userId = doc.user_id!;
+      if (userId) {
+        const title = dto.status === 'verified' ? 'KYC Verified' : dto.status === 'rejected' ? 'KYC Rejected' : `KYC ${dto.status}`;
+        const body = dto.status === 'verified'
+          ? 'Your identity verification has been approved. You may now access verified features.'
+          : dto.status === 'rejected'
+            ? `Your identity verification was rejected.${dto.rejection_reason ? ' Reason: ' + dto.rejection_reason : ''}`
+            : `Your KYC status was updated to ${dto.status}.`;
+        await this.notifications.sendNotification(userId, { type: 'kyc_update', title, body, entityId: kycDocId, metadata: { status: dto.status } });
+      }
+    } catch (e) {
+      this.logger.error(`Failed to send KYC decision notification: ${e}`);
+    }
 
     return { data: doc, message: 'KYC reviewed successfully' };
   }
