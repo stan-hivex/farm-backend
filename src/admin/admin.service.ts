@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { enrichAdminListItem } from './admin-response-utils';
 import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -102,22 +103,56 @@ export class AdminService {
       this.prisma.transactions.count({ where }),
     ]);
 
+    const userIds = [...new Set(items.flatMap((tx) => {
+      const senderUserId = tx.wallets_transactions_sender_wallet_idTowallets?.user_id;
+      const receiverUserId = tx.wallets_transactions_receiver_wallet_idTowallets?.user_id;
+      return [senderUserId, receiverUserId].filter(Boolean) as string[];
+    }))];
+
+    const users = userIds.length
+      ? await this.prisma.users.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, username: true },
+        })
+      : [];
+
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
     return {
-      data: items.map((tx) => ({
-        id: tx.id,
-        transaction_reference: tx.transaction_reference,
-        transaction_type: tx.transaction_type,
-        status: tx.status,
-        amount: Number(tx.amount),
-        fee: Number(tx.fee ?? 0),
-        net_amount: Number(tx.net_amount ?? 0),
-        currency: tx.currency,
-        description: tx.description,
-        created_at: tx.created_at,
-        processed_at: tx.processed_at,
-        sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
-        receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
-      })),
+      data: items.map((tx) => {
+        const senderUser = tx.wallets_transactions_sender_wallet_idTowallets?.user_id
+          ? userMap.get(tx.wallets_transactions_sender_wallet_idTowallets.user_id)
+          : null;
+        const receiverUser = tx.wallets_transactions_receiver_wallet_idTowallets?.user_id
+          ? userMap.get(tx.wallets_transactions_receiver_wallet_idTowallets.user_id)
+          : null;
+        const payload = {
+          id: tx.id,
+          transaction_reference: tx.transaction_reference,
+          transaction_type: tx.transaction_type,
+          status: tx.status,
+          amount: Number(tx.amount),
+          fee: Number(tx.fee ?? 0),
+          net_amount: Number(tx.net_amount ?? 0),
+          currency: tx.currency,
+          description: tx.description,
+          created_at: tx.created_at,
+          processed_at: tx.processed_at,
+          sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
+          receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
+          metadata: tx.metadata ?? {},
+          user_id: senderUser?.id ?? receiverUser?.id ?? null,
+          username: senderUser?.username ?? receiverUser?.username ?? null,
+          method: (() => {
+            if (typeof tx.metadata === 'object' && tx.metadata !== null) {
+              const metadata = tx.metadata as Record<string, any>;
+              return metadata.payment_method ?? metadata.method ?? null;
+            }
+            return null;
+          })(),
+        };
+        return enrichAdminListItem(payload, senderUser ?? receiverUser ?? null);
+      }),
       meta: paginate(total, page, limit),
     };
   }
@@ -162,8 +197,12 @@ export class AdminService {
       this.prisma.escrow_contracts.findMany({
         where, skip, take, orderBy: { created_at: 'desc' },
         include: {
-          users_escrow_contracts_buyer_idTousers: { select: { username: true } },
-          users_escrow_contracts_seller_idTousers: { select: { username: true } },
+          users_escrow_contracts_buyer_idTousers: {
+            select: { id: true, username: true, first_name: true, last_name: true },
+          },
+          users_escrow_contracts_seller_idTousers: {
+            select: { id: true, username: true, first_name: true, last_name: true },
+          },
         },
       }),
       this.prisma.escrow_contracts.count({ where }),
@@ -330,8 +369,45 @@ export class AdminService {
       this.prisma.withdrawal.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
       this.prisma.withdrawal.count({ where }),
     ]);
+
+    const userIds = [...new Set(items.map((w) => w.userId).filter(Boolean))] as string[];
+    const users = userIds.length
+      ? await this.prisma.users.findMany({ where: { id: { in: userIds } }, select: { id: true, username: true } })
+      : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
     return {
-      data: items.map((w) => ({ ...w, amount: Number(w.amount) })),
+      data: items.map((w) => {
+        const user = w.userId ? userMap.get(w.userId) : null;
+        return enrichAdminListItem(
+          {
+            id: w.id,
+            transaction_reference: w.reference,
+            transaction_type: 'withdrawal',
+            status: w.status,
+            amount: Number(w.amount),
+            created_at: w.createdAt,
+            processed_at: w.updatedAt,
+            metadata: {
+              method: w.method,
+              provider: w.method == 'CRYPTO' ? 'ivorypay' : 'paystack',
+              destination: w.bankName ?? w.phoneNumber ?? w.cryptoAddress ?? null,
+              account_name: w.accountName,
+              account_number: w.accountNumber,
+              bank_name: w.bankName,
+              phone_number: w.phoneNumber,
+              crypto_address: w.cryptoAddress,
+              crypto_asset: w.cryptoAsset,
+              network: w.network,
+              user_id: w.userId,
+            },
+            user_id: w.userId,
+            username: user?.username ?? null,
+            method: w.method,
+          },
+          user,
+        );
+      }),
       meta: paginate(total, page, limit),
     };
   }
