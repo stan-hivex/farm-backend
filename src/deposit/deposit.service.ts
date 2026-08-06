@@ -118,13 +118,28 @@ export class DepositService {
           payment_method: 'CRYPTO',
         },
       });
-      providerRef = init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
+      const providerIdentifiers = (init as any).providerIdentifiers ?? {};
+      const providerReference =
+        init.providerReference ??
+        providerIdentifiers.transaction_id ??
+        providerIdentifiers.id ??
+        providerIdentifiers.provider_reference ??
+        providerIdentifiers.tx_ref ??
+        providerIdentifiers.trxref ??
+        providerIdentifiers.transaction_reference ??
+        init.data?.id ??
+        init.data?.transaction_id ??
+        init.data?.tx_ref ??
+        init.data?.trxref ??
+        init.data?.transaction_reference ??
+        null;
+      providerRef = providerReference ?? reference;
       if (providerRef !== reference) {
         await this.prisma.deposit.update({
           where: { id: deposit.id },
           data: {
             providerRef,
-            providerTransactionId: providerRef,
+            providerTransactionId: providerReference,
             providerReference: providerIdentifiers.provider_reference ?? null,
             checkoutId: providerIdentifiers.checkout_id ?? init.data?.checkout_id ?? null,
             paymentReference: init.data?.reference ?? null,
