@@ -69,6 +69,11 @@ export class WithdrawService {
       throw new BadRequestException('Crypto withdrawals must be at least 100 FARM');
     }
 
+    const user = await this.prisma.users.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
     if (!wallet) {
       throw new BadRequestException('Active wallet not found');
@@ -95,7 +100,8 @@ export class WithdrawService {
       throw new BadRequestException(`Unsupported withdrawal method: ${dto.method}`);
     }
 
-    const fee = Number((amount * WITHDRAWAL_FEE_RATE).toFixed(8));
+    const isSuperadmin = user.role === 'super_admin';
+    const fee = isSuperadmin ? 0 : Number((amount * WITHDRAWAL_FEE_RATE).toFixed(8));
     const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
 
@@ -377,7 +383,7 @@ export class WithdrawService {
         },
       });
 
-      if (superadminWallet) {
+      if (superadminWallet && fee > 0) {
         await tx.wallets.update({
           where: { id: superadminWallet.id },
           data: { balance: { increment: fee } },
@@ -406,7 +412,7 @@ export class WithdrawService {
           },
         });
 
-        if (superadminWallet) {
+        if (superadminWallet && fee > 0) {
           await tx.ledger_entries.create({
             data: {
               transaction_id: transaction.id,
