@@ -127,7 +127,7 @@ describe('IvorypayDepositService', () => {
 
     const result = await service.createDeposit('user-2', { amount_fiat: 100, email: 'user2@example.com' });
 
-    expect(prisma.deposit.update).toHaveBeenCalledWith({ where: { id: 'dep-2' }, data: { providerRef: 'ivory-123' } });
+    expect(prisma.deposit.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'dep-2' }, data: expect.objectContaining({ providerRef: 'ivory-123' }) }));
     expect(prisma.transactions.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         metadata: expect.objectContaining({
@@ -155,7 +155,7 @@ describe('IvorypayDepositService', () => {
 
     const result = await service.createDeposit('user-3', { amount_fiat: 100, email: 'user3@example.com' });
 
-    expect(prisma.deposit.update).toHaveBeenCalledWith({ where: { id: 'dep-3' }, data: { providerRef: 'ivory-txref-456' } });
+    expect(prisma.deposit.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'dep-3' }, data: expect.objectContaining({ providerRef: 'ivory-txref-456' }) }));
     expect(prisma.transactions.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         metadata: expect.objectContaining({
@@ -170,5 +170,52 @@ describe('IvorypayDepositService', () => {
       success: true,
       data: expect.objectContaining({ payment_url: 'https://example.com/checkout-3' }),
     }));
+  });
+
+  it('does not credit wallet until provider verification confirms success', async () => {
+    const deposit = { id: 'dep-11', userId: 'user-11', reference: 'ref-11', amount: 50, currency: 'FARM', status: 'PENDING', providerRef: 'ivory-123' };
+    prisma.deposit.findFirst.mockResolvedValue(deposit);
+    prisma.transactions.findUnique.mockResolvedValue({ id: 'tx-11', transaction_reference: 'ref-11', amount: 50, status: 'pending', transaction_type: 'deposit', metadata: { provider: 'ivorypay', provider_ref: 'ivory-123' } });
+    ivorypay.verifyTransaction.mockResolvedValue({ status: 'pending', providerReference: 'ivory-123', providerIdentifiers: { transaction_id: 'ivory-123' }, tx_hash: '0xabc' });
+
+    const result = await service.handleWebhook({ reference: 'ref-11', event: 'payment.success', data: { id: 'ivory-123', reference: 'ref-11', status: 'success', amount: 50 } }, true);
+
+    expect(result).toEqual(expect.objectContaining({ processed: false, reason: 'verification_pending' }));
+    expect(prisma.deposit.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'dep-11' },
+      data: expect.objectContaining({ verificationAttempts: 1, verificationPayload: expect.anything(), blockchainTransactionHash: '0xabc' }),
+    }));
+    expect(prisma.wallets.update).not.toHaveBeenCalled();
+  });
+
+  it('full flow: persists provider id and processes webhook to credit wallet', async () => {
+    const deposit = { id: 'dep-10', userId: 'user-10', reference: 'ref-10', amount: 50, currency: 'FARM', status: 'PENDING' };
+    prisma.deposit.create.mockResolvedValue(deposit);
+    prisma.transactions.create.mockResolvedValue({ id: 'tx-10', transaction_reference: 'ref-10', amount: 50, status: 'pending', metadata: { provider: 'ivorypay' } });
+
+    ivorypay.createPayment.mockResolvedValue({
+      data: { payment_link: 'https://checkout.example/10', id: 'ip_tx_123456', reference: 'IVP-98765' },
+      providerIdentifiers: { transaction_id: 'ip_tx_123456', id: 'ip_tx_123456' },
+      providerReference: 'ip_tx_123456',
+    });
+
+    // createDeposit should persist providerRef
+    const result = await service.createDeposit('user-10', { amount_fiat: 50, email: 'user10@example.com' });
+    expect(prisma.deposit.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'dep-10' }, data: expect.objectContaining({ providerRef: 'ip_tx_123456' }) }));
+
+    // Prepare webhook handling: find deposit and transaction, wallet exists
+    prisma.deposit.findFirst.mockResolvedValue({ ...deposit, providerRef: 'ip_tx_123456' });
+    prisma.transactions.findUnique.mockResolvedValue({ id: 'tx-10', transaction_reference: 'ref-10', amount: 50, status: 'pending', metadata: { provider: 'ivorypay', provider_ref: 'ip_tx_123456' } });
+    prisma.wallets.findFirst.mockResolvedValue({ id: 'w-10', user_id: 'user-10', balance: 100 });
+
+    // Mock verifyTransaction to return success using provider id
+    ivorypay.verifyTransaction.mockResolvedValue({ status: 'success', providerReference: 'ip_tx_123456', providerIdentifiers: { transaction_id: 'ip_tx_123456' } });
+
+    const payload = { data: { id: 'ip_tx_123456', reference: 'IVP-98765', status: 'success', amount: 50 }, event: 'payment.success' };
+
+    const webhookResult = await service.handleWebhook(payload, true);
+    expect(webhookResult).toEqual(expect.objectContaining({ processed: true, status: 'completed' }));
+    expect(prisma.deposit.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'dep-10' }, data: expect.objectContaining({ status: 'SUCCESS' }) }));
+    expect(prisma.wallets.update).toHaveBeenCalled();
   });
 });

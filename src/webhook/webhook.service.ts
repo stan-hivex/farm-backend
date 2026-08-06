@@ -658,26 +658,29 @@ export class WebhookService {
         ]
           .filter((v) => !!v)
           .map((v) => v?.toString())
-          .filter((value, index, self) => self.indexOf(value) === index);
+          .filter((value, index, self) => !!value && self.indexOf(value) === index)
+          // Exclude values that look like our internal UUIDs to avoid querying Ivorypay with them
+          .filter((v) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v));
 
-        const actualProviderId = rawProviderIds.find((id) => id !== tx.transaction_reference) ?? null;
-        const providerTransactionId = provider === 'ivorypay'
-          ? actualProviderId ?? undefined
-          : tx.transaction_reference;
+        // For Ivorypay we must verify using only provider-generated IDs. If none exist, skip.
+        if (provider === 'ivorypay') {
+          if (!rawProviderIds.length) {
+            this.logger.warn(`fixStuckDeposits: skipping ${tx.transaction_reference} — no Ivorypay provider id found to verify (won't use internal id)`);
+            continue;
+          }
+        }
 
-        this.logger.log(`fixStuckDeposits: ${provider} verify lookup for ${tx.transaction_reference} using primary providerTransactionId=${providerTransactionId ?? 'internal'} candidateRefs=${JSON.stringify(rawProviderIds)}`);
+        const providerTransactionId = provider === 'ivorypay' ? rawProviderIds[0] : tx.transaction_reference;
+
+        this.logger.log(`fixStuckDeposits: ${provider} verify lookup for ${tx.transaction_reference} using primary providerTransactionId=${providerTransactionId} candidateRefs=${JSON.stringify(rawProviderIds)}`);
 
         let verifiedTransaction: any = null;
         try {
           if (provider === 'paystack') {
             verifiedTransaction = await this.paystackService.verifyTransaction(tx.transaction_reference);
           } else if (provider === 'ivorypay') {
-            const candidates = [
-              ...rawProviderIds,
-              tx.transaction_reference,
-            ].filter((value, index, self) => !!value && self.indexOf(value) === index);
-
-            verifiedTransaction = await this.ivorypayService.verifyTransaction(tx.transaction_reference, providerTransactionId, candidates);
+            const candidates = rawProviderIds;
+            verifiedTransaction = await this.ivorypayService.verifyTransaction(/* internal reference omitted */ tx.transaction_reference, providerTransactionId, candidates);
           } else {
             this.logger.log(`fixStuckDeposits: skipping ${tx.transaction_reference}, unsupported provider=${provider}`);
             continue;
@@ -1465,17 +1468,43 @@ export class WebhookService {
           verifiedTransaction.providerIdentifiers?.trxref ??
           verifiedTransaction.providerIdentifiers?.transaction_reference ??
           null;
+        const txHash = verifiedTransaction?.tx_hash ?? verifiedTransaction?.transaction_hash ?? verifiedTransaction?.hash ?? verifiedTransaction?.data?.tx_hash ?? verifiedTransaction?.data?.transaction_hash ?? verifiedTransaction?.data?.hash ?? null;
+        const verificationPayload = verifiedTransaction ?? payload;
+        const normalizedStatus = (verifiedTransaction?.status ?? verifiedTransaction?.data?.status ?? '').toString().toLowerCase();
+        const expectedAmount = Number(transaction?.amount ?? 0);
+        const verifiedAmount = Number(verifiedTransaction?.amount ?? verifiedTransaction?.data?.amount ?? verifiedTransaction?.amount_usd ?? verifiedTransaction?.amount_fiat ?? transaction?.amount ?? 0);
 
-        if (verifiedProviderId && transactionMetadata.provider_ref !== verifiedProviderId) {
-          try {
-            await this.prisma.$transaction(async (tx) => {
-              await tx.deposit.update({ where: { reference }, data: { providerRef: verifiedProviderId } });
-              await tx.transactions.update({ where: { id: transaction?.id }, data: { metadata: { ...transactionMetadata, provider_ref: verifiedProviderId } } });
-            });
-            this.logger.log(`Ivorypay webhook processing: persisted verified provider id ${verifiedProviderId} for ${reference}`);
-          } catch (syncError) {
-            this.logger.debug(`Ivorypay webhook processing: failed to persist verified provider id ${verifiedProviderId} for ${reference}`, syncError as any);
+        await this.prisma.$transaction(async (tx) => {
+          const depositUpdate: any = {
+            verificationPayload,
+            blockchainTransactionHash: txHash ?? null,
+            verificationAttempts: { increment: 1 },
+          };
+          if (['success', 'completed'].includes(normalizedStatus)) {
+            depositUpdate.verifiedAt = new Date();
           }
+          await tx.deposit.update({ where: { reference }, data: depositUpdate });
+          if (verifiedProviderId && (transactionMetadata.provider_ref ?? null) !== verifiedProviderId) {
+            await tx.deposit.update({ where: { reference }, data: { providerRef: verifiedProviderId, providerTransactionId: verifiedProviderId } });
+          }
+          if (verifiedProviderId || txHash) {
+            const metadata = (transaction?.metadata as any) ?? {};
+            const nextMetadata = {
+              ...metadata,
+              ...(verifiedProviderId ? { provider_ref: verifiedProviderId } : {}),
+              ...(txHash ? { blockchain_tx_hash: txHash } : {}),
+            };
+            await tx.transactions.update({ where: { id: transaction?.id }, data: { metadata: nextMetadata } });
+          }
+        });
+
+        if (!['success', 'completed'].includes(normalizedStatus)) {
+          this.logger.warn(`Ivorypay webhook processing: verification returned status=${normalizedStatus || 'unknown'} for ${reference}; skipping credit`);
+          return;
+        }
+        if (expectedAmount > 0 && verifiedAmount > 0 && Math.abs(verifiedAmount - expectedAmount) > 0.01) {
+          this.logger.warn(`Ivorypay webhook processing: amount mismatch for ${reference}: expected ${expectedAmount}, verified ${verifiedAmount}`);
+          return;
         }
       }
 

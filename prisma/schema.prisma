@@ -665,6 +665,18 @@ model Deposit {
   status        DepositStatus @default(PENDING)
   reference     String        @unique
   providerRef   String?
+  providerTransactionId String?    @db.VarChar(255)
+  providerReference     String?    @db.VarChar(255)
+  checkoutId            String?    @db.VarChar(255)
+  paymentReference      String?    @db.VarChar(255)
+  merchantReference     String?    @db.VarChar(255)
+  providerPayload       Json?
+  verificationPayload   Json?
+  blockchainTransactionHash String? @db.VarChar(255)
+  verifiedAt            DateTime?  @db.Timestamp(6)
+  creditedAt            DateTime?  @db.Timestamp(6)
+  webhookReceived       DateTime?  @db.Timestamp(6)
+  verificationAttempts  Int?       @default(0)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   provider      String?       @db.VarChar(100)

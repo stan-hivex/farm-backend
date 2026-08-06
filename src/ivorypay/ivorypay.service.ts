@@ -167,17 +167,20 @@ export class IvorypayService {
       return { status: 'completed', reference };
     }
 
+    const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
     const candidates = [
       providerReference?.toString()?.trim(),
       ...fallbackReferences.map((id) => id?.toString()?.trim()),
     ]
       .filter((id): id is string => !!id)
       .map((id) => id.trim())
-      .filter((value, index, self) => self.indexOf(value) === index);
+      .filter((value, index, self) => self.indexOf(value) === index)
+      // Remove any values that look like our internal UUIDs — we must not query Ivorypay with them
+      .filter((value) => !uuidV4.test(value));
 
-    if (!candidates.includes(reference)) {
-      candidates.push(reference);
-    }
+    // Do not include our internal reference (UUID) as a candidate for Ivorypay lookups.
+    // If the caller passed a providerReference that's not a UUID it will be included above.
 
     let lastError: any = null;
     for (const lookupReference of candidates) {
