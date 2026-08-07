@@ -42,13 +42,26 @@ export class PaymentsWebhookController {
         this.logger.warn('Failed to stringify parsed body for logging');
       }
 
-      const result = await this.webhookService.handleIvorypayWebhook(body, false, req.rawBody, req.headers['x-ivorypay-signature']);
+      const result = await this.webhookService.handleIvorypayWebhook(body, false);
       this.logger.log(`Ivorypay webhook handler result: ${JSON.stringify(result)}`);
       return result ?? { received: true };
     } catch (err) {
       this.logger.error('Ivorypay webhook handler exception', err as any);
       // Ensure any exception is logged and returned with minimal info
       return { received: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  // Temporary admin endpoint to trigger the Cron job manually for testing.
+  @Post('ivorypay/trigger-fix')
+  async triggerFix() {
+    this.logger.log('Manual trigger invoked: fixStuckDeposits');
+    try {
+      await this.webhookService.fixStuckDeposits();
+      return { ok: true, message: 'fixStuckDeposits triggered' };
+    } catch (e: any) {
+      this.logger.error('Manual trigger failed', e as any);
+      return { ok: false, error: e?.message ?? String(e) };
     }
   }
 }
