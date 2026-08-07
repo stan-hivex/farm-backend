@@ -1539,17 +1539,87 @@ export class WebhookService {
     const deposit = resolvedContext.deposit;
     const resolvedReference = resolvedContext.resolvedReference ?? reference ?? rawReference;
     const transactionMetadata = (transaction?.metadata as any) ?? {};
+    const payloadIdentifiers = this.ivorypayService.extractProviderIdentifiers(payload);
     const providerRefFromMetadata = transactionMetadata.provider_ref ?? transactionMetadata.provider_transaction_id ?? transactionMetadata.provider_reference ?? undefined;
     const candidateRefs = this.buildIvorypayReferenceCandidates(payload, transactionMetadata);
+
+    // Persist incoming provider identifiers from the webhook payload before verification.
+    const incomingProviderRef =
+      payloadIdentifiers.transaction_id ??
+      payloadIdentifiers.payment_id ??
+      payloadIdentifiers.provider_reference ??
+      payloadIdentifiers.transaction_reference ??
+      payloadIdentifiers.reference ??
+      payloadIdentifiers.id ??
+      payloadIdentifiers.tx_ref ??
+      payloadIdentifiers.trxref ??
+      null;
+    const incomingProviderReference = payloadIdentifiers.provider_reference ?? payloadIdentifiers.reference ?? payloadIdentifiers.transaction_reference ?? null;
+    const incomingCheckoutId = payloadIdentifiers.checkout_id ?? null;
+    const incomingPaymentReference = payloadIdentifiers.payment_reference ?? null;
+    const incomingMerchantReference = payloadIdentifiers.merchant_reference ?? null;
+    const incomingPayloadUpdate: any = {};
+    const transactionMetadataUpdate: any = { ...transactionMetadata };
+
+    if (deposit) {
+      if (incomingProviderRef && !deposit.providerRef) incomingPayloadUpdate.providerRef = incomingProviderRef;
+      if (incomingProviderRef && !deposit.providerTransactionId) incomingPayloadUpdate.providerTransactionId = incomingProviderRef;
+      if (incomingProviderReference && !deposit.providerReference) incomingPayloadUpdate.providerReference = incomingProviderReference;
+      if (incomingCheckoutId && !deposit.checkoutId) incomingPayloadUpdate.checkoutId = incomingCheckoutId;
+      if (incomingPaymentReference && !deposit.paymentReference) incomingPayloadUpdate.paymentReference = incomingPaymentReference;
+      if (incomingMerchantReference && !deposit.merchantReference) incomingPayloadUpdate.merchantReference = incomingMerchantReference;
+      if (payload && !deposit.providerPayload) incomingPayloadUpdate.providerPayload = payload;
+    }
+
+    if (transaction) {
+      if (incomingProviderRef && !transactionMetadata.provider_ref) transactionMetadataUpdate.provider_ref = incomingProviderRef;
+      if (incomingProviderRef && !transactionMetadata.provider_transaction_id) transactionMetadataUpdate.provider_transaction_id = incomingProviderRef;
+      if (incomingProviderReference && !transactionMetadata.provider_reference) transactionMetadataUpdate.provider_reference = incomingProviderReference;
+      if (incomingCheckoutId && !transactionMetadata.provider_checkout_id) transactionMetadataUpdate.provider_checkout_id = incomingCheckoutId;
+      if (incomingPaymentReference && !transactionMetadata.provider_payment_id) transactionMetadataUpdate.provider_payment_id = incomingPaymentReference;
+      if (incomingMerchantReference && !transactionMetadata.merchant_reference) transactionMetadataUpdate.merchant_reference = incomingMerchantReference;
+      if (payload && !transactionMetadata.provider_payload) transactionMetadataUpdate.provider_payload = payload;
+    }
+
+    if (Object.keys(incomingPayloadUpdate).length || Object.keys(transactionMetadataUpdate).length) {
+      await this.prisma.$transaction(async (tx) => {
+        if (deposit && Object.keys(incomingPayloadUpdate).length) {
+          await tx.deposit.update({ where: { id: deposit.id }, data: incomingPayloadUpdate });
+        }
+        if (transaction && Object.keys(transactionMetadataUpdate).length) {
+          await tx.transactions.update({ where: { id: transaction.id }, data: { metadata: transactionMetadataUpdate } });
+        }
+      });
+      this.logger.log(`Ivorypay webhook processing: persisted missing provider identifiers for ${resolvedReference}`);
+    }
+
+    const resolverProviderRef =
+      providerRefFromMetadata ??
+      incomingProviderRef ??
+      incomingProviderReference ??
+      payloadIdentifiers.transaction_id ??
+      payloadIdentifiers.payment_id ??
+      payloadIdentifiers.provider_reference ??
+      payloadIdentifiers.transaction_reference ??
+      payloadIdentifiers.reference ??
+      payloadIdentifiers.id ??
+      payloadIdentifiers.tx_ref ??
+      payloadIdentifiers.trxref ??
+      undefined;
+
+    if (!resolverProviderRef && candidateRefs.length === 0) {
+      this.logger.warn(`Ivorypay webhook processing aborted for ${resolvedReference}: no provider transaction id or provider reference available for verification`);
+      return;
+    }
 
     try {
       const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);
       const isFailureEvent = this.isIvorypayFailureEvent(event, status);
 
       if (isSuccessEvent) {
-        const verifiedTransaction = await this.verifyIvorypayWebhookTransaction(resolvedReference, providerRefFromMetadata, candidateRefs);
+        const verifiedTransaction = await this.verifyIvorypayWebhookTransaction(resolvedReference, resolverProviderRef, candidateRefs);
         if (!verifiedTransaction) {
-          this.logger.warn(`Ivorypay webhook processing: verification did not confirm success for ${resolvedReference} providerRef=${providerRefFromMetadata ?? rawReference}`);
+          this.logger.warn(`Ivorypay webhook processing: verification did not confirm success for ${resolvedReference} providerRef=${resolverProviderRef ?? rawReference}`);
           return;
         }
 

@@ -56,8 +56,24 @@ export class IvorypayDepositService {
       },
     });
 
-    const providerRef = init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
-    await this.prisma.deposit.update({ where: { id: deposit.id }, data: { providerRef } });
+    const providerRef = init.providerTransactionId ?? init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
+    const providerIdentifiers = init.providerIdentifiers ?? {};
+    const checkoutUrl = init.redirectUrl ?? init.data?.checkout_url ?? init.data?.payment_link ?? init.data?.paymentUrl ?? init.data?.checkoutUrl ?? null;
+
+    await this.prisma.deposit.update({
+      where: { id: deposit.id },
+      data: {
+        providerRef,
+        providerTransactionId: init.providerTransactionId ?? providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? null,
+        providerReference: init.providerReference ?? providerIdentifiers.provider_reference ?? providerIdentifiers.reference ?? providerIdentifiers.transaction_reference ?? null,
+        checkoutId: providerIdentifiers.checkout_id ?? providerIdentifiers.checkoutId ?? null,
+        paymentReference: providerIdentifiers.payment_reference ?? providerIdentifiers.reference ?? null,
+        merchantReference: providerIdentifiers.merchant_reference ?? null,
+        providerPayload: init.rawResponse ?? init.data ?? null,
+      },
+    });
+
+    this.logger.log(`IvoryPay identifiers stored for internal reference=${reference}: providerRef=${providerRef ?? 'missing'} providerTransactionId=${init.providerTransactionId ?? providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? 'missing'} providerReference=${init.providerReference ?? providerIdentifiers.provider_reference ?? providerIdentifiers.reference ?? 'missing'} checkoutId=${providerIdentifiers.checkout_id ?? providerIdentifiers.checkoutId ?? 'missing'} paymentId=${providerIdentifiers.payment_id ?? 'missing'} redirectUrl=${checkoutUrl ?? 'missing'}`);
 
     await this.prisma.transactions.create({
       data: {
@@ -72,6 +88,11 @@ export class IvorypayDepositService {
         metadata: {
           provider: 'ivorypay',
           provider_ref: providerRef,
+          provider_transaction_id: init.providerTransactionId ?? providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? null,
+          provider_reference: init.providerReference ?? providerIdentifiers.provider_reference ?? providerIdentifiers.reference ?? providerIdentifiers.transaction_reference ?? null,
+          checkout_id: providerIdentifiers.checkout_id ?? providerIdentifiers.checkoutId ?? null,
+          payment_reference: providerIdentifiers.payment_reference ?? providerIdentifiers.reference ?? null,
+          merchant_reference: providerIdentifiers.merchant_reference ?? null,
           amount_farm: amount,
           amount_usd: amountUsd,
           currency_fiat: 'USD',
@@ -87,8 +108,8 @@ export class IvorypayDepositService {
       success: true,
       data: {
         reference,
-        payment_url: init.data?.payment_link || init.payment_link || init.checkout_url,
-        authorization_url: init.data?.payment_link || init.payment_link || init.checkout_url,
+        payment_url: checkoutUrl || init.payment_link || init.checkout_url,
+        authorization_url: checkoutUrl || init.payment_link || init.checkout_url,
       },
       message: 'Crypto deposit initiated via IvoryPay',
     };

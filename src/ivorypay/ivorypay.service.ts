@@ -14,31 +14,43 @@ export class IvorypayService {
     this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
   }
 
-  private extractProviderIdentifiers(data: any) {
+  private scanProviderIdentifiers(data: any) {
     const identifiers: Record<string, any> = {
       transaction_id: null,
       payment_id: null,
       checkout_id: null,
       provider_reference: null,
+      merchant_reference: null,
+      invoice_id: null,
       tx_ref: null,
       trxref: null,
       transaction_reference: null,
+      payment_reference: null,
       reference: null,
       id: null,
+      checkout_url: null,
+      payment_link: null,
+      payment_url: null,
+      paymentUrl: null,
+      checkoutUrl: null,
     };
-
-    const keys = new Set<string>();
 
     const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, '');
     const matchKey = (key: string) => {
       const normalized = normalizeKey(key);
-      if (normalized === 'transactionid' || normalized === 'transactionid' || normalized === 'txnid') return 'transaction_id';
+      if (normalized === 'transactionid' || normalized === 'txnid') return 'transaction_id';
       if (normalized === 'paymentid') return 'payment_id';
       if (normalized === 'checkoutid') return 'checkout_id';
       if (normalized === 'providerreference') return 'provider_reference';
+      if (normalized === 'merchantreference') return 'merchant_reference';
+      if (normalized === 'invoiceid') return 'invoice_id';
+      if (normalized === 'paymentreference') return 'payment_reference';
       if (normalized === 'txref' || normalized === 'tx_ref') return 'tx_ref';
       if (normalized === 'trxref' || normalized === 'trx_ref') return 'trxref';
       if (normalized === 'transactionreference') return 'transaction_reference';
+      if (normalized === 'checkouturl') return 'checkout_url';
+      if (normalized === 'paymentlink') return 'payment_link';
+      if (normalized === 'paymenturl') return 'payment_url';
       if (normalized === 'reference') return 'reference';
       if (normalized === 'id') return 'id';
       return null;
@@ -50,7 +62,6 @@ export class IvorypayService {
         const mapped = matchKey(key);
         if (mapped && identifiers[mapped] == null && value != null && value !== '') {
           identifiers[mapped] = value;
-          keys.add(mapped);
         }
         if (typeof value === 'object' && value !== null) {
           scan(value);
@@ -62,18 +73,43 @@ export class IvorypayService {
     return identifiers;
   }
 
+  public extractProviderIdentifiers(data: any) {
+    return this.scanProviderIdentifiers(data);
+  }
+
   private determinePrimaryProviderReference(identifiers: Record<string, any>) {
     return (
+      identifiers.provider_reference ||
+      identifiers.reference ||
+      identifiers.transaction_reference ||
       identifiers.transaction_id ||
       identifiers.id ||
-      identifiers.provider_reference ||
-      identifiers.tx_ref ||
-      identifiers.trxref ||
-      identifiers.transaction_reference ||
       identifiers.payment_id ||
       identifiers.checkout_id ||
+      identifiers.payment_reference ||
+      identifiers.merchant_reference ||
+      identifiers.invoice_id ||
       null
     );
+  }
+
+  private determinePrimaryProviderTransactionId(identifiers: Record<string, any>, internalReference: string) {
+    const normalizedCandidates = [
+      identifiers.transaction_id,
+      identifiers.payment_id,
+      identifiers.provider_reference,
+      identifiers.transaction_reference,
+      identifiers.reference,
+      identifiers.id,
+      identifiers.tx_ref,
+      identifiers.trxref,
+      identifiers.invoice_id,
+    ]
+      .filter((value) => value !== undefined && value !== null && value !== '')
+      .map((value) => value.toString().trim())
+      .filter((value) => value !== internalReference);
+
+    return normalizedCandidates.length ? normalizedCandidates[0] : null;
   }
 
   async createPayment(options: any) {
@@ -109,39 +145,49 @@ export class IvorypayService {
         },
       );
 
-      const data = response.data?.data ?? response.data;
+      const rawData = response.data;
+      const data = rawData?.data ?? rawData;
       if (!data) {
-        this.logger.error('Ivorypay createPayment returned invalid response', response.data);
+        this.logger.error('Ivorypay createPayment returned invalid response', rawData);
         throw new BadRequestException('Invalid Ivorypay response');
       }
 
-      const paymentLink =
+      this.logger.log(`IvoryPay raw response: ${JSON.stringify(rawData, null, 2)}`);
+
+      const providerIdentifiers = this.extractProviderIdentifiers(rawData);
+      const providerReference = this.determinePrimaryProviderReference(providerIdentifiers);
+      const providerTransactionId = this.determinePrimaryProviderTransactionId(providerIdentifiers, options.reference);
+      const redirectUrl =
         data.payment_link ||
         data.checkout_url ||
+        data.paymentUrl ||
+        data.checkoutUrl ||
+        data.payment_url ||
         data.url ||
         data.link ||
-        data.checkout ||
         data.page_url ||
-        data.collectionDetails?.checkoutUrl;
-      if (!paymentLink) {
-        this.logger.error('Ivorypay createPayment did not return a checkout URL', data);
-        throw new BadRequestException('Ivorypay checkout URL not provided');
-      }
-
-      const providerIdentifiers = this.extractProviderIdentifiers(data);
-      const providerReference = this.determinePrimaryProviderReference(providerIdentifiers);
+        data.collectionDetails?.checkoutUrl ||
+        null;
+      const paymentLink = redirectUrl ?? data.payment_link ?? data.checkout_url ?? data.url ?? data.link ?? data.checkout ?? data.page_url ?? data.collectionDetails?.checkoutUrl;
 
       this.logger.log(
-        `Ivorypay createPayment success: internalReference=${options.reference} providerTransactionId=${providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? 'n/a'} ` +
-        `checkoutId=${providerIdentifiers.checkout_id ?? 'n/a'} paymentId=${providerIdentifiers.payment_id ?? 'n/a'} providerReference=${providerReference ?? 'n/a'}`,
+        `Ivorypay createPayment success: internalReference=${options.reference} ` +
+        `providerTransactionId=${providerTransactionId ?? 'missing'} ` +
+        `checkoutId=${providerIdentifiers.checkout_id ?? 'missing'} ` +
+        `paymentId=${providerIdentifiers.payment_id ?? 'missing'} ` +
+        `providerReference=${providerReference ?? 'missing'} ` +
+        `redirectUrl=${redirectUrl ?? 'missing'}`,
       );
 
       return {
+        rawResponse: rawData,
         data,
         payment_link: paymentLink,
         checkout_url: paymentLink,
         providerReference,
+        providerTransactionId,
         providerIdentifiers,
+        redirectUrl,
       };
     } catch (e: any) {
       const message = e.response?.data?.message || e.response?.data?.error || e.message;
