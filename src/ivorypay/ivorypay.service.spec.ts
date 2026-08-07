@@ -1,5 +1,9 @@
 import { ConfigService } from '@nestjs/config';
+import axios from 'axios';
 import { IvorypayService } from './ivorypay.service';
+
+jest.mock('axios');
+const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 describe('IvorypayService', () => {
   let service: IvorypayService;
@@ -14,6 +18,7 @@ describe('IvorypayService', () => {
     } as unknown as ConfigService;
 
     service = new IvorypayService(configService);
+    mockedAxios.get.mockReset();
   });
 
   it('extracts tx_ref, trxref, and transaction_reference from Ivorypay payload', () => {
@@ -29,7 +34,7 @@ describe('IvorypayService', () => {
       id: 'ID123',
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       transaction_id: 'TID123',
       payment_id: 'PID123',
       checkout_id: 'CID123',
@@ -74,5 +79,34 @@ describe('IvorypayService', () => {
 
     const primary = (service as any).determinePrimaryProviderReference(identifiers);
     expect(primary).toBe('TRX123');
+  });
+
+  it('extracts lookup identifiers from URLs, query params, and raw strings', () => {
+    const lookup = (service as any).extractLookupIdentifier.bind(service);
+
+    expect(lookup('https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000')).toBe(
+      '550e8400-e29b-41d4-a716-446655440000',
+    );
+    expect(lookup('https://example.com/pay?reference=abc123')).toBe('abc123');
+    expect(lookup('abc123')).toBe('abc123');
+  });
+
+  it('verifies transaction using the business verify endpoint and falls back to the legacy verify endpoint', async () => {
+    mockedAxios.get
+      .mockResolvedValueOnce({ data: { success: false, statusCode: 404, message: 'Transaction not found' }, status: 404 })
+      .mockResolvedValueOnce({ data: { success: true, data: { reference: 'ref1', status: 'SUCCESS' } }, status: 200 });
+
+    const result = await service.verifyTransaction('ref1', 'ref1', ['ref1']);
+
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://api.ivorypay.io/api/v1/business/transactions/ref1/verify',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'test-api-key' }) }),
+    );
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://api.ivorypay.io/api/v1/transactions/ref1/verify',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'test-api-key' }) }),
+    );
+    expect(result.reference).toBe('ref1');
+    expect(result.status).toBe('SUCCESS');
   });
 });

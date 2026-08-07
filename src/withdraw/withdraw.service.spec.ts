@@ -73,12 +73,53 @@ describe('WithdrawService', () => {
 
     expect(createdWithdrawalData).toMatchObject({
       cryptoAddress: '0xabc',
-      network: 'Polygon',
+      network: 'POLYGON',
       cryptoAsset: 'USDC',
     });
   });
 
-  it('credits the withdrawal fee to a superadmin wallet when a withdrawal succeeds', async () => {
+  it('accepts walletaddress alias for crypto withdrawals', async () => {
+    jest.spyOn(service as any, 'processWithdrawal').mockResolvedValue(undefined);
+
+    prisma.wallets.findFirst.mockResolvedValue({
+      id: 'wallet-1',
+      balance: 1000,
+      locked_balance: 0,
+    });
+
+    let createdWithdrawalData: any;
+    prisma.$transaction.mockImplementation(async (callback: any) => {
+      const tx = {
+        wallets: { update: jest.fn().mockResolvedValue({}) },
+        withdrawal: {
+          create: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
+            createdWithdrawalData = data;
+            return { id: 'withdrawal-1', reference: 'ref-1' };
+          } ),
+        },
+        transactions: { create: jest.fn().mockResolvedValue({}) },
+      };
+
+      return callback(tx);
+    });
+
+    await service.createWithdrawal('user-1', {
+      amount: 200,
+      method: 'CRYPTO',
+      walletaddress: '0xabc',
+      network: 'Polygon',
+      token: 'USDC',
+      pin: '1234',
+    } as any);
+
+    expect(createdWithdrawalData).toMatchObject({
+      cryptoAddress: '0xabc',
+      network: 'POLYGON',
+      cryptoAsset: 'USDC',
+    });
+  });
+
+  it('marks a completed withdrawal as success and updates user wallet', async () => {
     const userWallet = { id: 'wallet-user', balance: 1000, locked_balance: 1000 };
     const adminWallet = { id: 'wallet-admin', balance: 500, locked_balance: 0 };
 
@@ -114,20 +155,16 @@ describe('WithdrawService', () => {
       return callback(tx);
     });
 
-    jest.spyOn(service as any, 'findSuperadminWallet').mockResolvedValue(adminWallet);
-
     await service.markAsSuccess('ref-1');
 
     expect(txWalletUpdates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ where: { id: 'wallet-user' } }),
-        expect.objectContaining({ where: { id: 'wallet-admin' } }),
       ]),
     );
     expect(txLedgerCreates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ entry_type: 'debit', amount: 1000 }),
-        expect.objectContaining({ entry_type: 'credit', amount: 15 }),
       ]),
     );
   });

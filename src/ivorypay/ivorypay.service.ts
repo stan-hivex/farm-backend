@@ -119,6 +119,8 @@ export class IvorypayService {
   private determinePrimaryProviderReference(identifiers: Record<string, any>, internalReference: string) {
     const candidate = (
       identifiers.provider_reference ||
+      identifiers.tx_ref ||
+      identifiers.trxref ||
       identifiers.transaction_reference ||
       identifiers.transaction_id ||
       identifiers.id ||
@@ -350,7 +352,71 @@ export class IvorypayService {
   }
 
   async createWithdrawal(options: any) {
-    this.logger.log(`Mock Ivorypay create withdrawal ${options.reference}`);
-    return { data: { id: 'WD_123456' }, id: 'WD_123456' };
+    const amount = Number(options.amount);
+    const token = (options.token || options.crypto || options.cryptoAsset)?.toString().toUpperCase();
+    const address = options.address || options.to_address || options.cryptoAddress || options.walletAddress || options.walletaddress;
+    const network = options.network?.toString().toUpperCase();
+    const reference = options.reference;
+
+    if (!amount || !token || !address || !network || !reference) {
+      throw new BadRequestException('Invalid Ivorypay crypto withdrawal request');
+    }
+
+    if (!this.apiKey) {
+      this.logger.warn('IVORYPAY_API_KEY not configured, returning mock Ivorypay create withdrawal');
+      return {
+        rawResponse: { status: true, message: 'Mock withdrawal created', data: { id: 'WD_123456', reference, amount, token, network, address, status: 'PENDING' } },
+        data: { id: 'WD_123456', reference, amount, token, network, address, status: 'PENDING' },
+        providerReference: reference,
+        providerTransactionId: 'WD_123456',
+      };
+    }
+
+    try {
+      const body = {
+        network,
+        address,
+        amount,
+        token,
+        reference,
+      };
+
+      this.logger.log(`Ivorypay: creating crypto withdrawal ${reference} via ${this.baseUrl}/v1/crypto-transfer`);
+      const response = await axios.post(`${this.baseUrl}/v1/crypto-transfer`, body, {
+        headers: {
+          Authorization: `${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const rawData = response.data;
+      if (!rawData || rawData.status === false) {
+        const message = rawData?.message || 'Invalid Ivorypay response';
+        this.logger.error('Ivorypay createWithdrawal returned invalid response', rawData);
+        throw new BadRequestException(`Ivorypay crypto withdrawal failed: ${message}`);
+      }
+
+      const data = rawData.data ?? rawData;
+      const providerReference = data.reference ?? reference;
+      const providerTransactionId = data.id ?? null;
+
+      this.logger.log(`Ivorypay crypto withdrawal created: reference=${providerReference}, id=${providerTransactionId}`);
+      return {
+        rawResponse: rawData,
+        data,
+        providerReference,
+        providerTransactionId,
+      };
+    } catch (e: any) {
+      const message = e.response?.data?.message || e.response?.data?.error || e.message;
+      const statusCode = e.response?.status;
+      const endpoint = `${this.baseUrl}/v1/crypto-transfer`;
+
+      this.logger.error(`Ivorypay createWithdrawal error [${statusCode}] ${endpoint}: ${message}`);
+      if (e.response?.data) {
+        this.logger.debug(`Ivorypay createWithdrawal response body: ${JSON.stringify(e.response.data)}`);
+      }
+      throw new BadRequestException(`Ivorypay crypto withdrawal failed: ${message}`);
+    }
   }
 }
