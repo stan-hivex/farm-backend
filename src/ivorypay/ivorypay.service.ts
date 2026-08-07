@@ -262,17 +262,26 @@ export class IvorypayService {
 
     let lastError: any = null;
     for (const lookupReference of candidates) {
-      const verifyUrl = `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupReference)}`;
+      // Prefer an extracted UUID from the candidate (handles full checkout URLs).
+      const extracted = this.extractUuidFromString(lookupReference);
+      const lookupId = extracted ?? lookupReference;
+
+      // If the lookupId is not a UUID, skip — Ivorypay expects a UUID identifier.
+      if (!uuidV4.test(lookupId)) {
+        this.logger.warn(`Ivorypay: skipping verify candidate ${lookupReference} — not a valid UUID or missing extractable UUID`);
+        lastError = new Error('Candidate not a UUID');
+        continue;
+      }
+
+      const verifyUrl = `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupId)}`;
       try {
-        this.logger.log(`Ivorypay: verifying transaction ${lookupReference} (internal reference=${reference}) via ${verifyUrl}`);
-        const response = await axios.get(verifyUrl,
-          {
-            headers: {
-              Authorization: `${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
+        this.logger.log(`Ivorypay: verifying transaction ${lookupId} (internal reference=${reference}) via ${verifyUrl}`);
+        const response = await axios.get(verifyUrl, {
+          headers: {
+            Authorization: `${this.apiKey}`,
+            'Content-Type': 'application/json',
           },
-        );
+        });
 
         if (!response.data || response.data.success === false) {
           const message = response.data?.message || response.data?.error || 'Ivorypay verification failed';
