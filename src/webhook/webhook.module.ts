@@ -16,6 +16,7 @@ import { WebsocketModule } from '../websocket/websocket.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { PaystackModule } from '../paystack/paystack.module';
 import { IvorypayModule } from '../ivorypay/ivorypay.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaService } from '../database/prisma.service';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
 import { QUEUES } from '../common/constants';
@@ -28,6 +29,7 @@ import { QUEUES } from '../common/constants';
     forwardRef(() => PaymentsModule),
     forwardRef(() => PaystackModule),
     forwardRef(() => IvorypayModule),
+    NotificationsModule,
     ScheduleModule.forRoot(),
     BullModule.registerQueue({
       name: QUEUES.WEBHOOKS,

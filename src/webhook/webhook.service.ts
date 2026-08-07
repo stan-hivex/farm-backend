@@ -7,6 +7,7 @@ import { DepositService } from '../deposit/deposit.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { QUEUES } from '../common/constants';
@@ -24,6 +25,7 @@ export class WebhookService {
     private readonly depositService: DepositService,
     private readonly withdrawService: WithdrawService,
     private readonly websocket: WebsocketGateway,
+    private readonly notificationsService: NotificationsService,
     private readonly cfg: ConfigService,
     private readonly paystackService: PaystackService,
     private readonly ivorypayService: IvorypayService,
@@ -196,7 +198,9 @@ export class WebhookService {
       dataTransactionReferenceAlt: payload?.data?.transactionReference ?? null,
     };
     const foundReference = this.getIvorypayReference(payload);
+    this.logger.log(`Ivorypay webhook payload: ${JSON.stringify(payload)}`);
     this.logger.log(`Ivorypay webhook received: event=${event ?? 'unknown'} resolvedReference=${foundReference ?? 'missing'} status=${status}`);
+    this.logger.log(`Ivorypay webhook signature verified: reference=${foundReference ?? 'missing'}`);
     this.logger.debug(`Ivorypay webhook candidate refs: ${JSON.stringify(candidateRefs)}`);
     const eventId = this.getEventId('ivorypay', payload);
     if (eventId && (await this.isReplay('ivorypay', eventId))) {
@@ -733,8 +737,9 @@ export class WebhookService {
           .filter((v) => !!v)
           .map((v) => v?.toString())
           .filter((value, index, self) => !!value && self.indexOf(value) === index)
-          // Exclude values that look like our internal UUIDs to avoid querying Ivorypay with them
-          .filter((v) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v));
+          // Keep the first candidate even if it looks like a UUID, because it may be
+          // the provider reference recorded at checkout creation.
+          .filter((v, index) => index === 0 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v));
 
         // For Ivorypay we must verify using only provider-generated IDs. If none exist, skip.
         if (provider === 'ivorypay') {
@@ -925,7 +930,7 @@ export class WebhookService {
           data: { balance: { increment: amount } },
         });
 
-        await tx.ledger_entries.create({
+        const ledgerEntry = await tx.ledger_entries.create({
           data: {
             transaction_id: transaction?.id ?? null,
             wallet_id: wallet.id,
@@ -949,7 +954,7 @@ export class WebhookService {
           });
         }
 
-        return { ok: true, wallet, amount, previousBalance };
+        return { ok: true, wallet, amount, previousBalance, ledgerEntryId: ledgerEntry.id };
       },
       { timeout: 10000 },
     );
@@ -958,9 +963,25 @@ export class WebhookService {
       return false;
     }
 
-    const completed = result as { ok: true; wallet: any; previousBalance: number; amount: number };
+    const completed = result as { ok: true; wallet: any; previousBalance: number; amount: number; ledgerEntryId: string };
+    const notification = await this.notificationsService.sendNotification(deposit.userId, {
+      type: 'deposit_completed',
+      title: 'Deposit completed',
+      body: `Your deposit of ${completed.amount} ${deposit.currency || 'FARM'} has been credited to your wallet.`,
+      entityId: deposit.id,
+      metadata: {
+        reference,
+        amount: completed.amount,
+        currency: deposit.currency || 'FARM',
+        ledgerEntryId: completed.ledgerEntryId,
+      },
+    });
+
+    this.logger.log(`Ivorypay webhook credit completed: reference=${reference} walletBefore=${completed.previousBalance} walletAfter=${completed.previousBalance + completed.amount} amount=${completed.amount} ledgerId=${completed.ledgerEntryId} notificationId=${notification?.id ?? 'none'}`);
+
     this.websocket.emitBalanceUpdate(completed.wallet.user_id ?? '', completed.previousBalance + completed.amount);
     this.websocket.emitTransactionUpdate(completed.wallet.user_id ?? '', { reference, status: 'SUCCESS' });
+
     return true;
   }
 
@@ -1190,8 +1211,18 @@ export class WebhookService {
     const wallet = (result as any).wallet;
     const previousBalance = (result as any).previousBalance;
     const amount = (result as any).amount;
+    const ledgerEntryId = (result as any).ledgerEntryId;
 
-    // Emit websocket updates
+    const notification = await this.notificationsService.sendNotification(deposit.userId, {
+      type: 'deposit_completed',
+      title: 'Deposit completed',
+      body: `Your deposit of ${amount} ${deposit.currency || 'FARM'} has been credited to your wallet.`,
+      entityId: deposit.id,
+      metadata: { reference, amount, currency: deposit.currency || 'FARM' },
+    });
+
+    this.logger.log(`Ivorypay deposit credited: reference=${reference} walletBefore=${previousBalance} walletAfter=${previousBalance + amount} amount=${amount} ledgerId=${ledgerEntryId} notificationId=${notification?.id ?? 'none'}`);
+
     this.websocket.emitBalanceUpdate(deposit.userId, previousBalance + amount);
     this.websocket.emitTransactionUpdate(deposit.userId, { reference, status: 'SUCCESS' });
 
@@ -1543,6 +1574,8 @@ export class WebhookService {
     const providerRefFromMetadata = transactionMetadata.provider_ref ?? transactionMetadata.provider_transaction_id ?? transactionMetadata.provider_reference ?? undefined;
     const candidateRefs = this.buildIvorypayReferenceCandidates(payload, transactionMetadata);
 
+    this.logger.log(`Ivorypay webhook processing matched deposit=${deposit?.id ?? 'none'} transaction=${transaction?.id ?? 'none'} resolvedReference=${resolvedReference} providerRef=${providerRefFromMetadata ?? rawReference}`);
+
     // Persist incoming provider identifiers from the webhook payload before verification.
     const incomingProviderRef =
       payloadIdentifiers.transaction_id ??
@@ -1562,23 +1595,23 @@ export class WebhookService {
     const transactionMetadataUpdate: any = { ...transactionMetadata };
 
     if (deposit) {
-      if (incomingProviderRef && !deposit.providerRef) incomingPayloadUpdate.providerRef = incomingProviderRef;
-      if (incomingProviderRef && !deposit.providerTransactionId) incomingPayloadUpdate.providerTransactionId = incomingProviderRef;
-      if (incomingProviderReference && !deposit.providerReference) incomingPayloadUpdate.providerReference = incomingProviderReference;
-      if (incomingCheckoutId && !deposit.checkoutId) incomingPayloadUpdate.checkoutId = incomingCheckoutId;
-      if (incomingPaymentReference && !deposit.paymentReference) incomingPayloadUpdate.paymentReference = incomingPaymentReference;
-      if (incomingMerchantReference && !deposit.merchantReference) incomingPayloadUpdate.merchantReference = incomingMerchantReference;
-      if (payload && !deposit.providerPayload) incomingPayloadUpdate.providerPayload = payload;
+      if (incomingProviderRef && deposit.providerRef !== incomingProviderRef) incomingPayloadUpdate.providerRef = incomingProviderRef;
+      if (incomingProviderRef && deposit.providerTransactionId !== incomingProviderRef) incomingPayloadUpdate.providerTransactionId = incomingProviderRef;
+      if (incomingProviderReference && deposit.providerReference !== incomingProviderReference) incomingPayloadUpdate.providerReference = incomingProviderReference;
+      if (incomingCheckoutId && deposit.checkoutId !== incomingCheckoutId) incomingPayloadUpdate.checkoutId = incomingCheckoutId;
+      if (incomingPaymentReference && deposit.paymentReference !== incomingPaymentReference) incomingPayloadUpdate.paymentReference = incomingPaymentReference;
+      if (incomingMerchantReference && deposit.merchantReference !== incomingMerchantReference) incomingPayloadUpdate.merchantReference = incomingMerchantReference;
+      if (payload && JSON.stringify(deposit.providerPayload) !== JSON.stringify(payload)) incomingPayloadUpdate.providerPayload = payload;
     }
 
     if (transaction) {
-      if (incomingProviderRef && !transactionMetadata.provider_ref) transactionMetadataUpdate.provider_ref = incomingProviderRef;
-      if (incomingProviderRef && !transactionMetadata.provider_transaction_id) transactionMetadataUpdate.provider_transaction_id = incomingProviderRef;
-      if (incomingProviderReference && !transactionMetadata.provider_reference) transactionMetadataUpdate.provider_reference = incomingProviderReference;
-      if (incomingCheckoutId && !transactionMetadata.provider_checkout_id) transactionMetadataUpdate.provider_checkout_id = incomingCheckoutId;
-      if (incomingPaymentReference && !transactionMetadata.provider_payment_id) transactionMetadataUpdate.provider_payment_id = incomingPaymentReference;
-      if (incomingMerchantReference && !transactionMetadata.merchant_reference) transactionMetadataUpdate.merchant_reference = incomingMerchantReference;
-      if (payload && !transactionMetadata.provider_payload) transactionMetadataUpdate.provider_payload = payload;
+      if (incomingProviderRef && transactionMetadata.provider_ref !== incomingProviderRef) transactionMetadataUpdate.provider_ref = incomingProviderRef;
+      if (incomingProviderRef && transactionMetadata.provider_transaction_id !== incomingProviderRef) transactionMetadataUpdate.provider_transaction_id = incomingProviderRef;
+      if (incomingProviderReference && transactionMetadata.provider_reference !== incomingProviderReference) transactionMetadataUpdate.provider_reference = incomingProviderReference;
+      if (incomingCheckoutId && transactionMetadata.provider_checkout_id !== incomingCheckoutId) transactionMetadataUpdate.provider_checkout_id = incomingCheckoutId;
+      if (incomingPaymentReference && transactionMetadata.provider_payment_id !== incomingPaymentReference) transactionMetadataUpdate.provider_payment_id = incomingPaymentReference;
+      if (incomingMerchantReference && transactionMetadata.merchant_reference !== incomingMerchantReference) transactionMetadataUpdate.merchant_reference = incomingMerchantReference;
+      if (payload && JSON.stringify(transactionMetadata.provider_payload) !== JSON.stringify(payload)) transactionMetadataUpdate.provider_payload = payload;
     }
 
     if (Object.keys(incomingPayloadUpdate).length || Object.keys(transactionMetadataUpdate).length) {
@@ -1590,7 +1623,7 @@ export class WebhookService {
           await tx.transactions.update({ where: { id: transaction.id }, data: { metadata: transactionMetadataUpdate } });
         }
       });
-      this.logger.log(`Ivorypay webhook processing: persisted missing provider identifiers for ${resolvedReference}`);
+      this.logger.log(`Ivorypay webhook processing: persisted provider identifiers for ${resolvedReference} providerRef=${incomingProviderRef ?? 'none'} checkoutId=${incomingCheckoutId ?? 'none'} paymentReference=${incomingPaymentReference ?? 'none'} merchantReference=${incomingMerchantReference ?? 'none'}`);
     }
 
     const resolverProviderRef =
@@ -1733,7 +1766,8 @@ export class WebhookService {
         this.logger.warn(`Ivorypay webhook withdrawal failure event: event=${event} reference=${reference} status=${status}`);
         await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
       } else if (isSuccessEvent) {
-        await this.finalizeDeposit(resolvedReference);
+        const credited = await this.finalizeDeposit(resolvedReference);
+        this.logger.log(`Ivorypay webhook processing completed for ${resolvedReference}: success=${credited} event=${event} status=${status}`);
       } else if (isFailureEvent) {
         this.logger.warn(`Ivorypay webhook failure/cancel event received: event=${event} reference=${reference} status=${status}`);
         await this.depositService.failDeposit(

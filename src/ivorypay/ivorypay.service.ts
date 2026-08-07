@@ -215,18 +215,22 @@ export class IvorypayService {
 
     const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-    const candidates = [
+    const rawCandidates = [
       providerReference?.toString()?.trim(),
       ...fallbackReferences.map((id) => id?.toString()?.trim()),
     ]
       .filter((id): id is string => !!id)
-      .map((id) => id.trim())
-      .filter((value, index, self) => self.indexOf(value) === index)
-      // Remove any values that look like our internal UUIDs — we must not query Ivorypay with them
-      .filter((value) => !uuidV4.test(value));
+      .map((id) => id.trim());
 
-    // Do not include our internal reference (UUID) as a candidate for Ivorypay lookups.
-    // If the caller passed a providerReference that's not a UUID it will be included above.
+    const candidates = rawCandidates
+      .filter((value, index, self) => self.indexOf(value) === index)
+      // Keep the first candidate even if it looks like a UUID because it may be
+      // the provider reference returned by Ivorypay. Later fallback candidates
+      // may still be filtered to avoid our internal UUIDs.
+      .filter((value, index) => index === 0 || !uuidV4.test(value));
+
+    // Do not include our internal UUIDs from fallback references, but preserve the
+    // explicitly supplied providerReference candidate when it is the first lookup.
 
     let lastError: any = null;
     for (const lookupReference of candidates) {
