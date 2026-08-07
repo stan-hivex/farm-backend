@@ -77,10 +77,18 @@ export class IvorypayService {
     return this.scanProviderIdentifiers(data);
   }
 
-  private determinePrimaryProviderReference(identifiers: Record<string, any>) {
-    return (
+  private extractUuidFromString(value: any): string | null {
+    if (typeof value !== 'string' || !value.trim()) {
+      return null;
+    }
+
+    const match = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+    return match ? match[0] : null;
+  }
+
+  private determinePrimaryProviderReference(identifiers: Record<string, any>, internalReference: string) {
+    const candidate = (
       identifiers.provider_reference ||
-      identifiers.reference ||
       identifiers.transaction_reference ||
       identifiers.transaction_id ||
       identifiers.id ||
@@ -89,11 +97,21 @@ export class IvorypayService {
       identifiers.payment_reference ||
       identifiers.merchant_reference ||
       identifiers.invoice_id ||
+      identifiers.reference ||
       null
     );
+
+    if (candidate && candidate.toString().trim() !== internalReference) {
+      return candidate.toString().trim();
+    }
+
+    const urlCandidate = this.extractUuidFromString(identifiers.checkout_url) ?? this.extractUuidFromString(identifiers.payment_link) ?? this.extractUuidFromString(identifiers.payment_url);
+    return urlCandidate ?? null;
   }
 
   private determinePrimaryProviderTransactionId(identifiers: Record<string, any>, internalReference: string) {
+    const urlCandidate = this.extractUuidFromString(identifiers.checkout_url) ?? this.extractUuidFromString(identifiers.payment_link) ?? this.extractUuidFromString(identifiers.payment_url);
+
     const normalizedCandidates = [
       identifiers.transaction_id,
       identifiers.payment_id,
@@ -104,6 +122,7 @@ export class IvorypayService {
       identifiers.tx_ref,
       identifiers.trxref,
       identifiers.invoice_id,
+      urlCandidate,
     ]
       .filter((value) => value !== undefined && value !== null && value !== '')
       .map((value) => value.toString().trim())
@@ -155,7 +174,7 @@ export class IvorypayService {
       this.logger.log(`IvoryPay raw response: ${JSON.stringify(rawData, null, 2)}`);
 
       const providerIdentifiers = this.extractProviderIdentifiers(rawData);
-      const providerReference = this.determinePrimaryProviderReference(providerIdentifiers);
+      const providerReference = this.determinePrimaryProviderReference(providerIdentifiers, options.reference);
       const providerTransactionId = this.determinePrimaryProviderTransactionId(providerIdentifiers, options.reference);
       const redirectUrl =
         data.payment_link ||

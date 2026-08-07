@@ -384,7 +384,27 @@ export class WebhookService {
     return typeof ref === 'string' && ref.trim() ? ref.trim() : ref?.toString?.().trim() || null;
   }
 
+  private extractUuidFromString(value: any): string | null {
+    if (typeof value !== 'string' || !value.trim()) {
+      return null;
+    }
+    const match = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+    return match ? match[0] : null;
+  }
+
   private buildIvorypayReferenceCandidates(payload: any, metadata: any = {}): string[] {
+    const urlCandidates = [
+      payload?.data?.checkoutUrl,
+      payload?.data?.payment_link,
+      payload?.data?.paymentUrl,
+      payload?.data?.collectionDetails?.checkoutUrl,
+      payload?.checkoutUrl,
+      payload?.payment_link,
+      payload?.paymentUrl,
+    ]
+      .map((value) => this.extractUuidFromString(value))
+      .filter((value): value is string => !!value);
+
     return [
       payload?.data?.id,
       payload?.id,
@@ -396,9 +416,17 @@ export class WebhookService {
       payload?.data?.transactionReference,
       payload?.data?.reference,
       payload?.reference,
+      payload?.data?.checkoutUrl,
+      payload?.data?.payment_link,
+      payload?.data?.paymentUrl,
+      payload?.data?.collectionDetails?.checkoutUrl,
+      payload?.checkoutUrl,
+      payload?.payment_link,
+      payload?.paymentUrl,
       metadata.provider_ref,
       metadata.provider_transaction_id,
       metadata.provider_reference,
+      ...urlCandidates,
     ]
       .filter((value) => value !== undefined && value !== null && value !== '')
       .map((value) => value?.toString?.().trim())
@@ -719,7 +747,7 @@ export class WebhookService {
           provider = 'paystack';
         }
 
-        const rawProviderIds = [
+        let rawProviderIds = [
           metadata.provider_transaction_id,
           metadata.provider_ref,
           metadata.provider_reference,
@@ -742,6 +770,23 @@ export class WebhookService {
           // Keep the first candidate even if it looks like a UUID, because it may be
           // the provider reference recorded at checkout creation.
           .filter((v, index) => index === 0 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v));
+
+        if (!rawProviderIds.length) {
+          const payloadCandidates = this.buildIvorypayReferenceCandidates(deposit?.providerPayload ?? {}, metadata);
+          const payloadIdentifiers = this.ivorypayService.extractProviderIdentifiers(deposit?.providerPayload ?? {});
+          const payloadIdentifierValues = Object.values(payloadIdentifiers ?? {})
+            .filter((id) => !!id)
+            .map((id) => id?.toString?.().trim())
+            .filter((value) => !!value && value !== tx.transaction_reference);
+
+          rawProviderIds = Array.from(new Set([...rawProviderIds, ...payloadCandidates, ...payloadIdentifierValues]))
+            .filter((value, index, self) => self.indexOf(value) === index)
+            .filter((value, index) => index === 0 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+
+          if (rawProviderIds.length) {
+            this.logger.log(`fixStuckDeposits: discovered fallback Ivorypay provider ids for ${tx.transaction_reference}: ${JSON.stringify(rawProviderIds)}`);
+          }
+        }
 
         // For Ivorypay we must verify using only provider-generated IDs. If none exist, skip.
         if (provider === 'ivorypay') {
