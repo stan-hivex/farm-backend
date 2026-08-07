@@ -314,7 +314,7 @@ export class WithdrawService {
       };
 
       const resp = await this.ivorypay.createWithdrawal(opts);
-      const withdrawalId = resp?.data?.id || resp?.id || null;
+      const withdrawalId = resp?.data?.id || resp?.providerTransactionId || null;
 
       // Save provider withdrawal id into transaction metadata
       const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
