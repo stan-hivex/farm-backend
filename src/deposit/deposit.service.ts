@@ -38,20 +38,26 @@ export class DepositService {
     }
 
     const amount = Number(dto.amount_fiat);
-    if (!Number.isFinite(amount) || amount < 10) {
-      throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
+    if (!Number.isFinite(amount)) {
+      throw new BadRequestException('Invalid deposit amount');
+    }
+
+    const limits = this.getDepositLimits(paymentMethod);
+    if (amount < limits.min || (limits.max !== null && amount > limits.max)) {
+      throw new BadRequestException(
+        `Invalid deposit amount for ${paymentMethod}. Allowed range is ${this.formatAmount(limits.min)}${limits.max !== null ? ` - ${this.formatAmount(limits.max)}` : '+'} ${dto.currency || 'KES'}`,
+      );
     }
 
     const reference = uuidv4();
     const provider = 'paystack';
-    const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
-    const fee = amount * feeRate;
-    const total = amount + fee;
+    const fee = 0;
+    const total = amount;
 
     const depositCurrency = paymentMethod === 'CRYPTO' ? 'FARM' : dto.currency || 'KES';
     const depositAmount = amount;
-    const depositFee = paymentMethod === 'CRYPTO' ? 0 : fee;
-    const depositTotal = paymentMethod === 'CRYPTO' ? amount : total;
+    const depositFee = 0;
+    const depositTotal = amount;
 
     let providerRef = reference;
     const deposit = await this.prisma.deposit.create({
@@ -118,34 +124,9 @@ export class DepositService {
           payment_method: 'CRYPTO',
         },
       });
-      const providerIdentifiers = (init as any).providerIdentifiers ?? {};
-      const providerReference =
-        init.providerReference ??
-        providerIdentifiers.transaction_id ??
-        providerIdentifiers.id ??
-        providerIdentifiers.provider_reference ??
-        providerIdentifiers.tx_ref ??
-        providerIdentifiers.trxref ??
-        providerIdentifiers.transaction_reference ??
-        init.data?.id ??
-        init.data?.transaction_id ??
-        init.data?.tx_ref ??
-        init.data?.trxref ??
-        init.data?.transaction_reference ??
-        null;
-      providerRef = providerReference ?? reference;
+      providerRef = init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
       if (providerRef !== reference) {
-        await this.prisma.deposit.update({
-          where: { id: deposit.id },
-          data: {
-            providerRef,
-            providerTransactionId: providerReference,
-            providerReference: providerIdentifiers.provider_reference ?? null,
-            checkoutId: providerIdentifiers.checkout_id ?? init.data?.checkout_id ?? null,
-            paymentReference: init.data?.reference ?? null,
-            providerPayload: init.data ?? null,
-          },
-        });
+        await this.prisma.deposit.update({ where: { id: deposit.id }, data: { providerRef } });
       }
       paymentUrl = init.data?.payment_link || init.payment_link || init.checkout_url;
 
@@ -230,9 +211,6 @@ export class DepositService {
       throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
     }
 
-    await this.cache.cacheInvalidatePattern(`deposits:${userId}`);
-    await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
-
     return {
       success: true,
       payment_url: paymentUrl,
@@ -243,46 +221,27 @@ export class DepositService {
   }
 
   async getUserDeposits(userId: string) {
-    const cacheKey = `deposits:${userId}`;
-    const cached = await this.cache.cacheGet<any[]>(cacheKey);
-    if (cached) return cached;
-
     // Return only successfully completed deposits to users.
     // Failed, pending or processing deposits are intentionally hidden
     // so the frontend shows only confirmed funds the webhook has validated.
-    const deposits = await this.prisma.deposit.findMany({
+    return this.prisma.deposit.findMany({
       where: { userId, status: 'SUCCESS' },
       orderBy: { createdAt: 'desc' },
     });
-
-    await this.cache.cacheSet(cacheKey, deposits, 45);
-    return deposits;
   }
 
   async getWalletBalance(userId: string) {
-    const cacheKey = `wallet:${userId}:balance`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
-    const payload = { balance: wallet?.balance ?? 0, locked_balance: wallet?.locked_balance ?? 0 };
-    await this.cache.cacheSet(cacheKey, payload, 30);
-    return payload;
+    return { balance: wallet?.balance ?? 0, locked_balance: wallet?.locked_balance ?? 0 };
   }
 
   async getDepositById(id: string, userId?: string) {
-    const cacheKey = `deposit:${id}:${userId ?? 'anonymous'}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
     const deposit = await this.prisma.deposit.findUnique({ where: { id } });
     if (!deposit) return null;
     assertResourceAccess(deposit.userId, userId, 'deposit');
     if (deposit.status !== 'SUCCESS') return null;
-
-    await this.cache.cacheSet(cacheKey, deposit, 60);
     return deposit;
   }
 
@@ -731,9 +690,6 @@ export class DepositService {
       this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`),
       this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
       this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
-      this.cache.cacheInvalidatePattern(`deposits:${userId}`),
-      this.cache.cacheInvalidatePattern(`withdrawals:${userId}`),
-      this.cache.cacheInvalidatePattern('deposit:*'),
       this.cache.cacheDelete('admin:dashboard:stats'),
       this.cache.cacheDelete('admin:analytics'),
       this.cache.cacheDelete('admin:superadmin-dashboard'),
@@ -744,5 +700,22 @@ export class DepositService {
     const n = Number(amount ?? 0);
     if (!isFinite(n)) return 0;
     return Math.round(n * 100) / 100;
+  }
+
+  private getDepositLimits(method: string) {
+    switch (method) {
+      case 'BANK_TRANSFER':
+        return { min: 10, max: 999999 };
+      case 'MOBILE_MONEY':
+        return { min: 10, max: 249999 };
+      case 'CRYPTO':
+        return { min: 100, max: null };
+      default:
+        return { min: 10, max: 19999 };
+    }
+  }
+
+  private formatAmount(value: number) {
+    return new Intl.NumberFormat('en-US').format(value);
   }
 }
