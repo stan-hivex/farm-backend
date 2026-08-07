@@ -690,16 +690,33 @@ export class WebhookService {
             const lookupId = verifiedTransaction.providerReference ?? verifiedTransaction.providerIdentifiers?.transaction_id ?? verifiedTransaction.providerIdentifiers?.id ?? verifiedTransaction.providerIdentifiers?.provider_reference ?? verifiedTransaction.providerIdentifiers?.payment_id ?? verifiedTransaction.providerIdentifiers?.checkout_id ?? null;
             if (lookupId && lookupId !== tx.transaction_reference) {
               const metadata = (tx.metadata as any) ?? {};
+              const providerIdentifiers = verifiedTransaction.providerIdentifiers ?? {};
               const updatedMetadata = {
                 ...metadata,
                 provider_ref: lookupId,
-                provider_transaction_id: verifiedTransaction.providerIdentifiers?.transaction_id ?? metadata.provider_transaction_id ?? null,
-                provider_payment_id: verifiedTransaction.providerIdentifiers?.payment_id ?? metadata.provider_payment_id ?? null,
-                provider_checkout_id: verifiedTransaction.providerIdentifiers?.checkout_id ?? metadata.provider_checkout_id ?? null,
-                provider_reference: verifiedTransaction.providerIdentifiers?.provider_reference ?? metadata.provider_reference ?? null,
+                provider_transaction_id: providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? metadata.provider_transaction_id ?? null,
+                provider_payment_id: providerIdentifiers.payment_id ?? metadata.provider_payment_id ?? null,
+                provider_checkout_id: providerIdentifiers.checkout_id ?? metadata.provider_checkout_id ?? null,
+                provider_reference: providerIdentifiers.provider_reference ?? metadata.provider_reference ?? null,
+                payment_reference: providerIdentifiers.payment_reference ?? metadata.payment_reference ?? null,
+                merchant_reference: providerIdentifiers.merchant_reference ?? metadata.merchant_reference ?? null,
+                tx_ref: providerIdentifiers.tx_ref ?? metadata.tx_ref ?? null,
+                trxref: providerIdentifiers.trxref ?? metadata.trxref ?? null,
+                transaction_reference: providerIdentifiers.transaction_reference ?? metadata.transaction_reference ?? null,
               };
               try {
-                await this.prisma.deposit.update({ where: { reference: tx.transaction_reference }, data: { providerRef: lookupId } });
+                await this.prisma.deposit.update({
+                  where: { reference: tx.transaction_reference },
+                  data: {
+                    providerRef: lookupId,
+                    providerTransactionId: providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? null,
+                    providerReference: providerIdentifiers.provider_reference ?? null,
+                    checkoutId: providerIdentifiers.checkout_id ?? null,
+                    paymentReference: providerIdentifiers.payment_reference ?? null,
+                    merchantReference: providerIdentifiers.merchant_reference ?? null,
+                    providerPayload: verifiedTransaction ?? null,
+                  },
+                });
                 await this.prisma.transactions.update({ where: { id: tx.id }, data: { metadata: updatedMetadata } });
                 this.logger.log(`fixStuckDeposits: persisted verified provider id ${lookupId} for ${tx.transaction_reference}`);
               } catch (updateErr) {
@@ -1468,6 +1485,20 @@ export class WebhookService {
           verifiedTransaction.providerIdentifiers?.trxref ??
           verifiedTransaction.providerIdentifiers?.transaction_reference ??
           null;
+        const providerIdentifiers = verifiedTransaction?.providerIdentifiers ?? verifiedTransaction?.data?.providerIdentifiers ?? {};
+        const providerTransactionId =
+          verifiedProviderId ??
+          providerIdentifiers.transaction_id ??
+          providerIdentifiers.payment_id ??
+          providerIdentifiers.id ??
+          payload?.data?.transaction_id ??
+          payload?.data?.payment_id ??
+          payload?.data?.id ??
+          null;
+        const providerReference = providerIdentifiers.provider_reference ?? verifiedTransaction?.providerReference ?? payload?.data?.provider_reference ?? null;
+        const checkoutId = providerIdentifiers.checkout_id ?? payload?.data?.checkout_id ?? payload?.data?.checkoutId ?? null;
+        const paymentReference = providerIdentifiers.payment_reference ?? providerIdentifiers.reference ?? payload?.data?.payment_reference ?? payload?.data?.reference ?? payload?.reference ?? null;
+        const merchantReference = providerIdentifiers.merchant_reference ?? payload?.data?.merchant_reference ?? payload?.data?.merchantReference ?? null;
         const txHash = verifiedTransaction?.tx_hash ?? verifiedTransaction?.transaction_hash ?? verifiedTransaction?.hash ?? verifiedTransaction?.data?.tx_hash ?? verifiedTransaction?.data?.transaction_hash ?? verifiedTransaction?.data?.hash ?? null;
         const verificationPayload = verifiedTransaction ?? payload;
         const normalizedStatus = (verifiedTransaction?.status ?? verifiedTransaction?.data?.status ?? '').toString().toLowerCase();
@@ -1479,19 +1510,32 @@ export class WebhookService {
             verificationPayload,
             blockchainTransactionHash: txHash ?? null,
             verificationAttempts: { increment: 1 },
+            ...(verifiedProviderId ? { providerRef: verifiedProviderId } : {}),
+            ...(providerTransactionId ? { providerTransactionId } : {}),
+            ...(providerReference ? { providerReference } : {}),
+            ...(checkoutId ? { checkoutId } : {}),
+            ...(paymentReference ? { paymentReference } : {}),
+            ...(merchantReference ? { merchantReference } : {}),
+            ...(verificationPayload ? { providerPayload: verificationPayload } : {}),
           };
           if (['success', 'completed'].includes(normalizedStatus)) {
             depositUpdate.verifiedAt = new Date();
           }
           await tx.deposit.update({ where: { reference }, data: depositUpdate });
-          if (verifiedProviderId && (transactionMetadata.provider_ref ?? null) !== verifiedProviderId) {
-            await tx.deposit.update({ where: { reference }, data: { providerRef: verifiedProviderId, providerTransactionId: verifiedProviderId } });
-          }
-          if (verifiedProviderId || txHash) {
+          if (verifiedProviderId || txHash || providerTransactionId || providerReference || checkoutId || paymentReference || merchantReference) {
             const metadata = (transaction?.metadata as any) ?? {};
             const nextMetadata = {
               ...metadata,
               ...(verifiedProviderId ? { provider_ref: verifiedProviderId } : {}),
+              ...(providerTransactionId ? { provider_transaction_id: providerTransactionId } : {}),
+              ...(providerReference ? { provider_reference: providerReference } : {}),
+              ...(checkoutId ? { provider_checkout_id: checkoutId } : {}),
+              ...(paymentReference ? { payment_reference: paymentReference } : {}),
+              ...(merchantReference ? { merchant_reference: merchantReference } : {}),
+              ...(providerIdentifiers.payment_id ? { provider_payment_id: providerIdentifiers.payment_id } : {}),
+              ...(providerIdentifiers.tx_ref ? { tx_ref: providerIdentifiers.tx_ref } : {}),
+              ...(providerIdentifiers.trxref ? { trxref: providerIdentifiers.trxref } : {}),
+              ...(providerIdentifiers.transaction_reference ? { transaction_reference: providerIdentifiers.transaction_reference } : {}),
               ...(txHash ? { blockchain_tx_hash: txHash } : {}),
             };
             await tx.transactions.update({ where: { id: transaction?.id }, data: { metadata: nextMetadata } });
