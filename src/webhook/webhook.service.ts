@@ -736,6 +736,8 @@ export class WebhookService {
         ]
           .filter((v) => !!v)
           .map((v) => v?.toString())
+          // Exclude our internal transaction_reference — do not query the provider with our UUID
+          .filter((v) => v?.toString().trim() !== tx.transaction_reference)
           .filter((value, index, self) => !!value && self.indexOf(value) === index)
           // Keep the first candidate even if it looks like a UUID, because it may be
           // the provider reference recorded at checkout creation.

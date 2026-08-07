@@ -222,15 +222,24 @@ export class IvorypayService {
       .filter((id): id is string => !!id)
       .map((id) => id.trim());
 
-    const candidates = rawCandidates
-      .filter((value, index, self) => self.indexOf(value) === index)
-      // Keep the first candidate even if it looks like a UUID because it may be
-      // the provider reference returned by Ivorypay. Later fallback candidates
-      // may still be filtered to avoid our internal UUIDs.
-      .filter((value, index) => index === 0 || !uuidV4.test(value));
+    // Remove duplicates and any candidate that exactly matches our internal
+    // reference (we should never query the provider using our UUID).
+    const uniqueCandidates = Array.from(new Set(rawCandidates));
+    const filteredCandidates = uniqueCandidates.filter((c) => c !== reference);
 
-    // Do not include our internal UUIDs from fallback references, but preserve the
-    // explicitly supplied providerReference candidate when it is the first lookup.
+    // Keep the first candidate even if it looks like a UUID because it may be
+    // the provider reference returned by Ivorypay. However, we must not use
+    // our own internal UUID as a lookup reference — it's a local id only.
+    const candidates = filteredCandidates.filter((value, index) => index === 0 || !uuidV4.test(value));
+
+    if (uniqueCandidates.length && filteredCandidates.length !== uniqueCandidates.length) {
+      this.logger.warn(`Ivorypay: removed internal reference from verify candidates for ${reference}`);
+    }
+
+    if (!candidates.length) {
+      this.logger.warn(`Ivorypay: no valid provider identifiers available to verify transaction for internalReference=${reference}`);
+      throw new BadRequestException('Ivorypay verification failed: no provider identifiers available');
+    }
 
     let lastError: any = null;
     for (const lookupReference of candidates) {
