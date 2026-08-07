@@ -788,15 +788,16 @@ export class WebhookService {
           }
         }
 
-        // For Ivorypay we must verify using only provider-generated IDs. If none exist, skip.
-        if (provider === 'ivorypay') {
-          if (!rawProviderIds.length) {
-            this.logger.warn(`fixStuckDeposits: skipping ${tx.transaction_reference} — no Ivorypay provider id found to verify (won't use internal id)`);
-            continue;
-          }
-        }
+        // Ivorypay can also verify by the original transaction reference we supplied,
+        // so do not skip stuck deposits simply because a provider-specific id is missing.
+        const providerTransactionId = provider === 'ivorypay'
+          ? rawProviderIds[0] ?? tx.transaction_reference
+          : tx.transaction_reference;
 
-        const providerTransactionId = provider === 'ivorypay' ? rawProviderIds[0] : tx.transaction_reference;
+        if (provider === 'ivorypay' && !providerTransactionId) {
+          this.logger.warn(`fixStuckDeposits: skipping ${tx.transaction_reference} — no Ivorypay reference available to verify`);
+          continue;
+        }
 
         this.logger.log(`fixStuckDeposits: ${provider} verify lookup for ${tx.transaction_reference} using primary providerTransactionId=${providerTransactionId} candidateRefs=${JSON.stringify(rawProviderIds)}`);
 

@@ -83,7 +83,16 @@ export class WebhookSignatureGuard implements CanActivate {
     const rawBody = (req as any).rawBody;
     if (!rawBody) throw new UnauthorizedException('Cannot verify signature without raw body');
 
-    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+    let payloadData: string;
+    try {
+      const parsed = typeof rawBody === 'string' ? JSON.parse(rawBody) : JSON.parse(rawBody.toString('utf8'));
+      payloadData = JSON.stringify(parsed.data ?? parsed);
+    } catch (e) {
+      this.logger.error('Ivorypay signature verification failed: invalid JSON payload');
+      throw new UnauthorizedException('Ivorypay signature verification failed');
+    }
+
+    const expected = createHmac('sha512', secret).update(payloadData).digest('hex');
 
     try {
       const sigBuffer = Buffer.from(signature, 'hex');

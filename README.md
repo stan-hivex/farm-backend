@@ -68,6 +68,39 @@ $ npm run test:cov
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
 
+### Verify IvoryPay webhook routes on Render
+
+This app exposes the following ready-to-use IvoryPay webhook endpoints:
+
+- `GET /api/v1/webhooks/ivorypay` — health check for the primary webhook route
+- `POST /api/v1/webhooks/ivorypay` — IvoryPay webhook receiver with signature verification
+- `GET /api/v1/payments/webhooks/ivorypay` — alternate unguarded health/check route used for diagnostics
+
+If your Render application URL is `https://example.onrender.com`, verify reachability like this:
+
+```bash
+curl -I https://example.onrender.com/api/v1/webhooks/ivorypay
+curl -I https://example.onrender.com/api/v1/payments/webhooks/ivorypay
+```
+
+A successful route should return `HTTP/1.1 200 OK`.
+
+For a real webhook POST test, use the health endpoint first, then send a signed payload to the guarded route with `x-ivorypay-signature`:
+
+```bash
+RAW='{"event":"cryptoCollection.success","data":{"reference":"<your-reference>","status":"SUCCESS"}}'
+SIGNATURE=$(node -e "const crypto=require('crypto'); const secret=process.env.IVORYPAY_WEBHOOK_SECRET; process.stdout.write(crypto.createHmac('sha512', secret).update(JSON.parse('$RAW').data ? JSON.stringify(JSON.parse('$RAW').data) : JSON.stringify(JSON.parse('$RAW'))).digest('hex'))")
+
+curl -X POST https://example.onrender.com/api/v1/webhooks/ivorypay \
+  -H "Content-Type: application/json" \
+  -H "x-ivorypay-signature: $SIGNATURE" \
+  -d "$RAW"
+```
+
+> Replace `https://example.onrender.com` with your Render URL and set `IVORYPAY_WEBHOOK_SECRET` in your shell to match the deployed environment.
+
+If you only need a route reachability check, use `GET /api/v1/webhooks/ivorypay`.
+
 If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
 
 ```bash

@@ -41,4 +41,24 @@ describe('WebhookSignatureGuard', () => {
 
     expect(() => guard.canActivate(ctx as any)).toThrow();
   });
+
+  it('verifies ivorypay signature using body.data payload', () => {
+    const secret = 'test_ivorypay_secret';
+    const cfg = { get: (k: string) => (k === 'IVORYPAY_WEBHOOK_SECRET' ? secret : undefined) } as any;
+    const guard = new WebhookSignatureGuard(cfg);
+
+    const payload = { event: 'payment.success', data: { id: 'pay_123', reference: 'ref123', status: 'success' } };
+    const raw = JSON.stringify(payload);
+    const signature = createHmac('sha512', secret).update(JSON.stringify(payload.data)).digest('hex');
+
+    const req: any = {
+      path: '/webhooks/ivorypay',
+      headers: { 'x-ivorypay-signature': signature },
+      rawBody: Buffer.from(raw),
+    };
+
+    const ctx: any = { switchToHttp: () => ({ getRequest: () => req }) };
+
+    expect(guard.canActivate(ctx as any)).toBe(true);
+  });
 });

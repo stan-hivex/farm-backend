@@ -86,6 +86,36 @@ export class IvorypayService {
     return match ? match[0] : null;
   }
 
+  private extractLookupIdentifier(value: any): string | null {
+    if (typeof value !== 'string' || !value.trim()) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    const uuid = this.extractUuidFromString(trimmed);
+    if (uuid) {
+      return uuid;
+    }
+
+    try {
+      const parsed = new URL(trimmed);
+      const queryReference = parsed.searchParams.get('reference') || parsed.searchParams.get('id');
+      if (queryReference) {
+        return queryReference;
+      }
+
+      const segments = parsed.pathname.split('/').filter((segment) => !!segment);
+      if (segments.length) {
+        return segments[segments.length - 1];
+      }
+    } catch {
+      // Ignore invalid URL parsing and fall back to string-based extraction.
+    }
+
+    const pathSegment = trimmed.split('/').filter((segment) => !!segment).pop();
+    return pathSegment ?? trimmed;
+  }
+
   private determinePrimaryProviderReference(identifiers: Record<string, any>, internalReference: string) {
     const candidate = (
       identifiers.provider_reference ||
@@ -232,29 +262,15 @@ export class IvorypayService {
       return { status: 'completed', reference };
     }
 
-    const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
     const rawCandidates = [
+      reference,
       providerReference?.toString()?.trim(),
       ...fallbackReferences.map((id) => id?.toString()?.trim()),
     ]
       .filter((id): id is string => !!id)
       .map((id) => id.trim());
 
-    // Remove duplicates and any candidate that exactly matches our internal
-    // reference (we should never query the provider using our UUID).
-    const uniqueCandidates = Array.from(new Set(rawCandidates));
-    const filteredCandidates = uniqueCandidates.filter((c) => c !== reference);
-
-    // Keep the first candidate even if it looks like a UUID because it may be
-    // the provider reference returned by Ivorypay. However, we must not use
-    // our own internal UUID as a lookup reference — it's a local id only.
-    const candidates = filteredCandidates.filter((value, index) => index === 0 || !uuidV4.test(value));
-
-    if (uniqueCandidates.length && filteredCandidates.length !== uniqueCandidates.length) {
-      this.logger.warn(`Ivorypay: removed internal reference from verify candidates for ${reference}`);
-    }
-
+    const candidates = Array.from(new Set(rawCandidates));
     if (!candidates.length) {
       this.logger.warn(`Ivorypay: no valid provider identifiers available to verify transaction for internalReference=${reference}`);
       throw new BadRequestException('Ivorypay verification failed: no provider identifiers available');
@@ -262,68 +278,70 @@ export class IvorypayService {
 
     let lastError: any = null;
     for (const lookupReference of candidates) {
-      // Prefer an extracted UUID from the candidate (handles full checkout URLs).
-      const extracted = this.extractUuidFromString(lookupReference);
-      const lookupId = extracted ?? lookupReference;
-
-      // If the lookupId is not a UUID, skip — Ivorypay expects a UUID identifier.
-      if (!uuidV4.test(lookupId)) {
-        this.logger.warn(`Ivorypay: skipping verify candidate ${lookupReference} — not a valid UUID or missing extractable UUID`);
-        lastError = new Error('Candidate not a UUID');
+      const lookupId = this.extractLookupIdentifier(lookupReference);
+      if (!lookupId) {
+        this.logger.warn(`Ivorypay: skipping verify candidate ${lookupReference} — no usable lookup identifier`);
+        lastError = new Error('Candidate missing lookup identifier');
         continue;
       }
 
-      const verifyUrl = `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupId)}`;
-      try {
-        this.logger.log(`Ivorypay: verifying transaction ${lookupId} (internal reference=${reference}) via ${verifyUrl}`);
-        const response = await axios.get(verifyUrl, {
-          headers: {
-            Authorization: `${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        });
+      const verifyUrls = [
+        `${this.baseUrl}/v1/business/transactions/${encodeURIComponent(lookupId)}/verify`,
+        `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupId)}/verify`,
+      ];
 
-        if (!response.data || response.data.success === false) {
-          const message = response.data?.message || response.data?.error || 'Ivorypay verification failed';
-          if (response.data?.statusCode === 404 || response.status === 404) {
-            this.logger.warn(`Ivorypay verify returned 404 for ${lookupReference}; trying alternate references if available`);
-            lastError = new Error(message);
+      for (const verifyUrl of verifyUrls) {
+        try {
+          this.logger.log(`Ivorypay: verifying transaction ${lookupId} (internal reference=${reference}) via ${verifyUrl}`);
+          const response = await axios.get(verifyUrl, {
+            headers: {
+              Authorization: `${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (!response.data || response.data.success === false) {
+            const message = response.data?.message || response.data?.error || 'Ivorypay verification failed';
+            if (response.data?.statusCode === 404 || response.status === 404) {
+              this.logger.warn(`Ivorypay verify returned 404 for ${lookupReference} via ${verifyUrl}; trying alternate endpoint or reference`);
+              lastError = new Error(message);
+              continue;
+            }
+            throw new BadRequestException(`Ivorypay verification failed: ${message}`);
+          }
+
+          const verifiedData = response.data.data ?? response.data;
+          const status = verifiedData?.status ?? response.data?.status;
+          if (!status) {
+            this.logger.warn(`Ivorypay verify response for ${lookupReference} missing status field: ${JSON.stringify(response.data)}`);
+            throw new BadRequestException('Ivorypay verification failed: missing status field');
+          }
+
+          const providerIdentifiers = this.extractProviderIdentifiers(verifiedData);
+          verifiedData.providerIdentifiers = providerIdentifiers;
+          verifiedData.providerReference = lookupReference;
+          verifiedData.reference = verifiedData.reference ?? reference;
+
+          this.logger.log(
+            `Ivorypay: verified transaction ${lookupReference} (internalReference=${reference}) status=${status} ` +
+            `providerTransactionId=${providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? 'n/a'} checkoutId=${providerIdentifiers.checkout_id ?? 'n/a'} paymentId=${providerIdentifiers.payment_id ?? 'n/a'} providerReference=${providerIdentifiers.provider_reference ?? 'n/a'}`,
+          );
+
+          return verifiedData;
+        } catch (e: any) {
+          const message = e.response?.data?.message || e.response?.data?.error || e.message;
+          if (e.response?.status === 404 || e.response?.data?.statusCode === 404) {
+            this.logger.warn(`Ivorypay verify endpoint missing for ${lookupReference} via ${verifyUrl}: ${message}`);
+            lastError = e;
             continue;
+          }
+
+          this.logger.error(`Ivorypay verify error for ${lookupReference} via ${verifyUrl}: ${message}`);
+          if (e.response?.data) {
+            this.logger.debug(`Ivorypay verify response body: ${JSON.stringify(e.response.data)}`);
           }
           throw new BadRequestException(`Ivorypay verification failed: ${message}`);
         }
-
-        const verifiedData = response.data.data ?? response.data;
-        const status = verifiedData?.status ?? response.data?.status;
-        if (!status) {
-          this.logger.warn(`Ivorypay verify response for ${lookupReference} missing status field: ${JSON.stringify(response.data)}`);
-          throw new BadRequestException('Ivorypay verification failed: missing status field');
-        }
-
-        const providerIdentifiers = this.extractProviderIdentifiers(verifiedData);
-        verifiedData.providerIdentifiers = providerIdentifiers;
-        verifiedData.providerReference = lookupReference;
-        verifiedData.reference = verifiedData.reference ?? reference;
-
-        this.logger.log(
-          `Ivorypay: verified transaction ${lookupReference} (internalReference=${reference}) status=${status} ` +
-          `providerTransactionId=${providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? 'n/a'} checkoutId=${providerIdentifiers.checkout_id ?? 'n/a'} paymentId=${providerIdentifiers.payment_id ?? 'n/a'} providerReference=${providerIdentifiers.provider_reference ?? 'n/a'}`,
-        );
-
-        return verifiedData;
-      } catch (e: any) {
-        const message = e.response?.data?.message || e.response?.data?.error || e.message;
-        this.logger.error(`Ivorypay verify error for ${lookupReference}: ${message}`);
-        if (e.response?.data) {
-          this.logger.debug(`Ivorypay verify response body: ${JSON.stringify(e.response.data)}`);
-        }
-
-        if (e.response?.status === 404 || e.response?.data?.statusCode === 404) {
-          lastError = e;
-          continue;
-        }
-
-        throw new BadRequestException(`Ivorypay verification failed: ${message}`);
       }
     }
 
