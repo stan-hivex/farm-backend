@@ -30,9 +30,10 @@ describe('WebhookService processing', () => {
   };
   const mockWithdrawService: any = {};
   const mockWebsocket: any = { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn(), server: { emit: jest.fn() } };
-  const mockCfg: any = { get: (k: string, d?: any) => d };
+  const mockNotificationsService: any = { sendNotification: jest.fn().mockResolvedValue({ id: 'notif-1' }) };
+  const mockCfg: any = { get: jest.fn((k: string, d?: any) => d) };
   const mockPaystackService: any = { verifyTransaction: jest.fn() };
-  const mockIvorypayService: any = {};
+  const mockIvorypayService: any = { extractProviderIdentifiers: jest.fn().mockReturnValue({}), verifyTransaction: jest.fn() };
   const mockQueue: any = { add: jest.fn().mockResolvedValue(true) };
   const mockRedis: any = { set: jest.fn().mockResolvedValue('OK'), del: jest.fn().mockResolvedValue(1) };
 
@@ -43,6 +44,7 @@ describe('WebhookService processing', () => {
       mockDepositService,
       mockWithdrawService,
       mockWebsocket,
+      mockNotificationsService,
       mockCfg,
       mockPaystackService,
       mockIvorypayService,
@@ -114,5 +116,35 @@ describe('WebhookService processing', () => {
     }));
     expect(mockIvorypayService.verifyTransaction).toHaveBeenCalled();
     expect(mockPrisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('processes cryptoCollection.success and credits the deposit', async () => {
+    const internalReference = 'internal-ref-200';
+    const transaction = {
+      id: 99,
+      transaction_reference: internalReference,
+      amount: 100,
+      status: 'pending',
+      transaction_type: 'deposit',
+      metadata: { provider: 'ivorypay', user_id: 'user-1' },
+    };
+    const deposit = { id: 2, reference: internalReference, userId: 'user-1', status: 'PENDING', currency: 'FARM' };
+
+    mockPrisma.transactions.findUnique.mockImplementation(({ where }: any) => {
+      if (where.transaction_reference === internalReference) return Promise.resolve(transaction);
+      return Promise.resolve(null);
+    });
+    mockPrisma.transactions.findFirst.mockResolvedValue(transaction);
+    mockPrisma.deposit.findFirst.mockResolvedValue(deposit);
+    mockPrisma.deposit.update.mockResolvedValue({});
+    mockPrisma.$transaction.mockImplementation(async (callback: any) => callback(mockPrisma));
+    mockIvorypayService.verifyTransaction = jest.fn().mockResolvedValue({ status: 'success', amount: 100, providerIdentifiers: { transaction_id: internalReference } });
+
+    const payload = { event: 'cryptoCollection.success', data: { reference: internalReference, status: 'SUCCESS', amount: 100 } } as any;
+    await svc.handleIvorypayWebhookProcessing(payload);
+
+    expect(mockIvorypayService.verifyTransaction).toHaveBeenCalled();
+    expect(mockPrisma.deposit.update).toHaveBeenCalled();
+    expect(mockPrisma.transactions.update).toHaveBeenCalled();
   });
 });

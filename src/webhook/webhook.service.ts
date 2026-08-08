@@ -221,7 +221,7 @@ export class WebhookService {
     }
 
     // Strict routing: Ivorypay webhooks should be for crypto channel, but allow nested data.channel.
-    const channel = payload.channel ?? payload.data?.channel;
+    const channel = (payload.channel ?? payload.data?.channel)?.toString?.().toLowerCase?.();
     if (channel && channel !== 'crypto') {
       await this.rejectWebhook('ivorypay', event ?? 'unknown', payload, 'Ivorypay webhook routed to wrong provider (non-crypto)');
       return { received: true };
@@ -545,7 +545,16 @@ export class WebhookService {
   private isIvorypaySuccessEvent(event: string, status: string) {
     const normalizedEvent = event?.toString()?.toLowerCase() ?? '';
     const normalizedStatus = status?.toString()?.toLowerCase() ?? '';
-    const successEvents = ['payment.success', 'transaction.completed', 'success', 'payment.completed', 'transaction.success', 'completed'];
+    const successEvents = [
+      'payment.success',
+      'transaction.completed',
+      'cryptoCollection.success',
+      'fiatCollection.success',
+      'payment.completed',
+      'transaction.success',
+      'completed',
+      'success',
+    ];
     const successStatuses = ['success', 'completed'];
     return successEvents.includes(normalizedEvent) || successStatuses.includes(normalizedStatus);
   }
@@ -553,7 +562,17 @@ export class WebhookService {
   private isIvorypayFailureEvent(event: string, status: string) {
     const normalizedEvent = event?.toString()?.toLowerCase() ?? '';
     const normalizedStatus = status?.toString()?.toLowerCase() ?? '';
-    const failureEvents = ['payment.failed', 'transaction.failed', 'payment.cancelled', 'transaction.cancelled', 'cancelled', 'failed', 'withdrawal.failed'];
+    const failureEvents = [
+      'payment.failed',
+      'transaction.failed',
+      'cryptoCollection.failed',
+      'fiatCollection.failed',
+      'payment.cancelled',
+      'transaction.cancelled',
+      'cancelled',
+      'failed',
+      'withdrawal.failed',
+    ];
     const failureStatuses = ['failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'];
     return failureEvents.includes(normalizedEvent) || failureStatuses.includes(normalizedStatus);
   }
