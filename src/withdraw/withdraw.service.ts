@@ -71,9 +71,45 @@ export class WithdrawService {
       }
     } else if (dto.method === 'CRYPTO') {
       const payload = dto as any;
-      cryptoAddress = dto.cryptoAddress || payload.walletAddress || payload.walletaddress || payload.address;
-      cryptoAsset = (dto.cryptoAsset || payload.token)?.toString().toUpperCase();
-      network = dto.network?.toString().toUpperCase();
+      // Accept many common field names produced by various frontends
+      cryptoAddress =
+        dto.cryptoAddress ||
+        payload.walletAddress ||
+        payload.walletaddress ||
+        payload.address ||
+        payload.toAddress ||
+        payload.to_address ||
+        payload.recipient ||
+        payload.wallet_address ||
+        undefined;
+
+      // Accept many synonyms for token/asset: cryptoAsset, token, currency, asset, symbol
+      cryptoAsset = (
+        dto.cryptoAsset ||
+        payload.token ||
+        payload.currency ||
+        payload.asset ||
+        payload.symbol ||
+        payload.coin ||
+        payload.token_symbol ||
+        undefined
+      )?.toString?.().toUpperCase?.();
+
+      // Accept network synonyms: network, chain, blockchain, chainName
+      network = (
+        dto.network ||
+        payload.network ||
+        payload.chain ||
+        payload.blockchain ||
+        payload.chainName ||
+        payload.chain_name ||
+        undefined
+      )?.toString?.().toUpperCase?.();
+
+      // Final defensive trimming
+      if (typeof cryptoAddress === 'string') cryptoAddress = cryptoAddress.trim();
+      if (typeof cryptoAsset === 'string') cryptoAsset = cryptoAsset.trim();
+      if (typeof network === 'string') network = network.trim();
 
       if (!cryptoAddress || !cryptoAsset || !network) {
         throw new BadRequestException('Crypto asset, address and network are required for cryptocurrency withdrawals');
