@@ -341,6 +341,7 @@ export class WithdrawService {
         amount: withdrawal.settlement,
         crypto: withdrawal.cryptoAsset || 'USDT',
         to_address: withdrawal.cryptoAddress,
+        network: withdrawal.network,
         metadata: {
           user_id: withdrawal.userId,
           reference,

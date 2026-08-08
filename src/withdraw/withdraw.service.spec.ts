@@ -11,6 +11,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 describe('WithdrawService', () => {
   let service: WithdrawService;
   let prisma: any;
+  let module: TestingModule;
 
   beforeEach(async () => {
     const prismaMock = {
@@ -20,14 +21,14 @@ describe('WithdrawService', () => {
       $transaction: jest.fn(),
     };
 
-    const module: TestingModule = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         WithdrawService,
         { provide: PrismaService, useValue: prismaMock },
         { provide: AuthService, useValue: { verifyPin: jest.fn().mockResolvedValue(true) } },
         { provide: SecurityService, useValue: { verifyDevice: jest.fn().mockResolvedValue({ trusted: true }) } },
         { provide: PaystackService, useValue: {} },
-        { provide: IvorypayService, useValue: {} },
+        { provide: IvorypayService, useValue: { createWithdrawal: jest.fn() } },
         { provide: CacheService, useValue: { cacheInvalidatePattern: jest.fn().mockResolvedValue(true), cacheDelete: jest.fn().mockResolvedValue(true), cacheGet: jest.fn().mockResolvedValue(null), cacheSet: jest.fn().mockResolvedValue(true) } },
         { provide: NotificationsService, useValue: { sendNotification: jest.fn().mockResolvedValue(true) } },
       ],
@@ -117,6 +118,28 @@ describe('WithdrawService', () => {
       network: 'POLYGON',
       cryptoAsset: 'USDC',
     });
+  });
+
+  it('passes network to Ivorypay for crypto withdrawals', async () => {
+    const withdrawal = {
+      userId: 'user-1',
+      settlement: 90,
+      cryptoAsset: 'USDC',
+      cryptoAddress: '0xabc',
+      network: 'POLYGON',
+    };
+    const ivorypay = module.get<IvorypayService>(IvorypayService);
+    const createWithdrawalSpy = jest.spyOn(ivorypay as any, 'createWithdrawal').mockResolvedValue({ data: { id: 'WD_1' }, providerTransactionId: 'WD_1' });
+
+    await (service as any).processCryptoWithdrawal(withdrawal, 'ref-1');
+
+    expect(createWithdrawalSpy).toHaveBeenCalledWith(expect.objectContaining({
+      reference: 'ref-1',
+      amount: 90,
+      crypto: 'USDC',
+      to_address: '0xabc',
+      network: 'POLYGON',
+    }));
   });
 
   it('marks a completed withdrawal as success and updates user wallet', async () => {
