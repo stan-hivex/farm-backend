@@ -186,6 +186,15 @@ export class WebhookService {
       } catch (directError) {
         this.logger.error('Direct processing fallback failed for Paystack webhook', directError as any);
       }
+    } else {
+      this.logger.log('Paystack webhook queued successfully; processing directly in-process as a worker fallback');
+      setImmediate(async () => {
+        try {
+          await this.handlePaystackWebhookProcessing(payload);
+        } catch (directError) {
+          this.logger.error('In-process fallback processing failed for Paystack webhook', directError as any);
+        }
+      });
     }
 
     if (eventId) await this.markProcessed('paystack', eventId);
@@ -338,6 +347,15 @@ export class WebhookService {
       } catch (directError) {
         this.logger.error('Direct processing fallback failed for Ivorypay webhook', directError as any);
       }
+    } else {
+      this.logger.log('Ivorypay webhook queued successfully; processing directly in-process as a worker fallback');
+      setImmediate(async () => {
+        try {
+          await this.handleIvorypayWebhookProcessing(payload);
+        } catch (directError) {
+          this.logger.error('In-process fallback processing failed for Ivorypay webhook', directError as any);
+        }
+      });
     }
 
     if (eventId) await this.markProcessed('ivorypay', eventId);
@@ -1708,7 +1726,18 @@ export class WebhookService {
       return;
     }
 
-    const reference = await this.resolveIvorypayInternalReference(rawReference) ?? rawReference;
+    const fallbackReference = await this.resolveIvorypayInternalReference(rawReference) ?? null;
+    const resolvedContext = await this.resolveIvorypayDepositAndTransaction(payload, rawReference);
+    const reference = resolvedContext.resolvedReference ?? fallbackReference ?? rawReference;
+    const lockKey = `ivorypay:webhook:${reference}`;
+    const lockTtl = Number(this.cfg.get<number>('WEBHOOK_LOCK_TTL_MS', 60000));
+    const locked = await this.acquireLock(lockKey, lockTtl);
+    if (!locked) {
+      this.logger.warn(`Ivorypay webhook processing skipped for ${reference} due to existing lock`);
+      return;
+    }
+
+    this.logger.log(`Ivorypay webhook processing acquired lock: ${lockKey}`);
     if (reference !== rawReference) {
       this.logger.log(`Ivorypay webhook processing: resolved provider reference ${rawReference} to internal reference ${reference}`);
     }
@@ -1722,7 +1751,6 @@ export class WebhookService {
       dataTransactionReferenceAlt: payload?.data?.transactionReference ?? null,
     })}`);
 
-    const resolvedContext = await this.resolveIvorypayDepositAndTransaction(payload, reference ?? rawReference);
     const transaction = resolvedContext.transaction;
     const deposit = resolvedContext.deposit;
     const resolvedReference = resolvedContext.resolvedReference ?? reference ?? rawReference;
@@ -1947,6 +1975,12 @@ export class WebhookService {
     } catch (error) {
       this.logger.error(`Error processing Ivorypay webhook: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
+    } finally {
+      try {
+        await this.releaseLock(lockKey);
+      } catch (e) {
+        this.logger.debug('Failed to release lock for ivorypay webhook', e as any);
+      }
     }
   }
 }
