@@ -3,6 +3,13 @@ import { Cron } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
+
+type IvorypayResolveContext = {
+  transaction: any | null;
+  deposit: any | null;
+  resolvedReference: string | null;
+  matchedReference: string | null;
+};
 import { DepositService } from '../deposit/deposit.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { PaystackService } from '../paystack/paystack.service';
@@ -233,14 +240,26 @@ export class WebhookService {
     }
 
     const log = await this.logWebhook('ivorypay', event, payload);
-    const reference = this.getIvorypayReference(payload);
+    let reference = this.getIvorypayReference(payload);
+    let resolvedContext = null as any;
+
+    if (!reference) {
+      const fallbackCandidates = this.buildIvorypayReferenceCandidates(payload);
+      if (fallbackCandidates.length) {
+        resolvedContext = await this.resolveIvorypayDepositAndTransaction(payload, fallbackCandidates[0]);
+        reference = resolvedContext.resolvedReference ?? fallbackCandidates[0];
+      }
+    }
+
     if (!reference) {
       this.logger.warn('Ivorypay webhook received without a reference');
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'rejected', response: 'Missing reference' } });
       return { received: true };
     }
 
-    const resolvedContext = await this.resolveIvorypayDepositAndTransaction(payload, reference);
+    if (!resolvedContext) {
+      resolvedContext = await this.resolveIvorypayDepositAndTransaction(payload, reference);
+    }
     const resolvedReference = resolvedContext.resolvedReference ?? reference;
     if (resolvedReference !== reference) {
       this.logger.log(`Ivorypay webhook received: resolved incoming reference ${reference} to internal reference ${resolvedReference}`);
@@ -523,8 +542,14 @@ export class WebhookService {
     return transaction?.transaction_reference ?? null;
   }
 
-  private async resolveIvorypayDepositAndTransaction(payload: any, fallbackReference?: string) {
-    const candidates = [fallbackReference, this.getIvorypayReference(payload), ...this.buildIvorypayReferenceCandidates(payload)]
+  private async resolveIvorypayDepositAndTransaction(payload: any, fallbackReference?: string): Promise<IvorypayResolveContext> {
+    const payloadIdentifiers = this.ivorypayService.extractProviderIdentifiers(payload);
+    const identifierCandidates = Object.values(payloadIdentifiers)
+      .filter((value) => value !== undefined && value !== null && value !== '')
+      .map((value) => value?.toString?.().trim())
+      .filter((value, index, self) => !!value && self.indexOf(value) === index);
+
+    const candidates = [fallbackReference, this.getIvorypayReference(payload), ...this.buildIvorypayReferenceCandidates(payload), ...identifierCandidates]
       .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
       .map((value) => value.trim())
       .filter((value, index, self) => self.indexOf(value) === index);
@@ -548,8 +573,9 @@ export class WebhookService {
         },
       });
 
+      let deposit: any = null;
       if (transaction) {
-        const deposit = await this.prisma.deposit.findFirst({
+        deposit = await this.prisma.deposit.findFirst({
           where: {
             OR: [
               { reference: transaction.transaction_reference },
@@ -567,7 +593,33 @@ export class WebhookService {
         return {
           transaction,
           deposit,
-          resolvedReference: transaction.transaction_reference ?? candidate,
+          resolvedReference: transaction.transaction_reference,
+          matchedReference: candidate,
+        };
+      }
+
+      deposit = await this.prisma.deposit.findFirst({
+        where: {
+          OR: [
+            { reference: candidate },
+            { providerRef: candidate },
+            { providerTransactionId: candidate },
+            { providerReference: candidate },
+            { checkoutId: candidate },
+            { paymentReference: candidate },
+            { merchantReference: candidate },
+          ],
+        },
+      });
+
+      if (deposit) {
+        const transactionByDeposit = await this.prisma.transactions.findFirst({
+          where: { transaction_reference: deposit.reference },
+        });
+        return {
+          transaction: transactionByDeposit,
+          deposit,
+          resolvedReference: deposit.reference,
           matchedReference: candidate,
         };
       }
@@ -1746,8 +1798,11 @@ export class WebhookService {
       undefined;
 
     if (!resolverProviderRef && candidateRefs.length === 0) {
-      this.logger.warn(`Ivorypay webhook processing aborted for ${resolvedReference}: no provider transaction id or provider reference available for verification`);
-      return;
+      if (!deposit && !transaction) {
+        this.logger.warn(`Ivorypay webhook processing aborted for ${resolvedReference}: no provider transaction id or provider reference available for verification`);
+        return;
+      }
+      this.logger.warn(`Ivorypay webhook processing: no provider identifiers available for verification, falling back to internal reference ${resolvedReference}`);
     }
 
     try {
@@ -1758,6 +1813,15 @@ export class WebhookService {
         const verifiedTransaction = await this.verifyIvorypayWebhookTransaction(resolvedReference, resolverProviderRef, candidateRefs);
         if (!verifiedTransaction) {
           this.logger.warn(`Ivorypay webhook processing: verification did not confirm success for ${resolvedReference} providerRef=${resolverProviderRef ?? rawReference}`);
+          if (deposit || transaction) {
+            this.logger.warn(`Ivorypay webhook processing: fallback finalize for ${resolvedReference} due to verified transaction unavailable`);
+            try {
+              const credited = await this.finalizeDeposit(resolvedReference);
+              this.logger.log(`Ivorypay webhook processing fallback finalize result for ${resolvedReference}: ${credited}`);
+            } catch (fallbackError) {
+              this.logger.error(`Ivorypay webhook processing fallback finalize failed for ${resolvedReference}: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+            }
+          }
           return;
         }
 
