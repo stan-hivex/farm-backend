@@ -373,10 +373,13 @@ export class WebhookService {
   private getIvorypayReference(payload: any): string | null {
     const ref = (
       payload?.data?.reference ??
+      payload?.data?.provider_reference ??
+      payload?.data?.payment_reference ??
+      payload?.data?.transaction_reference ??
       payload?.data?.tx_ref ??
       payload?.data?.trxref ??
-      payload?.data?.transaction_reference ??
-      payload?.data?.transactionReference ??
+      payload?.data?.payment_id ??
+      payload?.data?.transaction_id ??
       payload?.data?.id ??
       payload?.reference ??
       payload?.id
@@ -445,6 +448,37 @@ export class WebhookService {
       this.logger.warn(`Ivorypay webhook verification failed for ${reference}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
+  }
+
+  private isIvorypayVerifiedAmountAcceptable(transaction: any, verifiedTransaction: any): boolean {
+    const transactionMetadata = (transaction?.metadata as any) ?? {};
+    const expectedUsd = Number(transactionMetadata.amount_usd ?? transactionMetadata.amount_fiat ?? NaN);
+    const expectedFarm = Number(transactionMetadata.amount_farm ?? transaction?.amount ?? NaN);
+
+    const verifiedUsd = Number(
+      verifiedTransaction?.amount_usd ??
+      verifiedTransaction?.data?.amount_usd ??
+      verifiedTransaction?.amount ??
+      verifiedTransaction?.data?.amount ??
+      NaN,
+    );
+    const verifiedFarm = Number(
+      verifiedTransaction?.amount_farm ??
+      verifiedTransaction?.data?.amount_farm ??
+      verifiedTransaction?.amount ??
+      verifiedTransaction?.data?.amount ??
+      NaN,
+    );
+
+    if (Number.isFinite(expectedUsd) && Number.isFinite(verifiedUsd) && expectedUsd > 0 && verifiedUsd > 0) {
+      return Math.abs(expectedUsd - verifiedUsd) <= 0.5;
+    }
+
+    if (Number.isFinite(expectedFarm) && Number.isFinite(verifiedFarm) && expectedFarm > 0 && verifiedFarm > 0) {
+      return Math.abs(expectedFarm - verifiedFarm) <= 0.01;
+    }
+
+    return true;
   }
 
   private async resolveIvorypayInternalReference(reference: string): Promise<string | null> {
@@ -1608,8 +1642,12 @@ export class WebhookService {
    */
   async handleIvorypayWebhookProcessing(payload: any) {
     const event = payload.event ?? payload.status;
-    const rawReference = this.getIvorypayReference(payload);
+    let rawReference = this.getIvorypayReference(payload);
     const status = payload.data?.status ?? payload.status ?? payload.data?.state ?? 'unknown';
+
+    if (!rawReference) {
+      rawReference = this.buildIvorypayReferenceCandidates(payload)[0] ?? null;
+    }
 
     this.logger.log(`Ivorypay webhook processing start: event=${event ?? 'unknown'} reference=${rawReference ?? 'missing'} status=${status}`);
 
@@ -1797,8 +1835,8 @@ export class WebhookService {
           this.logger.warn(`Ivorypay webhook processing: verification returned status=${normalizedStatus || 'unknown'} for ${reference}; skipping credit`);
           return;
         }
-        if (expectedAmount > 0 && verifiedAmount > 0 && Math.abs(verifiedAmount - expectedAmount) > 0.01) {
-          this.logger.warn(`Ivorypay webhook processing: amount mismatch for ${reference}: expected ${expectedAmount}, verified ${verifiedAmount}`);
+        if (!this.isIvorypayVerifiedAmountAcceptable(transaction, verifiedTransaction)) {
+          this.logger.warn(`Ivorypay webhook processing: amount mismatch for ${reference}: transaction metadata does not align with verified provider amount`);
           return;
         }
       }
