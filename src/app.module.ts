@@ -1,11 +1,11 @@
 import { Module, Logger, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
 import { RedisModule } from './common/redis.module';
+import { BullmqModule } from './common/bullmq.module';
 import { CacheModule } from './common/cache/cache.module';
 import { CacheInterceptor } from './common/interceptors/cache.interceptor';
 import { EncryptionModule } from './common/encryption/encryption.module';
@@ -61,34 +61,10 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
         ],
       }),
     }),
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: async (cfg: ConfigService) => {
-        const redisUrl = cfg.get<string>('REDIS_URL');
-        if (!redisUrl) {
-          const logger = new Logger('AppModule');
-          logger.warn(
-            'REDIS_URL not configured. Bull queue processing will attempt local Redis at 127.0.0.1:6379.',
-          );
-        }
-
-        return {
-          redis: redisUrl ?? {
-            host: '127.0.0.1',
-            port: 6379,
-          },
-          defaultJobOptions: {
-            removeOnComplete: true,
-            removeOnFail: false,
-          },
-        };
-      },
-    }),
-    BullModule.registerQueue({ name: 'expiry-tasks' }),
     DatabaseModule,
     PrismaModule,
     RedisModule,
+    BullmqModule,
     CacheModule,
     AuthModule,
     UsersModule,

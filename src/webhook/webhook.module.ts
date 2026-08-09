@@ -1,5 +1,4 @@
 import { forwardRef, Module } from '@nestjs/common';
-import { BullModule } from '@nestjs/bull';
 import { ScheduleModule } from '@nestjs/schedule';
 import {
   WebhookController,
@@ -31,9 +30,6 @@ import { QUEUES } from '../common/constants';
     forwardRef(() => IvorypayModule),
     NotificationsModule,
     ScheduleModule.forRoot(),
-    BullModule.registerQueue({
-      name: QUEUES.WEBHOOKS,
-    }),
   ],
   controllers: [
     WebhookController,

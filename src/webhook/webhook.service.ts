@@ -1,6 +1,5 @@
-import { Injectable, Logger, Inject, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 
@@ -18,7 +17,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { QUEUES } from '../common/constants';
-import type { Queue } from 'bull';
+import { BullmqService } from '../common/bullmq.service';
 import type { Redis } from 'ioredis';
 import { verifyPaystackSignature } from '../payments/utils/paystack-webhook.util';
 import { resolveDepositCreditAmount } from '../deposit/deposit.utils';
@@ -36,7 +35,7 @@ export class WebhookService {
     private readonly cfg: ConfigService,
     private readonly paystackService: PaystackService,
     private readonly ivorypayService: IvorypayService,
-    @InjectQueue(QUEUES.WEBHOOKS) private readonly webhookQueue: Queue,
+    private readonly bullmq: BullmqService,
     @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
   ) {}
 
@@ -157,7 +156,7 @@ export class WebhookService {
 
     let queued = false;
     try {
-      await this.webhookQueue.add(queueEntry);
+      await this.bullmq.add(QUEUES.WEBHOOKS, queueEntry);
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
       queued = true;
     } catch (e) {
@@ -318,7 +317,7 @@ export class WebhookService {
 
     let queued = false;
     try {
-      await this.webhookQueue.add(queueEntry);
+      await this.bullmq.add(QUEUES.WEBHOOKS, queueEntry);
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
       queued = true;
     } catch (e) {
