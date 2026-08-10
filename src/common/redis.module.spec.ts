@@ -46,4 +46,16 @@ describe('buildRedisConnectionConfig', () => {
       tls: undefined,
     });
   });
+
+  it('disables localhost Redis in production', () => {
+    expect(
+      buildRedisConnectionConfig(
+        new ConfigService({
+          REDIS_HOST: 'localhost',
+          REDIS_PORT: '6379',
+        }),
+        true,
+      ),
+    ).toBeNull();
+  });
 });

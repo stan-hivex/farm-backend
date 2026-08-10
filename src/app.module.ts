@@ -46,7 +46,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     AuditModule,
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],
+      envFilePath: ['.env.production', '.env'],
       ignoreEnvFile: false,
     }),
     ThrottlerModule.forRootAsync({
