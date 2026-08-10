@@ -38,8 +38,8 @@ export function validateSecurityEnvironment() {
       throw new Error('Production security validation failed: DATABASE_URL must be set.');
     }
     if (!process.env.REDIS_URL && !(process.env.REDIS_HOST && process.env.REDIS_PORT)) {
-      throw new Error(
-        'Production security validation failed: REDIS_URL or REDIS_HOST and REDIS_PORT must be set.',
+      logger.warn(
+        '⚠️ No Redis connection configured. Redis-backed features will be disabled until REDIS_URL or REDIS_HOST/REDIS_PORT is set.',
       );
     }
 

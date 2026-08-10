@@ -1,20 +1,29 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Queue, Worker, Job, QueueOptions, WorkerOptions, ConnectionOptions } from 'bullmq';
+import { Queue, Worker, Job, WorkerOptions, ConnectionOptions } from 'bullmq';
 import { buildRedisConnectionConfig } from './redis.module';
 
 @Injectable()
 export class BullmqService implements OnModuleDestroy {
+  private readonly logger = new Logger(BullmqService.name);
   private readonly queues = new Map<string, Queue>();
   private readonly workers = new Map<string, Worker>();
-  private readonly connection: ConnectionOptions | string;
+  private readonly connection: ConnectionOptions | string | null;
 
   constructor(private readonly cfg: ConfigService) {
     const isProduction = (process.env.NODE_ENV || 'development') === 'production';
-    this.connection = buildRedisConnectionConfig(cfg, isProduction) as any;
+    this.connection = buildRedisConnectionConfig(cfg, isProduction) as ConnectionOptions | string | null;
   }
 
-  getQueue(queueName: string): Queue {
+  private isEnabled() {
+    return !!this.connection;
+  }
+
+  getQueue(queueName: string): Queue | null {
+    if (!this.isEnabled()) {
+      return null;
+    }
+
     if (!this.queues.has(queueName)) {
       const queue = new Queue(queueName, { connection: this.connection as any });
       this.queues.set(queueName, queue);
@@ -24,13 +33,18 @@ export class BullmqService implements OnModuleDestroy {
   }
 
   async add(queueName: string, data: unknown, opts?: any, jobName = 'default') {
+    if (!this.isEnabled()) {
+      this.logger.warn('BullMQ add skipped because no Redis connection is configured.');
+      return null;
+    }
+
     const queue = this.getQueue(queueName);
-    return queue.add(jobName, data, opts);
+    return queue ? queue.add(jobName, data, opts) : null;
   }
 
   async getJob(queueName: string, jobId: string) {
     const queue = this.getQueue(queueName);
-    return queue.getJob(jobId);
+    return queue ? queue.getJob(jobId) : null;
   }
 
   async removeJob(queueName: string, jobId: string) {
@@ -39,6 +53,10 @@ export class BullmqService implements OnModuleDestroy {
   }
 
   createWorker(queueName: string, processor: (job: Job) => Promise<any>, opts?: WorkerOptions) {
+    if (!this.isEnabled()) {
+      return null;
+    }
+
     if (this.workers.has(queueName)) {
       return this.workers.get(queueName)!;
     }

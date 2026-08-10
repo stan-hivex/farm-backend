@@ -2,7 +2,7 @@ import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
-export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean) {
+export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean): string | Redis.RedisOptions | null {
   const url = cfg.get<string>('REDIS_URL');
   const host = cfg.get<string>('REDIS_HOST');
   const port = Number(cfg.get<string>('REDIS_PORT', '6379'));
@@ -17,7 +17,7 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
   }
 
   if (!host && isProductionRuntime) {
-    throw new Error('REDIS_URL or REDIS_HOST+REDIS_PORT must be set in production');
+    return null;
   }
 
   if (!host) {
@@ -50,6 +50,11 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
 
         try {
           const redisConfig = buildRedisConnectionConfig(cfg, isProduction);
+          if (!redisConfig) {
+            logger.warn('Redis disabled because no Redis connection configuration was provided.');
+            return null;
+          }
+
           const client = new Redis(redisConfig as any);
 
           client.on('error', (error: Error) => {

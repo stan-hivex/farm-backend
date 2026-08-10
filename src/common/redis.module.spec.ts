@@ -2,10 +2,8 @@ import { ConfigService } from '@nestjs/config';
 import { buildRedisConnectionConfig } from './redis.module';
 
 describe('buildRedisConnectionConfig', () => {
-  it('throws in production when no Redis configuration is available', () => {
-    expect(() => buildRedisConnectionConfig(new ConfigService({}), true)).toThrow(
-      'REDIS_URL or REDIS_HOST+REDIS_PORT must be set in production',
-    );
+  it('returns null in production when no Redis configuration is available', () => {
+    expect(buildRedisConnectionConfig(new ConfigService({}), true)).toBeNull();
   });
 
   it('builds a host-based configuration when only host and port are provided', () => {
