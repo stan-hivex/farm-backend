@@ -9,13 +9,14 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
   const password = cfg.get<string>('REDIS_PASSWORD');
   const db = Number(cfg.get<string>('REDIS_DB', '0'));
   const tlsEnabled = cfg.get<string>('REDIS_TLS', 'false').toLowerCase() === 'true';
+  const hasRedisHostConfig = Boolean(host && cfg.get<string>('REDIS_PORT'));
 
   if (url) {
     return url;
   }
 
   if (!host && isProduction) {
-    throw new Error('REDIS_URL must be set in production');
+    throw new Error('REDIS_URL or REDIS_HOST+REDIS_PORT must be set in production');
   }
 
   if (!host) {
@@ -26,6 +27,10 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
       db,
       tls: tlsEnabled ? {} : undefined,
     };
+  }
+
+  if (isProduction && !hasRedisHostConfig) {
+    throw new Error('REDIS_URL or REDIS_HOST+REDIS_PORT must be set in production');
   }
 
   return {

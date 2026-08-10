@@ -37,8 +37,10 @@ export function validateSecurityEnvironment() {
     if (!process.env.DATABASE_URL) {
       throw new Error('Production security validation failed: DATABASE_URL must be set.');
     }
-    if (!process.env.REDIS_URL) {
-      throw new Error('Production security validation failed: REDIS_URL must be set.');
+    if (!process.env.REDIS_URL && !(process.env.REDIS_HOST && process.env.REDIS_PORT)) {
+      throw new Error(
+        'Production security validation failed: REDIS_URL or REDIS_HOST and REDIS_PORT must be set.',
+      );
     }
 
     logger.log('✅ Security environment validation completed.');

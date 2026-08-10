@@ -31,6 +31,16 @@ services:
       - key: REDIS_URL
         sync: false
 
+      # Optional alternative Redis configuration when using host/port
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: REDIS_TLS
+        value: "false"
+
       - key: WEB_CONCURRENCY
         value: "2"
 

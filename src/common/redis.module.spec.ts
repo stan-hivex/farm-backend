@@ -28,4 +28,24 @@ describe('buildRedisConnectionConfig', () => {
       tls: {},
     });
   });
+
+  it('allows host/port configuration in production when URL is absent', () => {
+    const config = buildRedisConnectionConfig(
+      new ConfigService({
+        REDIS_HOST: 'production-redis.internal',
+        REDIS_PORT: '6380',
+        REDIS_PASSWORD: 'secret',
+        REDIS_DB: '1',
+      }),
+      true,
+    );
+
+    expect(config).toEqual({
+      host: 'production-redis.internal',
+      port: 6380,
+      password: 'secret',
+      db: 1,
+      tls: undefined,
+    });
+  });
 });
