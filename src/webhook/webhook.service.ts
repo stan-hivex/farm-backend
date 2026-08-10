@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
@@ -16,9 +16,6 @@ import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
-import { QUEUES } from '../common/constants';
-import { BullmqService } from '../common/bullmq.service';
-import type { Redis } from 'ioredis';
 import { verifyPaystackSignature } from '../payments/utils/paystack-webhook.util';
 import { resolveDepositCreditAmount } from '../deposit/deposit.utils';
 
@@ -35,8 +32,6 @@ export class WebhookService {
     private readonly cfg: ConfigService,
     private readonly paystackService: PaystackService,
     private readonly ivorypayService: IvorypayService,
-    private readonly bullmq: BullmqService,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
   ) {}
 
   async handlePaystackWebhook(payload: any, verified = false, rawBody?: string, signature?: string) {
@@ -74,7 +69,7 @@ export class WebhookService {
     // If the original HTTP request was not signature-verified but a webhook secret
     // exists for the provider, treat this as a strict failure and alert administrators.
     if (!verified && paystackSecret) {
-      await this.fallbackAlert('paystack', 'Queued webhook processed without request-time signature verification', payload);
+      await this.fallbackAlert('paystack', 'Webhook processed without request-time signature verification', payload);
       await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Missing signature verification during processing');
       return { received: true };
     }
@@ -145,56 +140,8 @@ export class WebhookService {
       }
     }
 
-    // Always enqueue webhook events for asynchronous processing.
-    const queueEntry = {
-      provider: 'paystack',
-      event,
-      reference,
-      payload,
-      receivedAt: Date.now(),
-    };
-
-    let queued = false;
-    try {
-      await this.bullmq.add(QUEUES.WEBHOOKS, queueEntry);
-      await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
-      queued = true;
-    } catch (e) {
-      if (this.redis) {
-        try {
-          await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
-          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
-          queued = true;
-        } catch (fallbackError) {
-          this.logger.error('Failed to enqueue Paystack webhook via fallback Redis list', fallbackError as any);
-          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-          await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
-        }
-      } else {
-        this.logger.error('Failed to enqueue Paystack webhook to Bull queue', e as any);
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-        await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
-      }
-    }
-
-    if (!queued) {
-      this.logger.warn('Paystack webhook queue failed, processing directly to finalize deposit');
-      try {
-        await this.handlePaystackWebhookProcessing(payload);
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
-      } catch (directError) {
-        this.logger.error('Direct processing fallback failed for Paystack webhook', directError as any);
-      }
-    } else {
-      this.logger.log('Paystack webhook queued successfully; processing directly in-process as a worker fallback');
-      setImmediate(async () => {
-        try {
-          await this.handlePaystackWebhookProcessing(payload);
-        } catch (directError) {
-          this.logger.error('In-process fallback processing failed for Paystack webhook', directError as any);
-        }
-      });
-    }
+    await this.handlePaystackWebhookProcessing(payload);
+    await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
 
     if (eventId) await this.markProcessed('paystack', eventId);
     return { received: true };
@@ -225,7 +172,7 @@ export class WebhookService {
     }
     const ivorySecret = this.cfg.get<string>('IVORYPAY_WEBHOOK_SECRET');
     if (!verified && ivorySecret) {
-      await this.fallbackAlert('ivorypay', 'Queued webhook processed without request-time signature verification', payload);
+      await this.fallbackAlert('ivorypay', 'Webhook processed without request-time signature verification', payload);
       await this.rejectWebhook('ivorypay', event ?? 'unknown', payload, 'Missing signature verification during processing');
       return { received: true };
     }
@@ -306,56 +253,8 @@ export class WebhookService {
       }
     }
 
-    // Enqueue Ivorypay events for asynchronous processing.
-    const queueEntry = {
-      provider: 'ivorypay',
-      event,
-      reference: resolvedReference,
-      payload,
-      receivedAt: Date.now(),
-    };
-
-    let queued = false;
-    try {
-      await this.bullmq.add(QUEUES.WEBHOOKS, queueEntry);
-      await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
-      queued = true;
-    } catch (e) {
-      if (this.redis) {
-        try {
-          await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
-          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
-          queued = true;
-        } catch (fallbackError) {
-          this.logger.error('Failed to enqueue Ivorypay webhook via fallback Redis list', fallbackError as any);
-          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-          await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
-        }
-      } else {
-        this.logger.error('Failed to enqueue Ivorypay webhook to Bull queue', e as any);
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-        await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
-      }
-    }
-
-    if (!queued) {
-      this.logger.warn('Ivorypay webhook queue failed, processing directly to finalize deposit or withdrawal');
-      try {
-        await this.handleIvorypayWebhookProcessing(payload);
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
-      } catch (directError) {
-        this.logger.error('Direct processing fallback failed for Ivorypay webhook', directError as any);
-      }
-    } else {
-      this.logger.log('Ivorypay webhook queued successfully; processing directly in-process as a worker fallback');
-      setImmediate(async () => {
-        try {
-          await this.handleIvorypayWebhookProcessing(payload);
-        } catch (directError) {
-          this.logger.error('In-process fallback processing failed for Ivorypay webhook', directError as any);
-        }
-      });
-    }
+    await this.handleIvorypayWebhookProcessing(payload);
+    await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
 
     if (eventId) await this.markProcessed('ivorypay', eventId);
     return { received: true };
@@ -704,30 +603,11 @@ export class WebhookService {
   }
 
   private async isReplay(provider: string, eventId: string) {
-    try {
-      if (!this.redis) return false;
-      const key = `${this.cfg.get<string>('WEBHOOK_DEDUP_PREFIX', 'webhook:processed:')}${provider}:${eventId}`;
-      const v = await this.redis.get(key);
-      return !!v;
-    } catch (e) {
-      this.logger.error('Failed to access Redis for webhook replay check', e as any);
-      return false;
-    }
+    return false;
   }
 
   private async markProcessed(provider: string, eventId: string) {
-    try {
-      if (!this.redis) return;
-      const key = `${this.cfg.get<string>('WEBHOOK_DEDUP_PREFIX', 'webhook:processed:')}${provider}:${eventId}`;
-      const ttl = Number(this.cfg.get<number>('WEBHOOK_DEDUP_TTL_MS', 0));
-      if (ttl > 0) {
-        await this.redis.set(key, '1', 'PX', ttl, 'NX');
-      } else {
-        await this.redis.set(key, '1', 'NX');
-      }
-    } catch (e) {
-      this.logger.error('Failed to mark webhook processed in Redis', e as any);
-    }
+    return;
   }
 
   private detectPotentialFraud(provider: string, payload: any) {
@@ -1585,9 +1465,8 @@ export class WebhookService {
   }
 
   /**
-   * Process a Paystack webhook from the queue.
-   * This is called by the WebhookProcessor after the event has been queued to Redis.
-   * CRITICAL: This method should ONLY be called by the async processor, never directly from HTTP handlers.
+   * Process a Paystack webhook.
+   * This is the direct processing flow after webhook validation.
    */
   async handlePaystackWebhookProcessing(payload: any) {
     const event = payload.event;
@@ -1683,31 +1562,15 @@ export class WebhookService {
   }
 
   private async acquireLock(key: string, ttlMs = 60000): Promise<boolean> {
-    try {
-      if (!this.redis) {
-        this.logger.warn('Redis client not available; skipping webhook lock acquisition');
-        return true;
-      }
-      const res = await (this.redis as any).set(key, 'locked', 'NX', 'PX', ttlMs);
-      return res === 'OK';
-    } catch (e) {
-      this.logger.error('Error acquiring webhook lock', e as any);
-      return false;
-    }
+    return true;
   }
 
   private async releaseLock(key: string) {
-    try {
-      if (!this.redis) return;
-      await this.redis.del(key);
-    } catch (e) {
-      this.logger.debug('Error releasing webhook lock', e as any);
-    }
+    return;
   }
+
   /**
-   * Process an Ivorypay webhook from the queue.
-   * This is called by the WebhookProcessor after the event has been queued to Redis.
-   * CRITICAL: This method should ONLY be called by the async processor, never directly from HTTP handlers.
+   * Process an Ivorypay webhook.
    */
   async handleIvorypayWebhookProcessing(payload: any) {
     const event = payload.event ?? payload.status;

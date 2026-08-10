@@ -11,7 +11,6 @@ describe('validateSecurityEnvironment', () => {
     delete process.env.QR_HMAC_SECRET;
     delete process.env.FIELD_ENCRYPTION_KEY;
     delete process.env.DATABASE_URL;
-    delete process.env.REDIS_URL;
     delete process.env.TURNSTILE_SECRET_KEY;
     process.env.NODE_ENV = 'production';
   });
@@ -26,18 +25,5 @@ describe('validateSecurityEnvironment', () => {
     expect(process.env.FIELD_ENCRYPTION_KEY).toBeUndefined();
     expect(process.env.JWT_ACCESS_SECRET).toBeUndefined();
     expect(process.env.JWT_REFRESH_SECRET).toBeUndefined();
-  });
-
-  it('throws in production when REDIS_URL is missing', () => {
-    process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
-    process.env.JWT_REFRESH_SECRET = 'b'.repeat(32);
-    process.env.QR_HMAC_SECRET = 'c'.repeat(32);
-    process.env.FIELD_ENCRYPTION_KEY = 'd'.repeat(32);
-    process.env.TURNSTILE_SECRET_KEY = 'e'.repeat(32);
-    process.env.DATABASE_URL = 'postgres://user:pass@localhost:5432/db';
-    process.env.REDIS_HOST = 'redis.internal';
-    process.env.REDIS_PORT = '6380';
-
-    expect(() => validateSecurityEnvironment()).toThrow(/REDIS_URL is required in production/);
   });
 });

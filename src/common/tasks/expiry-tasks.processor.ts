@@ -1,39 +1,21 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Job } from 'bullmq';
 import { TransferRequestsService } from '../../transfer-requests/transfer-requests.service';
 import { EscrowService } from '../../escrow/escrow.service';
-import { BullmqService } from '../bullmq.service';
 
 @Injectable()
 export class ExpiryTasksProcessor implements OnModuleInit {
   private readonly logger = new Logger(ExpiryTasksProcessor.name);
 
   constructor(
-    private readonly bullmq: BullmqService,
     private readonly transferRequests: TransferRequestsService,
     private readonly escrowService: EscrowService,
   ) {}
 
   async onModuleInit() {
-    try {
-      this.bullmq.createWorker('expiry-tasks', async (job: Job) => {
-        return this.handleRun(job);
-      });
-
-      const queue = this.bullmq.getQueue('expiry-tasks');
-      if (!queue) {
-        this.logger.warn('Skipping expiry job scheduling because BullMQ is unavailable without Redis.');
-        return;
-      }
-
-      await queue.upsertJobScheduler('expiry-run', { every: 60_000 }, { name: 'run', data: {}, opts: { removeOnComplete: true, removeOnFail: false } });
-      this.logger.log('Scheduled repeatable expiry-run job every 60s');
-    } catch (e) {
-      this.logger.error('Failed to ensure repeatable expiry job', e as any);
-    }
+    this.logger.warn('ExpiryTasksProcessor worker is disabled because async queue support was removed.');
   }
 
-  async handleRun(job: Job) {
+  async handleRun() {
     this.logger.debug('Expiry-run job triggered');
     try {
       const tr = await this.transferRequests.processExpiredRequests();
