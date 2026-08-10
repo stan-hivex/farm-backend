@@ -2,7 +2,16 @@ import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis, { RedisOptions } from 'ioredis';
 
-export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean): string | RedisOptions {
+export function isRedisEnabled(cfg: ConfigService): boolean {
+  const raw = cfg.get<string>('REDIS_DISABLED') ?? process.env.REDIS_DISABLED ?? 'true';
+  return raw.toLowerCase() !== 'true';
+}
+
+export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean): string | RedisOptions | null {
+  if (!isRedisEnabled(cfg)) {
+    return null;
+  }
+
   const url = cfg.get<string>('REDIS_URL')?.trim();
   const runtimeNodeEnv = (cfg.get<string>('NODE_ENV') || process.env.NODE_ENV || 'development').toLowerCase();
   const isProductionRuntime = isProduction || runtimeNodeEnv === 'production' || process.env.RENDER === 'true';
@@ -28,7 +37,17 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
         const logger = new Logger('RedisModule');
 
         try {
+          if (!isRedisEnabled(cfg)) {
+            logger.warn('Redis is suspended for this application. No Redis client will be initialized.');
+            return null;
+          }
+
           const redisConfig = buildRedisConnectionConfig(cfg, isProduction);
+          if (!redisConfig) {
+            logger.warn('Redis is suspended for this application. No Redis client will be initialized.');
+            return null;
+          }
+
           const client = new Redis(redisConfig as any);
 
           const host = typeof redisConfig === 'string' ? new URL(redisConfig).hostname : redisConfig.host;
@@ -46,7 +65,7 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
 
           try {
             await client.ping();
-            logger.log(`Redis: connected successfully`);
+            logger.log('Redis: connected successfully');
             return client;
           } catch (pingError) {
             const message = pingError instanceof Error ? pingError.message : String(pingError);

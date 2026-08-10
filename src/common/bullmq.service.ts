@@ -1,18 +1,19 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue, Worker, Job, WorkerOptions, ConnectionOptions } from 'bullmq';
-import { buildRedisConnectionConfig } from './redis.module';
+import { buildRedisConnectionConfig, isRedisEnabled } from './redis.module';
 
 @Injectable()
 export class BullmqService implements OnModuleDestroy {
   private readonly logger = new Logger(BullmqService.name);
   private readonly queues = new Map<string, Queue>();
   private readonly workers = new Map<string, Worker>();
-  private readonly connection: ConnectionOptions | string;
+  private readonly connection: ConnectionOptions | string | null;
 
   constructor(private readonly cfg: ConfigService) {
     const isProduction = (process.env.NODE_ENV || 'development') === 'production';
-    this.connection = buildRedisConnectionConfig(cfg, isProduction) as ConnectionOptions | string;
+    const connection = buildRedisConnectionConfig(cfg, isProduction);
+    this.connection = isRedisEnabled(cfg) ? (connection as ConnectionOptions | string | null) : null;
   }
 
   private isEnabled() {
@@ -34,7 +35,7 @@ export class BullmqService implements OnModuleDestroy {
 
   async add(queueName: string, data: unknown, opts?: any, jobName = 'default') {
     if (!this.isEnabled()) {
-      this.logger.warn('BullMQ add skipped because no Redis connection is configured.');
+      this.logger.warn('BullMQ add skipped because Redis is suspended for this application.');
       return null;
     }
 
