@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { Queue, Worker, QueueOptions, WorkerOptions } from 'bullmq';
+import { Queue, Worker, QueueOptions, WorkerOptions, ConnectionOptions } from 'bullmq';
 import { RedisService } from '../redis/redis.service';
 
 @Injectable()
@@ -10,8 +10,21 @@ export class BullmqService implements OnModuleDestroy {
 
   constructor(private readonly redis: RedisService) {}
 
+  private getRedisConnection(opts?: QueueOptions | WorkerOptions): ConnectionOptions {
+    if (opts?.connection) {
+      return opts.connection;
+    }
+
+    const client = this.redis.getClient();
+    if (!client) {
+      throw new Error('Redis client is not initialized. Ensure REDIS_URL is configured and reachable.');
+    }
+
+    return client;
+  }
+
   createQueue(name: string, opts?: QueueOptions) {
-    const connection = opts?.connection ?? { url: process.env.REDIS_URL };
+    const connection = this.getRedisConnection(opts);
     const q = new Queue(name, { ...opts, connection });
     this.queues.set(name, q);
     this.logger.log(`Created queue ${name}`);
@@ -19,7 +32,7 @@ export class BullmqService implements OnModuleDestroy {
   }
 
   createWorker(name: string, processor: any, opts?: WorkerOptions) {
-    const connection = opts?.connection ?? { url: process.env.REDIS_URL };
+    const connection = this.getRedisConnection(opts);
     const w = new Worker(name, processor, { ...opts, connection });
     this.workers.set(name, w);
     this.logger.log(`Created worker ${name}`);

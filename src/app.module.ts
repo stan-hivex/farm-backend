@@ -1,4 +1,4 @@
-import { Module, Logger, MiddlewareConsumer, NestModule, Optional } from '@nestjs/common';
+import { Module, Logger, MiddlewareConsumer, NestModule, Optional, OnApplicationBootstrap } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
@@ -6,7 +6,6 @@ import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
 import { CacheModule } from './common/cache/cache.module';
 import { RedisModule } from './common/redis/redis.module';
-import { RedisService } from './common/redis/redis.service';
 import { BullmqService } from './common/bullmq/bullmq.service';
 import { CacheInterceptor } from './common/interceptors/cache.interceptor';
 import { EncryptionModule } from './common/encryption/encryption.module';
@@ -96,7 +95,6 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
   ],
   providers: [
     ExpiryTasksService,
-    RedisService,
     BullmqService,
     {
       provide: APP_GUARD,
@@ -108,19 +106,23 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     },
   ],
 })
-export class AppModule implements NestModule {
-  constructor(private readonly cfg: ConfigService, @Optional() private readonly bull?: BullmqService) {
+export class AppModule implements NestModule, OnApplicationBootstrap {
+  constructor(private readonly cfg: ConfigService, @Optional() private readonly bull?: BullmqService) {}
+
+  async onApplicationBootstrap() {
+    const queueName = this.cfg.get<string>('WEBHOOK_QUEUE_NAME', 'webhook');
+    if (!this.bull) {
+      return;
+    }
+
     try {
-      const queueName = this.cfg.get<string>('WEBHOOK_QUEUE_NAME', 'webhook');
-      if (this.bull) {
-        this.bull.createQueue(queueName);
-      }
+      await this.bull.createQueue(queueName);
     } catch (e) {
-      // best-effort: don't fail startup if queue creation fails
       const logger = new Logger(AppModule.name);
       logger.warn('Failed to create default queues', e as any);
     }
   }
+
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(IdempotencyMiddleware).forRoutes('*');
   }

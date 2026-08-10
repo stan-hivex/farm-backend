@@ -1,14 +1,24 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
 type RedisClient = InstanceType<typeof Redis>;
 
 @Injectable()
-export class RedisService implements OnModuleDestroy {
+export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
   private client: RedisClient | null = null;
 
-  constructor() {}
+  constructor(private readonly config: ConfigService) {}
+
+  async onModuleInit(): Promise<void> {
+    const redisUrl = this.config.get<string>('REDIS_URL')?.trim() || process.env.REDIS_URL?.trim();
+    if (!redisUrl) {
+      throw new Error('REDIS_URL is required and must point to an external managed Redis instance');
+    }
+
+    await this.initFromUrl(redisUrl);
+  }
 
   async initFromUrl(redisUrl: string): Promise<void> {
     if (!redisUrl) throw new Error('REDIS_URL is required');
@@ -39,7 +49,6 @@ export class RedisService implements OnModuleDestroy {
       this.client.on('ready', () => this.logger.log('Redis ready'));
       this.client.on('close', () => this.logger.warn('Redis connection closed'));
 
-      // Lightweight health check
       const pong = await this.client.ping();
       if (pong !== 'PONG') {
         throw new Error(`Unexpected PING response from Redis: ${String(pong)}`);
@@ -48,7 +57,6 @@ export class RedisService implements OnModuleDestroy {
       this.logger.log(`Redis connection established to ${url.hostname} (TLS: ${isTls})`);
     } catch (error) {
       this.logger.error('Failed to initialize Redis client', error as any);
-      // bubble up so application start fails when REDIS_URL invalid/unavailable
       throw error;
     }
   }
@@ -62,7 +70,7 @@ export class RedisService implements OnModuleDestroy {
       if (!this.client) return false;
       const r = await this.client.ping();
       return r === 'PONG';
-    } catch (e) {
+    } catch {
       return false;
     }
   }
