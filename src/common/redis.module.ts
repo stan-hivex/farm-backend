@@ -2,7 +2,7 @@ import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis, { RedisOptions } from 'ioredis';
 
-export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean): string | RedisOptions | null {
+export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean): string | RedisOptions {
   const url = cfg.get<string>('REDIS_URL')?.trim();
   const host = cfg.get<string>('REDIS_HOST')?.trim();
   const port = Number(cfg.get<string>('REDIS_PORT', '6379'));
@@ -17,11 +17,21 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
     return url;
   }
 
-  if (isProductionRuntime && (!host || isLoopbackHost)) {
-    return null;
+  if (isProductionRuntime) {
+    throw new Error('REDIS_URL is required in production');
   }
 
   if (!host) {
+    return {
+      host: '127.0.0.1',
+      port: 6379,
+      password,
+      db,
+      tls: tlsEnabled ? {} : undefined,
+    };
+  }
+
+  if (isLoopbackHost) {
     return {
       host: '127.0.0.1',
       port: 6379,
@@ -45,18 +55,17 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
   providers: [
     {
       provide: 'REDIS_CLIENT',
-      useFactory: (cfg: ConfigService) => {
+      useFactory: async (cfg: ConfigService) => {
         const isProduction = (process.env.NODE_ENV || 'development') === 'production';
         const logger = new Logger('RedisModule');
 
         try {
           const redisConfig = buildRedisConnectionConfig(cfg, isProduction);
-          if (!redisConfig) {
-            logger.warn('Redis disabled because no Redis connection configuration was provided.');
-            return null;
-          }
-
           const client = new Redis(redisConfig as any);
+
+          const host = typeof redisConfig === 'string' ? new URL(redisConfig).hostname : redisConfig.host;
+          const port = typeof redisConfig === 'string' ? Number(new URL(redisConfig).port || 6379) : redisConfig.port;
+          logger.log(`Redis startup diagnostic: host=${host ?? 'unknown'} port=${port ?? 'unknown'} hasUrl=${Boolean(cfg.get<string>('REDIS_URL'))} status=connecting`);
 
           client.on('error', (error: Error) => {
             logger.warn(`Redis connection error: ${error.message}`);
@@ -66,7 +75,19 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
             logger.log('Connected to Redis successfully');
           });
 
-          return client;
+          try {
+            await client.ping();
+            logger.log(`Redis startup diagnostic: host=${host ?? 'unknown'} port=${port ?? 'unknown'} hasUrl=${Boolean(cfg.get<string>('REDIS_URL'))} status=connected`);
+            return client;
+          } catch (pingError) {
+            const message = pingError instanceof Error ? pingError.message : String(pingError);
+            logger.error(`Redis startup diagnostic: host=${host ?? 'unknown'} port=${port ?? 'unknown'} hasUrl=${Boolean(cfg.get<string>('REDIS_URL'))} status=failed (${message})`);
+            if (isProduction) {
+              throw new Error(`Redis health check failed: ${message}`);
+            }
+            logger.warn('Redis health check failed in development; continuing without Redis-backed features.');
+            return client;
+          }
         } catch (error) {
           logger.error(`Redis initialization failed: ${error instanceof Error ? error.message : String(error)}`);
           throw error;

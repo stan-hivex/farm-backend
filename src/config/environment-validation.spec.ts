@@ -28,7 +28,7 @@ describe('validateSecurityEnvironment', () => {
     expect(process.env.JWT_REFRESH_SECRET).toBeUndefined();
   });
 
-  it('does not throw when REDIS_HOST and REDIS_PORT are set instead of REDIS_URL', () => {
+  it('throws in production when REDIS_URL is missing', () => {
     process.env.JWT_ACCESS_SECRET = 'a'.repeat(32);
     process.env.JWT_REFRESH_SECRET = 'b'.repeat(32);
     process.env.QR_HMAC_SECRET = 'c'.repeat(32);
@@ -38,6 +38,6 @@ describe('validateSecurityEnvironment', () => {
     process.env.REDIS_HOST = 'redis.internal';
     process.env.REDIS_PORT = '6380';
 
-    expect(() => validateSecurityEnvironment()).not.toThrow();
+    expect(() => validateSecurityEnvironment()).toThrow(/REDIS_URL is required in production/);
   });
 });

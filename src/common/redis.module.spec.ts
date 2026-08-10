@@ -2,8 +2,8 @@ import { ConfigService } from '@nestjs/config';
 import { buildRedisConnectionConfig } from './redis.module';
 
 describe('buildRedisConnectionConfig', () => {
-  it('returns null in production when no Redis configuration is available', () => {
-    expect(buildRedisConnectionConfig(new ConfigService({}), true)).toBeNull();
+  it('throws in production when no Redis configuration is available', () => {
+    expect(() => buildRedisConnectionConfig(new ConfigService({}), true)).toThrow('REDIS_URL is required in production');
   });
 
   it('builds a host-based configuration when only host and port are provided', () => {
@@ -27,28 +27,22 @@ describe('buildRedisConnectionConfig', () => {
     });
   });
 
-  it('allows host/port configuration in production when URL is absent', () => {
-    const config = buildRedisConnectionConfig(
-      new ConfigService({
-        REDIS_HOST: 'production-redis.internal',
-        REDIS_PORT: '6380',
-        REDIS_PASSWORD: 'secret',
-        REDIS_DB: '1',
-      }),
-      true,
-    );
-
-    expect(config).toEqual({
-      host: 'production-redis.internal',
-      port: 6380,
-      password: 'secret',
-      db: 1,
-      tls: undefined,
-    });
+  it('throws in production when a URL is absent', () => {
+    expect(() =>
+      buildRedisConnectionConfig(
+        new ConfigService({
+          REDIS_HOST: 'production-redis.internal',
+          REDIS_PORT: '6380',
+          REDIS_PASSWORD: 'secret',
+          REDIS_DB: '1',
+        }),
+        true,
+      ),
+    ).toThrow('REDIS_URL is required in production');
   });
 
-  it('disables localhost Redis in production', () => {
-    expect(
+  it('throws in production when localhost is configured', () => {
+    expect(() =>
       buildRedisConnectionConfig(
         new ConfigService({
           REDIS_HOST: 'localhost',
@@ -56,6 +50,6 @@ describe('buildRedisConnectionConfig', () => {
         }),
         true,
       ),
-    ).toBeNull();
+    ).toThrow('REDIS_URL is required in production');
   });
 });

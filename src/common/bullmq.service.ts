@@ -8,11 +8,11 @@ export class BullmqService implements OnModuleDestroy {
   private readonly logger = new Logger(BullmqService.name);
   private readonly queues = new Map<string, Queue>();
   private readonly workers = new Map<string, Worker>();
-  private readonly connection: ConnectionOptions | string | null;
+  private readonly connection: ConnectionOptions | string;
 
   constructor(private readonly cfg: ConfigService) {
     const isProduction = (process.env.NODE_ENV || 'development') === 'production';
-    this.connection = buildRedisConnectionConfig(cfg, isProduction) as ConnectionOptions | string | null;
+    this.connection = buildRedisConnectionConfig(cfg, isProduction) as ConnectionOptions | string;
   }
 
   private isEnabled() {
