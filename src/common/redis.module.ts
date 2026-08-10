@@ -4,14 +4,8 @@ import Redis, { RedisOptions } from 'ioredis';
 
 export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean): string | RedisOptions {
   const url = cfg.get<string>('REDIS_URL')?.trim();
-  const host = cfg.get<string>('REDIS_HOST')?.trim();
-  const port = Number(cfg.get<string>('REDIS_PORT', '6379'));
-  const password = cfg.get<string>('REDIS_PASSWORD');
-  const db = Number(cfg.get<string>('REDIS_DB', '0'));
-  const tlsEnabled = cfg.get<string>('REDIS_TLS', 'false').toLowerCase() === 'true';
   const runtimeNodeEnv = (cfg.get<string>('NODE_ENV') || process.env.NODE_ENV || 'development').toLowerCase();
   const isProductionRuntime = isProduction || runtimeNodeEnv === 'production' || process.env.RENDER === 'true';
-  const isLoopbackHost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
 
   if (url) {
     return url;
@@ -21,33 +15,7 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
     throw new Error('REDIS_URL is required in production');
   }
 
-  if (!host) {
-    return {
-      host: '127.0.0.1',
-      port: 6379,
-      password,
-      db,
-      tls: tlsEnabled ? {} : undefined,
-    };
-  }
-
-  if (isLoopbackHost) {
-    return {
-      host: '127.0.0.1',
-      port: 6379,
-      password,
-      db,
-      tls: tlsEnabled ? {} : undefined,
-    };
-  }
-
-  return {
-    host,
-    port,
-    password,
-    db,
-    tls: tlsEnabled ? {} : undefined,
-  };
+  throw new Error('REDIS_URL is required for local development too; localhost fallback is disabled.');
 }
 
 @Global()
