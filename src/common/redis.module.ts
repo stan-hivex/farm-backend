@@ -65,7 +65,8 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
 
           const host = typeof redisConfig === 'string' ? new URL(redisConfig).hostname : redisConfig.host;
           const port = typeof redisConfig === 'string' ? Number(new URL(redisConfig).port || 6379) : redisConfig.port;
-          logger.log(`Redis startup diagnostic: host=${host ?? 'unknown'} port=${port ?? 'unknown'} hasUrl=${Boolean(cfg.get<string>('REDIS_URL'))} status=connecting`);
+          const hasUrl = Boolean(cfg.get<string>('REDIS_URL'));
+          logger.log(hasUrl ? 'Redis: connecting to configured REDIS_URL' : `Redis: connecting to ${host ?? 'unknown'}:${port ?? 'unknown'}`);
 
           client.on('error', (error: Error) => {
             logger.warn(`Redis connection error: ${error.message}`);
@@ -77,11 +78,11 @@ export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boo
 
           try {
             await client.ping();
-            logger.log(`Redis startup diagnostic: host=${host ?? 'unknown'} port=${port ?? 'unknown'} hasUrl=${Boolean(cfg.get<string>('REDIS_URL'))} status=connected`);
+            logger.log(`Redis: connected successfully`);
             return client;
           } catch (pingError) {
             const message = pingError instanceof Error ? pingError.message : String(pingError);
-            logger.error(`Redis startup diagnostic: host=${host ?? 'unknown'} port=${port ?? 'unknown'} hasUrl=${Boolean(cfg.get<string>('REDIS_URL'))} status=failed (${message})`);
+            logger.error(`Redis: connection failed (${message})`);
             if (isProduction) {
               throw new Error(`Redis health check failed: ${message}`);
             }
