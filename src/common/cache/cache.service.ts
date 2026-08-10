@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class CacheService {
@@ -8,7 +9,7 @@ export class CacheService {
   private readonly defaultTtl: number;
   private readonly enabled: boolean;
 
-  constructor(private readonly cfg: ConfigService) {
+  constructor(private readonly cfg: ConfigService, @Optional() private readonly redis?: RedisService) {
     this.prefix = this.cfg.get<string>('CACHE_PREFIX', 'cache:');
     this.defaultTtl = Number(this.cfg.get<string>('CACHE_TTL_SECONDS', '60'));
     this.enabled = this.cfg.get<string>('CACHE_ENABLED', 'true').toLowerCase() !== 'false';
@@ -19,19 +20,52 @@ export class CacheService {
   }
 
   private isAvailable() {
-    return false;
+    return Boolean(this.enabled && this.redis && this.redis.getClient());
   }
 
   async get<T>(key: string): Promise<T | null> {
-    return null;
+    if (!this.isAvailable()) return null;
+    try {
+      const client = this.redis?.getClient();
+      if (!client) return null;
+      const raw = await client.get(this.buildKey(key));
+      if (raw == null) return null;
+      try {
+        return JSON.parse(raw) as T;
+      } catch (e) {
+        return (raw as unknown) as T;
+      }
+    } catch (e) {
+      this.logger.warn('Cache get failed', e as any);
+      return null;
+    }
   }
 
   async set(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
-    return;
+    if (!this.isAvailable()) return;
+    try {
+      const client = this.redis?.getClient();
+      if (!client) return;
+      const raw = typeof value === 'string' ? (value as unknown as string) : JSON.stringify(value);
+      if (ttlSeconds && ttlSeconds > 0) {
+        await client.set(this.buildKey(key), raw, 'EX', Math.ceil(ttlSeconds));
+      } else {
+        await client.set(this.buildKey(key), raw);
+      }
+    } catch (e) {
+      this.logger.warn('Cache set failed', e as any);
+    }
   }
 
   async del(key: string): Promise<void> {
-    return;
+    if (!this.isAvailable()) return;
+    try {
+      const client = this.redis?.getClient();
+      if (!client) return;
+      await client.del(this.buildKey(key));
+    } catch (e) {
+      this.logger.warn('Cache delete failed', e as any);
+    }
   }
 
   async cacheGet<T>(key: string): Promise<T | null> {
@@ -47,7 +81,18 @@ export class CacheService {
   }
 
   async cacheInvalidatePattern(pattern: string): Promise<void> {
-    return;
+    if (!this.isAvailable()) return;
+    try {
+      const client = this.redis?.getClient();
+      if (!client) return;
+      const keys = await client.keys(this.buildKey(pattern));
+      if (keys.length === 0) return;
+      const pipeline = client.pipeline();
+      keys.forEach((k: string) => pipeline.del(k));
+      await pipeline.exec();
+    } catch (e) {
+      this.logger.warn('Cache invalidate pattern failed', e as any);
+    }
   }
 
   async wrap<T>(key: string, ttlSeconds: number, fetch: () => Promise<T>): Promise<T> {
@@ -57,7 +102,7 @@ export class CacheService {
     }
 
     const result = await fetch();
-    await this.set(key, result, ttlSeconds);
+    await this.set(key, result, ttlSeconds ?? this.defaultTtl);
     return result;
   }
 }

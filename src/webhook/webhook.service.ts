@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
@@ -32,6 +32,8 @@ export class WebhookService {
     private readonly cfg: ConfigService,
     private readonly paystackService: PaystackService,
     private readonly ivorypayService: IvorypayService,
+    @Optional() private readonly queue?: any,
+    @Optional() private readonly redisService?: any,
   ) {}
 
   async handlePaystackWebhook(payload: any, verified = false, rawBody?: string, signature?: string) {
@@ -1562,11 +1564,25 @@ export class WebhookService {
   }
 
   private async acquireLock(key: string, ttlMs = 60000): Promise<boolean> {
-    return true;
+    try {
+      const client = this.redisService?.getClient ? this.redisService.getClient() : null;
+      if (!client) return true; // proceed when Redis not available (caller may enforce stricter behavior in prod)
+      const res = await client.set(key, '1', 'PX', ttlMs, 'NX');
+      return res === 'OK';
+    } catch (e) {
+      this.logger.warn('acquireLock failed', e as any);
+      return true;
+    }
   }
 
   private async releaseLock(key: string) {
-    return;
+    try {
+      const client = this.redisService?.getClient ? this.redisService.getClient() : null;
+      if (!client) return;
+      await client.del(key);
+    } catch (e) {
+      this.logger.debug('releaseLock failed', e as any);
+    }
   }
 
   /**
