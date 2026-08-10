@@ -1,8 +1,8 @@
 import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
 
-export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean): string | Redis.RedisOptions | null {
+export function buildRedisConnectionConfig(cfg: ConfigService, isProduction: boolean): string | RedisOptions | null {
   const url = cfg.get<string>('REDIS_URL');
   const host = cfg.get<string>('REDIS_HOST');
   const port = Number(cfg.get<string>('REDIS_PORT', '6379'));

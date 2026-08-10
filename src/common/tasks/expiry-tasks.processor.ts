@@ -21,6 +21,11 @@ export class ExpiryTasksProcessor implements OnModuleInit {
       });
 
       const queue = this.bullmq.getQueue('expiry-tasks');
+      if (!queue) {
+        this.logger.warn('Skipping expiry job scheduling because BullMQ is unavailable without Redis.');
+        return;
+      }
+
       await queue.upsertJobScheduler('expiry-run', { every: 60_000 }, { name: 'run', data: {}, opts: { removeOnComplete: true, removeOnFail: false } });
       this.logger.log('Scheduled repeatable expiry-run job every 60s');
     } catch (e) {
