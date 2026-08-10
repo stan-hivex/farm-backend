@@ -9,7 +9,7 @@ const logger = new Logger('EnvironmentValidation');
  */
 export function validateSecurityEnvironment() {
   const nodeEnv = process.env.NODE_ENV || 'development';
-  const isProduction = nodeEnv === 'production';
+  const isProduction = nodeEnv === 'production' || process.env.RENDER === 'true';
 
   const validateSecret = (secretName: string, minLength = 32) => {
     const currentValue = process.env[secretName];

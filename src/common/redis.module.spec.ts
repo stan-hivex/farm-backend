@@ -4,7 +4,7 @@ import { buildRedisConnectionConfig } from './redis.module';
 describe('buildRedisConnectionConfig', () => {
   it('throws in production when no Redis configuration is available', () => {
     expect(() => buildRedisConnectionConfig(new ConfigService({}), true)).toThrow(
-      'REDIS_URL must be set in production',
+      'REDIS_URL or REDIS_HOST+REDIS_PORT must be set in production',
     );
   });
 
