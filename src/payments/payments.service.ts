@@ -196,44 +196,11 @@ export class PaymentsService {
         },
       });
 
-      const providerIdentifiers = (payment as any).providerIdentifiers ?? {};
-      const providerTransactionId =
-        providerIdentifiers.transaction_id ??
-        providerIdentifiers.id ??
-        providerIdentifiers.provider_reference ??
-        providerIdentifiers.tx_ref ??
-        providerIdentifiers.trxref ??
-        providerIdentifiers.transaction_reference ??
-        providerIdentifiers.payment_id ??
-        providerIdentifiers.checkout_id ??
+      const providerRef =
         (payment as any).providerReference ??
         (payment as any).data?.id ??
-        (payment as any).data?.transaction_id ??
-        (payment as any).data?.tx_ref ??
-        (payment as any).data?.trxref ??
-        (payment as any).data?.transaction_reference ??
-        null;
-
-      const transactionMetadata: any = {
-        provider: 'ivorypay',
-        provider_ref: providerTransactionId,
-        provider_transaction_id: providerIdentifiers.transaction_id ?? null,
-        provider_payment_id: providerIdentifiers.payment_id ?? null,
-        provider_checkout_id: providerIdentifiers.checkout_id ?? null,
-        provider_reference: providerIdentifiers.provider_reference ?? null,
-        tx_ref: providerIdentifiers.tx_ref ?? null,
-        trxref: providerIdentifiers.trxref ?? null,
-        transaction_reference: providerIdentifiers.transaction_reference ?? null,
-        amount_farm: farmAmount,
-        amount_usd: amountUsd,
-        farm_to_usd_rate: farmToUsdRate,
-        currency_fiat: 'USD',
-        exchange_rate: rate,
-        user_id: userId,
-        device_risk: ctx?.deviceRisk ?? null,
-        ip: ctx?.ip ?? null,
-        payment_method: 'CRYPTO',
-      };
+        (payment as any).data?.reference ??
+        reference;
 
       const tx = await this.prisma.transactions.create({
         data: {
@@ -246,7 +213,19 @@ export class PaymentsService {
           net_amount: amount_farm,
           currency: 'FARM',
           description: `Pending crypto deposit via Ivorypay (${farmAmount} FARM → ${amountUsd} USD)`,
-          metadata: transactionMetadata,
+          metadata: {
+            provider: 'ivorypay',
+            provider_ref: providerRef,
+            amount_farm: farmAmount,
+            amount_usd: amountUsd,
+            farm_to_usd_rate: farmToUsdRate,
+            currency_fiat: 'USD',
+            exchange_rate: rate,
+            user_id: userId,
+            device_risk: ctx?.deviceRisk ?? null,
+            ip: ctx?.ip ?? null,
+            payment_method: 'CRYPTO',
+          },
         },
       });
 
@@ -272,7 +251,7 @@ export class PaymentsService {
           paymentMethod: 'CRYPTO',
           provider: 'ivorypay',
           reference,
-          providerRef: providerTransactionId,
+          providerRef,
           status: 'PENDING',
         },
       });
@@ -493,34 +472,22 @@ export class PaymentsService {
   }
 
   // Simple fraud assessment: velocity and amount thresholds.
-  private async getSystemSettings() {
-    const cacheKey = 'system-settings:fraud';
-    const cached = await this.cache.cacheGet<Record<string, any>>(cacheKey);
-    if (cached) return cached;
-
+  private async assessFraudRisk(userId: string, ctx: { amount_fiat: number; currency: string; ip?: string; deviceRisk?: number; country?: string }) {
+    // Load configurable thresholds from system_settings
     const keys = ['fraud.amount_threshold', 'fraud.velocity_limit', 'fraud.max_daily_amount'];
     const settings = await this.prisma.system_settings.findMany({ where: { setting_key: { in: keys } } });
-    const result: Record<string, any> = {};
-    settings.forEach((setting: any) => {
-      const value = setting.setting_value;
-      if (value == null) return;
-      try {
-        result[setting.setting_key] = JSON.parse(value);
-      } catch {
-        const n = Number(value);
-        result[setting.setting_key] = Number.isFinite(n) ? n : value;
-      }
-    });
+    const getSetting = (k: string) => {
+      const s = settings.find((x: any) => x.setting_key === k);
+      if (!s || s.setting_value == null) return null;
+      // Try parse JSON then number
+      try { return JSON.parse(s.setting_value); } catch { /* ignore */ }
+      const n = Number(s.setting_value);
+      return Number.isFinite(n) ? n : s.setting_value;
+    };
 
-    await this.cache.cacheSet(cacheKey, result, 300);
-    return result;
-  }
-
-  private async assessFraudRisk(userId: string, ctx: { amount_fiat: number; currency: string; ip?: string; deviceRisk?: number; country?: string }) {
-    const settings = await this.getSystemSettings();
-    const amountThreshold = Number(settings['fraud.amount_threshold'] ?? 5000);
-    const velocityLimit = Number(settings['fraud.velocity_limit'] ?? 5);
-    const maxDailyAmount = Number(settings['fraud.max_daily_amount'] ?? 20000);
+    const amountThreshold = Number(getSetting('fraud.amount_threshold') ?? 5000);
+    const velocityLimit = Number(getSetting('fraud.velocity_limit') ?? 5);
+    const maxDailyAmount = Number(getSetting('fraud.max_daily_amount') ?? 20000);
 
     // Count recent deposits by this user in the last 1 hour
     const oneHourAgo = new Date(Date.now() - 1000 * 60 * 60);

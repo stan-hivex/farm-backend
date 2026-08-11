@@ -196,7 +196,7 @@ async function bootstrap() {
         'Bootstrap',
       );
       Logger.error(
-        'Debug info: Check DATABASE_URL and other environment variables',
+        'Debug info: Check DATABASE_URL, REDIS_URL, and other environment variables',
         'Bootstrap',
       );
       process.exit(1);

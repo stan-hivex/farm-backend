@@ -15,7 +15,25 @@
 ### 1. **PAYSTACK HTTP 400 ERROR HANDLING** (Fixed)
 
 **File**: `src/paystack/paystack.service.ts`
-
+[Nest] 63  - 08/06/2026, 9:15:01 AM     LOG [WebhookService] fixStuckDeposits: deposit provider=ivorypay paymentMethod=CRYPTO metadata.provider=ivorypay resolved provider=ivorypay
+[Nest] 63  - 08/06/2026, 9:15:01 AM     LOG [WebhookService] fixStuckDeposits: ivorypay verify lookup for 5199db82-71fc-46fb-b8c2-152c6055f8d3 using primary providerTransactionId=internal candidateRefs=[]
+[Nest] 63  - 08/06/2026, 9:15:01 AM     LOG [IvorypayService] Ivorypay: verifying transaction 5199db82-71fc-46fb-b8c2-152c6055f8d3 (internal reference=5199db82-71fc-46fb-b8c2-152c6055f8d3) via https://api.ivorypay.io/api/v1/transactions/5199db82-71fc-46fb-b8c2-152c6055f8d3
+[Nest] 63  - 08/06/2026, 9:15:01 AM   DEBUG [IvorypayService] Ivorypay verify response body: {"success":false,"message":"Transaction not found","statusCode":404,"errors":[],"timestamp":"8/6/2026, 9:15:01 AM","path":"/api/v1/transactions/5199db82-71fc-46fb-b8c2-152c6055f8d3","method":"GET"}
+[Nest] 63  - 08/06/2026, 9:15:01 AM   ERROR [IvorypayService] Ivorypay verify error for 5199db82-71fc-46fb-b8c2-152c6055f8d3: Transaction not found
+[Nest] 63  - 08/06/2026, 9:15:01 AM    WARN [WebhookService] fixStuckDeposits: ivorypay verify lookup failed for 5199db82-71fc-46fb-b8c2-152c6055f8d3 using providerTransactionId=internal
+[Nest] 63  - 08/06/2026, 9:15:01 AM    WARN [WebhookService] BadRequestException: Ivorypay verification failed: Transaction not found
+    at IvorypayService.verifyTransaction (/opt/render/project/src/dist/ivorypay/ivorypay.service.js:225:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async WebhookService.fixStuckDeposits (/opt/render/project/src/dist/webhook/webhook.service.js:619:47)
+    at async CronJob.<anonymous> (/opt/render/project/src/node_modules/@nestjs/schedule/dist/schedule.explorer.js:119:17) {
+  response: {
+    message: 'Ivorypay verification failed: Transaction not found',
+    error: 'Bad Request',
+    statusCode: 400
+  },
+  status: 400,
+  options: {}
+}
 ```typescript
 // Now catches and re-throws errors properly:
 try {

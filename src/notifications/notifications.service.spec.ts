@@ -34,7 +34,7 @@ describe('NotificationsService.notifyTransfer', () => {
     expect(sendNotificationSpy).toHaveBeenCalledWith(
       'receiver-id',
       expect.objectContaining({
-        title: 'Money Received',
+        title: '💰 Money Received',
         body: expect.stringContaining('John Mwangi sent you 250 FARM'),
       }),
     );

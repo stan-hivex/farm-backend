@@ -1,5 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { enrichAdminListItem } from './admin-response-utils';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -9,7 +8,6 @@ import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class AdminService {
-  private readonly logger = new Logger(AdminService.name);
   constructor(
     private prisma: PrismaService,
     private escrowService: EscrowService,
@@ -104,56 +102,22 @@ export class AdminService {
       this.prisma.transactions.count({ where }),
     ]);
 
-    const userIds = [...new Set(items.flatMap((tx) => {
-      const senderUserId = tx.wallets_transactions_sender_wallet_idTowallets?.user_id;
-      const receiverUserId = tx.wallets_transactions_receiver_wallet_idTowallets?.user_id;
-      return [senderUserId, receiverUserId].filter(Boolean) as string[];
-    }))];
-
-    const users = userIds.length
-      ? await this.prisma.users.findMany({
-          where: { id: { in: userIds } },
-          select: { id: true, username: true },
-        })
-      : [];
-
-    const userMap = new Map(users.map((u) => [u.id, u]));
-
     return {
-      data: items.map((tx) => {
-        const senderUser = tx.wallets_transactions_sender_wallet_idTowallets?.user_id
-          ? userMap.get(tx.wallets_transactions_sender_wallet_idTowallets.user_id)
-          : null;
-        const receiverUser = tx.wallets_transactions_receiver_wallet_idTowallets?.user_id
-          ? userMap.get(tx.wallets_transactions_receiver_wallet_idTowallets.user_id)
-          : null;
-        const payload = {
-          id: tx.id,
-          transaction_reference: tx.transaction_reference,
-          transaction_type: tx.transaction_type,
-          status: tx.status,
-          amount: Number(tx.amount),
-          fee: Number(tx.fee ?? 0),
-          net_amount: Number(tx.net_amount ?? 0),
-          currency: tx.currency,
-          description: tx.description,
-          created_at: tx.created_at,
-          processed_at: tx.processed_at,
-          sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
-          receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
-          metadata: tx.metadata ?? {},
-          user_id: senderUser?.id ?? receiverUser?.id ?? null,
-          username: senderUser?.username ?? receiverUser?.username ?? null,
-          method: (() => {
-            if (typeof tx.metadata === 'object' && tx.metadata !== null) {
-              const metadata = tx.metadata as Record<string, any>;
-              return metadata.payment_method ?? metadata.method ?? null;
-            }
-            return null;
-          })(),
-        };
-        return enrichAdminListItem(payload, senderUser ?? receiverUser ?? null);
-      }),
+      data: items.map((tx) => ({
+        id: tx.id,
+        transaction_reference: tx.transaction_reference,
+        transaction_type: tx.transaction_type,
+        status: tx.status,
+        amount: Number(tx.amount),
+        fee: Number(tx.fee ?? 0),
+        net_amount: Number(tx.net_amount ?? 0),
+        currency: tx.currency,
+        description: tx.description,
+        created_at: tx.created_at,
+        processed_at: tx.processed_at,
+        sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
+        receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
+      })),
       meta: paginate(total, page, limit),
     };
   }
@@ -198,12 +162,8 @@ export class AdminService {
       this.prisma.escrow_contracts.findMany({
         where, skip, take, orderBy: { created_at: 'desc' },
         include: {
-          users_escrow_contracts_buyer_idTousers: {
-            select: { id: true, username: true, first_name: true, last_name: true },
-          },
-          users_escrow_contracts_seller_idTousers: {
-            select: { id: true, username: true, first_name: true, last_name: true },
-          },
+          users_escrow_contracts_buyer_idTousers: { select: { username: true } },
+          users_escrow_contracts_seller_idTousers: { select: { username: true } },
         },
       }),
       this.prisma.escrow_contracts.count({ where }),
@@ -249,42 +209,6 @@ export class AdminService {
     return { data: { ...escrow, amount: Number(escrow.amount), fee: Number(escrow.fee ?? 0) } };
   }
 
-  async listFees() {
-    const rows = await this.prisma.fee_configurations.findMany({ orderBy: { transaction_type: 'asc' } });
-    const items = rows.map((r) => ({
-      id: r.id,
-      fee_code: r.transaction_type ?? r.id,
-      name: r.transaction_type ?? r.id,
-      description: null,
-      percentage_fee: r.percentage_fee != null ? Number(r.percentage_fee) : null,
-      flat_fee: r.flat_fee != null ? Number(r.flat_fee) : null,
-      is_active: r.is_active,
-      value: r.percentage_fee != null ? `${Number(r.percentage_fee)}` : (r.flat_fee != null ? `${Number(r.flat_fee)}` : ''),
-    }));
-    return { data: items };
-  }
-
-  async updateFee(feeId: string, value: string, adminId: string) {
-    const fee = await this.prisma.fee_configurations.findUnique({ where: { id: feeId } });
-    if (!fee) throw new NotFoundException('Fee configuration not found');
-
-    const isPercent = value.trim().endsWith('%');
-    let updateData: any = {};
-    if (isPercent) {
-      const num = parseFloat(value.replace('%', '').trim());
-      if (Number.isNaN(num)) throw new BadRequestException('Invalid percentage value');
-      updateData.percentage_fee = num;
-    } else {
-      const num = parseFloat(value.trim());
-      if (Number.isNaN(num)) throw new BadRequestException('Invalid fee value');
-      updateData.flat_fee = num;
-    }
-
-    const updated = await this.prisma.fee_configurations.update({ where: { id: feeId }, data: updateData });
-    await this.prisma.audit_logs.create({ data: { user_id: adminId, action: 'UPDATE_FEE', entity_type: 'fee_configurations', entity_id: feeId, new_values: updateData as any } });
-    return { data: { id: updated.id, value: isPercent ? `${updated.percentage_fee}` : `${updated.flat_fee}` }, message: 'Fee updated' };
-  }
-
   async listMerchants(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const where: any = {};
@@ -304,26 +228,6 @@ export class AdminService {
     return { data: items, meta: paginate(total, page, limit) };
   }
 
-  async getMerchant(merchantId: string) {
-    const merchant = await this.prisma.merchants.findUnique({
-      where: { id: merchantId },
-      include: {
-        users_merchants_user_idTousers: true,
-      },
-    });
-    if (!merchant) throw new NotFoundException('Merchant not found');
-    return { data: merchant };
-  }
-
-  async getKycDocument(kycDocId: string) {
-    const doc = await this.prisma.kyc_documents.findUnique({
-      where: { id: kycDocId },
-      include: { users_kyc_documents_user_idTousers: true },
-    });
-    if (!doc) throw new NotFoundException('KYC document not found');
-    return { data: doc };
-  }
-
   async approveMerchant(
     merchantId: string, adminId: string,
     dto: { status: 'approved' | 'rejected'; rejection_reason?: string },
@@ -331,7 +235,6 @@ export class AdminService {
     const merchant = await this.prisma.merchants.update({
       where: { id: merchantId },
       data: { status: dto.status as any, approved_by: adminId, approved_at: new Date() },
-      include: { users_merchants_user_idTousers: true },
     });
     await this.prisma.audit_logs.create({
       data: {
@@ -340,21 +243,6 @@ export class AdminService {
         new_values: dto as any,
       },
     });
-    // Notify merchant owner of decision
-    try {
-      const ownerId = merchant.users_merchants_user_idTousers?.id ?? merchant.user_id;
-      if (ownerId) {
-        const title = dto.status === 'approved' ? 'Merchant Application Approved' : 'Merchant Application Rejected';
-        const body = dto.status === 'approved'
-          ? `Your merchant application for "${merchant.business_name ?? 'your business'}" has been approved.`
-          : `Your merchant application for "${merchant.business_name ?? 'your business'}" was rejected.${dto.rejection_reason ? ' Reason: ' + dto.rejection_reason : ''}`;
-        await this.notifications.sendNotification(ownerId, { type: 'merchant', title, body, entityId: merchantId, metadata: { status: dto.status, merchantId } });
-      }
-    } catch (e) {
-      // Non-fatal: log and continue
-      this.logger?.error?.(`Failed to send merchant decision notification: ${e}`);
-    }
-
     return { data: merchant, message: `Merchant ${dto.status}` };
   }
 
@@ -386,45 +274,8 @@ export class AdminService {
       this.prisma.withdrawal.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
       this.prisma.withdrawal.count({ where }),
     ]);
-
-    const userIds = [...new Set(items.map((w) => w.userId).filter(Boolean))] as string[];
-    const users = userIds.length
-      ? await this.prisma.users.findMany({ where: { id: { in: userIds } }, select: { id: true, username: true } })
-      : [];
-    const userMap = new Map(users.map((u) => [u.id, u]));
-
     return {
-      data: items.map((w) => {
-        const user = w.userId ? userMap.get(w.userId) : null;
-        return enrichAdminListItem(
-          {
-            id: w.id,
-            transaction_reference: w.reference,
-            transaction_type: 'withdrawal',
-            status: w.status,
-            amount: Number(w.amount),
-            created_at: w.createdAt,
-            processed_at: w.updatedAt,
-            metadata: {
-              method: w.method,
-              provider: w.method == 'CRYPTO' ? 'ivorypay' : 'paystack',
-              destination: w.bankName ?? w.phoneNumber ?? w.cryptoAddress ?? null,
-              account_name: w.accountName,
-              account_number: w.accountNumber,
-              bank_name: w.bankName,
-              phone_number: w.phoneNumber,
-              crypto_address: w.cryptoAddress,
-              crypto_asset: w.cryptoAsset,
-              network: w.network,
-              user_id: w.userId,
-            },
-            user_id: w.userId,
-            username: user?.username ?? null,
-            method: w.method,
-          },
-          user,
-        );
-      }),
+      data: items.map((w) => ({ ...w, amount: Number(w.amount) })),
       meta: paginate(total, page, limit),
     };
   }
@@ -654,10 +505,7 @@ export class AdminService {
         upserted.push(entry as any);
       }
     }
-    await Promise.all([
-      this.cache.cacheDelete('exchange-rates:all'),
-      this.cache.cacheInvalidatePattern('exchange-rate:*'),
-    ]);
+    await this.cache.cacheDelete('exchange-rates:all');
     return { data: upserted, message: 'Exchange rates updated' };
   }
 
@@ -667,10 +515,7 @@ export class AdminService {
       update: { setting_value: value, updated_by: adminId },
       create: { setting_key: key, setting_value: value, updated_by: adminId },
     });
-    await Promise.all([
-      this.cache.cacheDelete('app-settings:all'),
-      this.cache.cacheInvalidatePattern('system-settings:*'),
-    ]);
+    await this.cache.cacheDelete('app-settings:all');
     return { data: setting, message: 'Setting updated' };
   }
 
@@ -968,22 +813,6 @@ export class AdminService {
       },
     });
 
-    // Notify the user about the KYC decision
-    try {
-      const userId = doc.user_id!;
-      if (userId) {
-        const title = dto.status === 'verified' ? 'KYC Verified' : dto.status === 'rejected' ? 'KYC Rejected' : `KYC ${dto.status}`;
-        const body = dto.status === 'verified'
-          ? 'Your identity verification has been approved. You may now access verified features.'
-          : dto.status === 'rejected'
-            ? `Your identity verification was rejected.${dto.rejection_reason ? ' Reason: ' + dto.rejection_reason : ''}`
-            : `Your KYC status was updated to ${dto.status}.`;
-        await this.notifications.sendNotification(userId, { type: 'kyc_update', title, body, entityId: kycDocId, metadata: { status: dto.status } });
-      }
-    } catch (e) {
-      this.logger.error(`Failed to send KYC decision notification: ${e}`);
-    }
-
     return { data: doc, message: 'KYC reviewed successfully' };
   }
 
@@ -1253,7 +1082,7 @@ export class AdminService {
       },
     });
     // Compute escrow fee aggregates: creation (escrow_lock) and release (escrow_release)
-    const [escrowCreationAgg, escrowReleaseAgg, withdrawAgg] = await Promise.all([
+    const [escrowCreationAgg, escrowReleaseAgg] = await Promise.all([
       this.prisma.transactions.aggregate({
         where: { transaction_type: 'escrow_lock', status: 'completed' },
         _sum: { fee: true },
@@ -1264,24 +1093,16 @@ export class AdminService {
         _sum: { fee: true },
         _count: { id: true },
       }),
-      this.prisma.transactions.aggregate({
-        where: { transaction_type: 'withdrawal', status: 'completed' },
-        _sum: { fee: true },
-        _count: { id: true },
-      }),
     ]);
 
     const escrow_creation_earnings = Number(escrowCreationAgg._sum.fee ?? 0);
     const escrow_release_earnings = Number(escrowReleaseAgg._sum.fee ?? 0);
     const escrow_total_earnings = Number(escrow_creation_earnings + escrow_release_earnings);
-    const withdraw_fee_earnings = Number(withdrawAgg._sum.fee ?? 0);
-    const withdraw_transaction_count = Number(withdrawAgg._count.id ?? 0);
-    const total_revenue = Number(escrow_total_earnings + withdraw_fee_earnings);
 
     return {
       data: {
         total_users: totalUsers,
-        total_revenue,
+        total_revenue: Number(totalRevenue._sum.amount ?? 0),
         active_transactions: activeTransactions,
         flagged_transactions: flaggedTx,
         support_tickets: supportTickets,
@@ -1297,11 +1118,7 @@ export class AdminService {
         escrow_total_earnings,
         escrow_creation_earnings,
         escrow_release_earnings,
-        escrow_creation_count: escrowCreationAgg._count.id ?? 0,
-        escrow_release_count: escrowReleaseAgg._count.id ?? 0,
         total_escrow_count: (escrowCreationAgg._count.id ?? 0) + (escrowReleaseAgg._count.id ?? 0),
-        withdraw_fee_earnings,
-        withdraw_transaction_count,
       },
     };
   }
