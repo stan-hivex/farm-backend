@@ -228,6 +228,54 @@ export class AdminService {
     return { data: items, meta: paginate(total, page, limit) };
   }
 
+  async getMerchant(merchantId: string) {
+    const merchant = await this.prisma.merchants.findUnique({
+      where: { id: merchantId },
+      include: {
+        users_merchants_user_idTousers: {
+          select: { id: true, username: true, email: true, phone: true },
+        },
+      },
+    });
+    if (!merchant) throw new NotFoundException('Merchant not found');
+    return { data: merchant };
+  }
+
+  async listFees() {
+    const fees = await this.prisma.fee_configurations.findMany({ orderBy: { transaction_type: 'asc' } });
+    return {
+      data: fees.map((fee) => ({
+        ...fee,
+        flat_fee: Number(fee.flat_fee ?? 0),
+        percentage_fee: Number(fee.percentage_fee ?? 0),
+        minimum_fee: Number(fee.minimum_fee ?? 0),
+        maximum_fee: Number(fee.maximum_fee ?? 0),
+      })),
+    };
+  }
+
+  async updateFee(id: string, value: string, adminId: string) {
+    const feeValue = Number(value);
+    if (Number.isNaN(feeValue)) throw new BadRequestException('Invalid fee value');
+
+    const fee = await this.prisma.fee_configurations.update({
+      where: { id },
+      data: { flat_fee: feeValue },
+    });
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: 'UPDATE_FEE_CONFIGURATION',
+        entity_type: 'fee_configurations',
+        entity_id: id,
+        new_values: { flat_fee: feeValue } as any,
+      },
+    });
+
+    return { data: fee, message: 'Fee updated successfully' };
+  }
+
   async approveMerchant(
     merchantId: string, adminId: string,
     dto: { status: 'approved' | 'rejected'; rejection_reason?: string },
@@ -770,6 +818,19 @@ export class AdminService {
       })),
       meta: paginate(total, page, limit),
     };
+  }
+
+  async getKycDocument(kycDocId: string) {
+    const doc = await this.prisma.kyc_documents.findUnique({
+      where: { id: kycDocId },
+      include: {
+        users_kyc_documents_user_idTousers: {
+          select: { id: true, username: true, email: true, phone: true },
+        },
+      },
+    });
+    if (!doc) throw new NotFoundException('KYC document not found');
+    return { data: doc };
   }
 
   async reviewKyc(

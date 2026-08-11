@@ -1,4 +1,4 @@
-wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwimport { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 
 interface EmailVerifiedUserRecord {
@@ -20,7 +20,7 @@ export class EmailVerifiedGuard implements CanActivate {
 
     const dbUser = (await this.prisma.users.findUnique({
       where: { id: user.id },
-      select: { email_verified: true },
+      select: { email_verified: true, supabase_user_id: true },
     })) as EmailVerifiedUserRecord | null;
 
     if (!dbUser || dbUser.supabase_user_id === undefined || dbUser.supabase_user_id === null) {
