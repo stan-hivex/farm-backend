@@ -3,7 +3,6 @@ import { PrismaService } from '../../database/prisma.service';
 
 interface EmailVerifiedUserRecord {
   email_verified?: boolean | null;
-  supabase_user_id?: string | null;
 }
 
 @Injectable()
@@ -20,10 +19,10 @@ export class EmailVerifiedGuard implements CanActivate {
 
     const dbUser = (await this.prisma.users.findUnique({
       where: { id: user.id },
-      select: { email_verified: true, supabase_user_id: true },
+      select: { email_verified: true },
     })) as EmailVerifiedUserRecord | null;
 
-    if (!dbUser || dbUser.supabase_user_id === undefined || dbUser.supabase_user_id === null) {
+    if (!dbUser) {
       return true;
     }
 
