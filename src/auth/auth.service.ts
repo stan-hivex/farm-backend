@@ -347,6 +347,17 @@ if (new Date() > expiryDate) {
     return { message: 'Supabase auth is not configured in this environment', data: {} };
   }
 
+  async firebaseLogin(dto: { identifier: string; firebase_token?: string; firebaseIdToken?: string; country_code?: string; cf_turnstile_response?: string; turnstile_token?: string }, ip: string, userAgent: string) {
+    if (dto.turnstile_token) {
+      await this.turnstile.verifyToken(dto.turnstile_token, ip);
+    }
+    return { message: 'Firebase login is not configured in this environment', data: {} };
+  }
+
+  async verifyPhone(firebaseIdToken: string, ip: string, userAgent: string) {
+    return { message: 'Firebase phone verification is not configured in this environment', data: {} };
+  }
+
   async sendPasswordResetOtp(email: string, ip: string, turnstileToken?: string) {
     // Validate Turnstile token (bot protection)
     if (turnstileToken) {

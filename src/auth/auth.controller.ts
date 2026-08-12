@@ -37,6 +37,7 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { SetPinDto } from './dto/set-pin.dto';
 import { ChangePinDto } from './dto/change-pin.dto';
 import { ResetPinDto } from './dto/reset-pin.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -459,8 +460,9 @@ export class AuthController {
   @ApiOperation({ summary: 'Delete the current account and revoke all sessions' })
   deleteAccount(
     @CurrentUser() user: any,
+    @Body() dto: DeleteAccountDto,
   ) {
-    return this.authService.deleteAccount(user.id);
+    return this.authService.deleteAccount(user.id, dto);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
