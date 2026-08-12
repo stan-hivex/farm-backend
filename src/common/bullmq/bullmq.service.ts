@@ -10,8 +10,8 @@ export class BullmqService implements OnModuleDestroy {
 
   constructor(private readonly redis: RedisService) {}
 
-  private getRedisConnection(opts?: QueueOptions | WorkerOptions): ConnectionOptions {
-    if (opts?.connection) {
+  private getRedisConnection(opts?: Omit<QueueOptions, 'connection'> | Omit<WorkerOptions, 'connection'>): ConnectionOptions {
+    if (opts && 'connection' in opts && opts.connection) {
       return opts.connection;
     }
 
@@ -23,7 +23,7 @@ export class BullmqService implements OnModuleDestroy {
     return client;
   }
 
-  createQueue(name: string, opts?: QueueOptions) {
+  createQueue(name: string, opts?: Omit<QueueOptions, 'connection'>) {
     const connection = this.getRedisConnection(opts);
     const q = new Queue(name, { ...opts, connection });
     this.queues.set(name, q);
@@ -31,7 +31,7 @@ export class BullmqService implements OnModuleDestroy {
     return q;
   }
 
-  createWorker(name: string, processor: any, opts?: WorkerOptions) {
+  createWorker(name: string, processor: any, opts?: Omit<WorkerOptions, 'connection'>) {
     const connection = this.getRedisConnection(opts);
     const w = new Worker(name, processor, { ...opts, connection });
     this.workers.set(name, w);

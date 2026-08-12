@@ -1,47 +1,52 @@
-import { Processor, Process } from '@nestjs/bull';
-import type { Job, Queue } from 'bull';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
+import { Job, Queue } from 'bullmq';
 import { TransferRequestsService } from '../../transfer-requests/transfer-requests.service';
 import { EscrowService } from '../../escrow/escrow.service';
+import { BullmqService } from '../bullmq/bullmq.service';
 
-@Processor('expiry-tasks')
 @Injectable()
 export class ExpiryTasksProcessor implements OnModuleInit {
   private readonly logger = new Logger(ExpiryTasksProcessor.name);
 
   constructor(
-    @InjectQueue('expiry-tasks') private readonly queue: Queue,
+    private readonly bullmq: BullmqService,
     private readonly transferRequests: TransferRequestsService,
     private readonly escrowService: EscrowService,
   ) {}
 
   async onModuleInit() {
-    // Ensure a single repeatable job exists (idempotent via jobId)
+    const queueName = 'expiry-tasks';
     try {
-      const jobs = await this.queue.getRepeatableJobs();
-      const exists = jobs.some((j) => j.id === 'expiry-run');
-      if (!exists) {
-        await this.queue.add(
-          'run',
-          {},
+      const queue: Queue = this.bullmq.getQueue(queueName) ?? this.bullmq.createQueue(queueName);
+
+      const scheduler = await queue.getJobScheduler('expiry-run');
+      if (!scheduler) {
+        await queue.upsertJobScheduler(
+          'expiry-run',
+          { every: 60_000 },
           {
-            jobId: 'expiry-run',
-            repeat: { every: 60_000 },
-            removeOnComplete: true,
-            removeOnFail: false,
+            name: 'run',
+            data: {},
+            opts: {
+              removeOnComplete: true,
+              removeOnFail: false,
+            },
           },
         );
         this.logger.log('Scheduled repeatable expiry-run job every 60s');
       } else {
         this.logger.log('Expiry-run repeatable job already exists');
       }
+
+      this.bullmq.createWorker(queueName, async (job: Job) => this.handleRun(job), {
+        autorun: true,
+      });
+      this.logger.log(`ExpiryTasksProcessor worker created for queue=${queueName}`);
     } catch (e) {
-      this.logger.error('Failed to ensure repeatable expiry job', e as any);
+      this.logger.error('Failed to initialize expiry task queue', e as any);
     }
   }
 
-  @Process('run')
   async handleRun(job: Job) {
     this.logger.debug('Expiry-run job triggered');
     try {
