@@ -43,8 +43,26 @@ export class WithdrawService {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('Invalid withdrawal amount');
     }
-    if (amount < 10) {
-      throw new BadRequestException('Minimum withdrawal amount is 10 FARM');
+
+    const method = dto.method;
+    if (method === 'BANK_TRANSFER') {
+      if (amount < 4999) {
+        throw new BadRequestException('Minimum withdrawal amount for bank transfer is 4,999 FARM');
+      }
+      if (amount > 999999) {
+        throw new BadRequestException('Maximum withdrawal amount for bank transfer is 999,999 FARM');
+      }
+    } else if (method === 'MOBILE_MONEY') {
+      if (amount < 1499) {
+        throw new BadRequestException('Minimum withdrawal amount for mobile money is 1,499 FARM');
+      }
+      if (amount > 249999) {
+        throw new BadRequestException('Maximum withdrawal amount for mobile money is 249,999 FARM');
+      }
+    } else if (method === 'CRYPTO') {
+      if (amount < 100) {
+        throw new BadRequestException('Minimum withdrawal amount for crypto is 100 FARM');
+      }
     }
 
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
@@ -282,7 +300,7 @@ export class WithdrawService {
       };
 
       const resp = await this.ivorypay.createWithdrawal(opts);
-      const withdrawalId = resp?.data?.id || resp?.providerTransactionId || null;
+      const withdrawalId = resp?.data?.id || resp?.providerTransactionId || resp?.providerReference || null;
 
       // Save provider withdrawal id into transaction metadata
       const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
