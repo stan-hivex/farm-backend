@@ -38,26 +38,20 @@ export class DepositService {
     }
 
     const amount = Number(dto.amount_fiat);
-    if (!Number.isFinite(amount)) {
-      throw new BadRequestException('Invalid deposit amount');
-    }
-
-    const limits = this.getDepositLimits(paymentMethod);
-    if (amount < limits.min || (limits.max !== null && amount > limits.max)) {
-      throw new BadRequestException(
-        `Invalid deposit amount for ${paymentMethod}. Allowed range is ${this.formatAmount(limits.min)}${limits.max !== null ? ` - ${this.formatAmount(limits.max)}` : '+'} ${dto.currency || 'KES'}`,
-      );
+    if (!Number.isFinite(amount) || amount < 10) {
+      throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
     }
 
     const reference = uuidv4();
     const provider = 'paystack';
-    const fee = 0;
-    const total = amount;
+    const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
+    const fee = amount * feeRate;
+    const total = amount + fee;
 
     const depositCurrency = paymentMethod === 'CRYPTO' ? 'FARM' : dto.currency || 'KES';
     const depositAmount = amount;
-    const depositFee = 0;
-    const depositTotal = amount;
+    const depositFee = paymentMethod === 'CRYPTO' ? 0 : fee;
+    const depositTotal = paymentMethod === 'CRYPTO' ? amount : total;
 
     let providerRef = reference;
     const deposit = await this.prisma.deposit.create({
@@ -700,22 +694,5 @@ export class DepositService {
     const n = Number(amount ?? 0);
     if (!isFinite(n)) return 0;
     return Math.round(n * 100) / 100;
-  }
-
-  private getDepositLimits(method: string) {
-    switch (method) {
-      case 'BANK_TRANSFER':
-        return { min: 10, max: 999999 };
-      case 'MOBILE_MONEY':
-        return { min: 10, max: 249999 };
-      case 'CRYPTO':
-        return { min: 100, max: null };
-      default:
-        return { min: 10, max: 19999 };
-    }
-  }
-
-  private formatAmount(value: number) {
-    return new Intl.NumberFormat('en-US').format(value);
   }
 }

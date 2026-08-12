@@ -1,21 +1,48 @@
+import { Processor, Process } from '@nestjs/bull';
+import type { Job, Queue } from 'bull';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
 import { TransferRequestsService } from '../../transfer-requests/transfer-requests.service';
 import { EscrowService } from '../../escrow/escrow.service';
 
+@Processor('expiry-tasks')
 @Injectable()
 export class ExpiryTasksProcessor implements OnModuleInit {
   private readonly logger = new Logger(ExpiryTasksProcessor.name);
 
   constructor(
+    @InjectQueue('expiry-tasks') private readonly queue: Queue,
     private readonly transferRequests: TransferRequestsService,
     private readonly escrowService: EscrowService,
   ) {}
 
   async onModuleInit() {
-    this.logger.warn('ExpiryTasksProcessor worker is disabled because async queue support was removed.');
+    // Ensure a single repeatable job exists (idempotent via jobId)
+    try {
+      const jobs = await this.queue.getRepeatableJobs();
+      const exists = jobs.some((j) => j.id === 'expiry-run');
+      if (!exists) {
+        await this.queue.add(
+          'run',
+          {},
+          {
+            jobId: 'expiry-run',
+            repeat: { every: 60_000 },
+            removeOnComplete: true,
+            removeOnFail: false,
+          },
+        );
+        this.logger.log('Scheduled repeatable expiry-run job every 60s');
+      } else {
+        this.logger.log('Expiry-run repeatable job already exists');
+      }
+    } catch (e) {
+      this.logger.error('Failed to ensure repeatable expiry job', e as any);
+    }
   }
 
-  async handleRun() {
+  @Process('run')
+  async handleRun(job: Job) {
     this.logger.debug('Expiry-run job triggered');
     try {
       const tr = await this.transferRequests.processExpiredRequests();

@@ -57,10 +57,6 @@ export class WithdrawService {
       throw new BadRequestException('Insufficient balance for this withdrawal');
     }
 
-    let cryptoAddress: string | undefined;
-    let cryptoAsset: string | undefined;
-    let network: string | undefined;
-
     if (dto.method === 'MOBILE_MONEY') {
       if (!dto.phoneNumber) {
         throw new BadRequestException('Phone number is required for mobile money withdrawals');
@@ -70,54 +66,9 @@ export class WithdrawService {
         throw new BadRequestException('Account name, account number and bank name are required for bank transfer withdrawals');
       }
     } else if (dto.method === 'CRYPTO') {
-      const payload = dto as any;
-      // Accept many common field names produced by various frontends
-      cryptoAddress =
-        dto.cryptoAddress ||
-        payload.walletAddress ||
-        payload.walletaddress ||
-        payload.address ||
-        payload.toAddress ||
-        payload.to_address ||
-        payload.recipient ||
-        payload.wallet_address ||
-        undefined;
-
-      // Accept many synonyms for token/asset: cryptoAsset, token, currency, asset, symbol
-      cryptoAsset = (
-        dto.cryptoAsset ||
-        payload.token ||
-        payload.currency ||
-        payload.asset ||
-        payload.symbol ||
-        payload.coin ||
-        payload.token_symbol ||
-        undefined
-      )?.toString?.().toUpperCase?.();
-
-      // Accept network synonyms: network, chain, blockchain, chainName
-      network = (
-        dto.network ||
-        payload.network ||
-        payload.chain ||
-        payload.blockchain ||
-        payload.chainName ||
-        payload.chain_name ||
-        undefined
-      )?.toString?.().toUpperCase?.();
-
-      // Final defensive trimming
-      if (typeof cryptoAddress === 'string') cryptoAddress = cryptoAddress.trim();
-      if (typeof cryptoAsset === 'string') cryptoAsset = cryptoAsset.trim();
-      if (typeof network === 'string') network = network.trim();
-
-      if (!cryptoAddress || !cryptoAsset || !network) {
+      if (!dto.cryptoAddress || !dto.cryptoAsset || !dto.network) {
         throw new BadRequestException('Crypto asset, address and network are required for cryptocurrency withdrawals');
       }
-
-      dto.cryptoAddress = cryptoAddress;
-      dto.cryptoAsset = cryptoAsset;
-      dto.network = network;
     } else {
       throw new BadRequestException(`Unsupported withdrawal method: ${dto.method}`);
     }
@@ -146,9 +97,9 @@ export class WithdrawService {
           accountNumber: dto.accountNumber,
           bankName: dto.bankName,
           phoneNumber: dto.phoneNumber,
-          cryptoAddress: cryptoAddress,
-          cryptoAsset: cryptoAsset,
-          network: network,
+          cryptoAddress: dto.cryptoAddress,
+          cryptoAsset: dto.cryptoAsset,
+          network: dto.network,
           reference,
           status: 'PENDING',
         },
@@ -170,8 +121,8 @@ export class WithdrawService {
             provider: dto.method === 'CRYPTO' ? 'ivorypay' : 'paystack',
             user_id: userId,
             reference,
-            cryptoAsset: cryptoAsset,
-            network: network,
+            cryptoAsset: dto.cryptoAsset,
+            network: dto.network,
           },
         },
       });
@@ -184,46 +135,28 @@ export class WithdrawService {
     await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
     await this.cache.cacheInvalidatePattern(`dashboard:${userId}`);
     await this.cache.cacheInvalidatePattern(`transactions:${userId}:*`);
-    await this.cache.cacheInvalidatePattern(`withdrawals:${userId}`);
-    await this.cache.cacheInvalidatePattern(`withdrawal-status:${reference}:*`);
 
     return { success: true, reference, withdrawal };
   }
 
   async getUserWithdrawals(userId: string) {
-    const cacheKey = `withdrawals:${userId}`;
-    const cached = await this.cache.cacheGet<any[]>(cacheKey);
-    if (cached) return cached;
-
-    const withdrawals = await this.prisma.withdrawal.findMany({
+    return this.prisma.withdrawal.findMany({
       where: { userId, status: { not: 'FAILED' } },
       orderBy: { createdAt: 'desc' },
     });
-
-    await this.cache.cacheSet(cacheKey, withdrawals, 45);
-    return withdrawals;
   }
 
   async getWithdrawal(id: string, userId?: string) {
-    const cacheKey = `withdrawal:${id}:${userId ?? 'anonymous'}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
     const withdrawal = await this.prisma.withdrawal.findUnique({ where: { id } });
     if (!withdrawal) {
       return null;
     }
 
     assertResourceAccess(withdrawal.userId, userId, 'withdrawal');
-    await this.cache.cacheSet(cacheKey, withdrawal, 60);
     return withdrawal;
   }
 
   async getWithdrawalStatus(reference: string, userId: string) {
-    const cacheKey = `withdrawal-status:${reference}:${userId}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
     const withdrawal = await this.prisma.withdrawal.findFirst({
       where: { reference, userId },
     });
@@ -262,7 +195,6 @@ export class WithdrawService {
       }
     }
 
-    await this.cache.cacheSet(cacheKey, statusResult, 30);
     return statusResult;
   }
 
@@ -341,7 +273,6 @@ export class WithdrawService {
         amount: withdrawal.settlement,
         crypto: withdrawal.cryptoAsset || 'USDT',
         to_address: withdrawal.cryptoAddress,
-        network: withdrawal.network,
         metadata: {
           user_id: withdrawal.userId,
           reference,
@@ -351,7 +282,7 @@ export class WithdrawService {
       };
 
       const resp = await this.ivorypay.createWithdrawal(opts);
-      const withdrawalId = resp?.data?.id || resp?.providerTransactionId || null;
+      const withdrawalId = resp?.data?.id || resp?.id || null;
 
       // Save provider withdrawal id into transaction metadata
       const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });

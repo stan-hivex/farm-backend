@@ -1,12 +1,12 @@
-import { Module, Logger, MiddlewareConsumer, NestModule, Optional, OnApplicationBootstrap } from '@nestjs/common';
+import { Module, Logger } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
+import { RedisModule } from './common/redis.module';
 import { CacheModule } from './common/cache/cache.module';
-import { RedisModule } from './common/redis/redis.module';
-import { BullmqService } from './common/bullmq/bullmq.service';
 import { CacheInterceptor } from './common/interceptors/cache.interceptor';
 import { EncryptionModule } from './common/encryption/encryption.module';
 import { AuditModule } from './common/audit/audit.module';
@@ -38,7 +38,7 @@ import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
-import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
+
 
 @Module({
   imports: [
@@ -46,8 +46,8 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     AuditModule,
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: process.env.RENDER === 'true' ? undefined : ['.env.production', '.env'],
-      ignoreEnvFile: process.env.RENDER === 'true',
+      envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],
+      ignoreEnvFile: false,
     }),
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
@@ -61,10 +61,35 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
         ],
       }),
     }),
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (cfg: ConfigService) => {
+        const redisUrl = cfg.get<string>('REDIS_URL');
+        if (!redisUrl) {
+          const logger = new Logger('AppModule');
+          logger.warn(
+            'REDIS_URL not configured. Bull queue processing will attempt local Redis at 127.0.0.1:6379.',
+          );
+        }
+
+        return {
+          redis: redisUrl ?? {
+            host: '127.0.0.1',
+            port: 6379,
+          },
+          defaultJobOptions: {
+            removeOnComplete: true,
+            removeOnFail: false,
+          },
+        };
+      },
+    }),
+    BullModule.registerQueue({ name: 'expiry-tasks' }),
     DatabaseModule,
     PrismaModule,
-    CacheModule,
     RedisModule,
+    CacheModule,
     AuthModule,
     UsersModule,
     WalletsModule,
@@ -95,7 +120,6 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
   ],
   providers: [
     ExpiryTasksService,
-    BullmqService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
@@ -106,24 +130,4 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     },
   ],
 })
-export class AppModule implements NestModule, OnApplicationBootstrap {
-  constructor(private readonly cfg: ConfigService, @Optional() private readonly bull?: BullmqService) {}
-
-  async onApplicationBootstrap() {
-    const queueName = this.cfg.get<string>('WEBHOOK_QUEUE_NAME', 'webhook');
-    if (!this.bull) {
-      return;
-    }
-
-    try {
-      await this.bull.createQueue(queueName);
-    } catch (e) {
-      const logger = new Logger(AppModule.name);
-      logger.warn('Failed to create default queues', e as any);
-    }
-  }
-
-  configure(consumer: MiddlewareConsumer) {
-    consumer.apply(IdempotencyMiddleware).forRoutes('*');
-  }
-}
+export class AppModule {}

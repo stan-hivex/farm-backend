@@ -30,8 +30,9 @@
     "noFallthroughCasesInSwitch": false,
 
     "types": ["node"],
+    "rootDir": "./src",
     "isolatedModules": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test", "src/**/*.spec.ts"]
+  "exclude": ["node_modules", "dist", "test"]
 }

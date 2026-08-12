@@ -1,7 +1,8 @@
-import { IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateWithdrawDto {
   @IsNumber()
+  @Min(10, { message: 'Minimum withdrawal amount is 10 FARM' })
   amount!: number;
 
   @IsEnum(['BANK_TRANSFER', 'MOBILE_MONEY', 'CRYPTO'])
@@ -29,23 +30,7 @@ export class CreateWithdrawDto {
 
   @IsOptional()
   @IsString()
-  walletAddress?: string;
-
-  @IsOptional()
-  @IsString()
-  walletaddress?: string;
-
-  @IsOptional()
-  @IsString()
-  address?: string;
-
-  @IsOptional()
-  @IsString()
   cryptoAsset?: string;
-
-  @IsOptional()
-  @IsString()
-  token?: string;
 
   @IsOptional()
   @IsString()

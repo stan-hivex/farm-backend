@@ -11,7 +11,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
-import { PAYMENT_REQUEST_EXPIRY_MS } from './payment-request-expiry';
 
 @Injectable()
 export class PaymentRequestsService {
@@ -65,7 +64,7 @@ export class PaymentRequestsService {
       if (requesterUserId === recipientUserId) throw new BadRequestException('Cannot request from yourself');
 
       const reference = generateTxReference();
-      const expiresAt = new Date(Date.now() + PAYMENT_REQUEST_EXPIRY_MS);
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
       const request = await tx.payment_requests.create({
         data: {
@@ -89,39 +88,26 @@ export class PaymentRequestsService {
 
       return {
         request,
-        data: {
-          request_id: request.id,
-          request_reference: reference,
-          status: 'pending',
-          amount: dto.amount,
-          expires_at: expiresAt,
-        },
+        data: { request_id: request.id, request_reference: reference, status: 'pending', amount: dto.amount, expires_at: expiresAt },
         message: 'Payment request created successfully',
       };
     });
 
     const req = result.request;
-    this.logger.log(`Payment request created: ${result.data.request_id}`);
-    this.logger.log(`Payment request transaction committed: ${result.data.request_id}`);
     if (req && req.users_requester && req.users_recipient) {
       const title = 'Payment Request';
       const body = `${req.users_requester.username ?? 'A user'} requested ${dto.amount} FARM from you.`;
-      try {
-        await this.notificationsService.sendNotification(req.users_recipient.id, {
-          type: 'payment_request',
-          entityId: req.id,
-          title,
-          body,
-          metadata: {
-            request_id: req.id,
-            requester_username: req.users_requester.username,
-            amount: dto.amount,
-          },
-        });
-        this.logger.log(`Notification sent for payment request: ${req.id}`);
-      } catch (err) {
-        this.logger.error(`Payment request notification failed for ${req.id}: ${err}`);
-      }
+      await this.notificationsService.sendNotification(req.users_recipient.id, {
+        type: 'payment_request',
+        entityId: req.id,
+        title,
+        body,
+        metadata: {
+          request_id: req.id,
+          requester_username: req.users_requester.username,
+          amount: dto.amount,
+        },
+      });
     }
 
     return { data: result.data, message: result.message };
@@ -149,23 +135,8 @@ export class PaymentRequestsService {
     return { data: requests, pagination: { total, page: query.page || 1, limit: query.limit || 10 } };
   }
 
-  async acceptAndTransfer(senderUserId: string, dto: { request_id: string; pin?: string; biometric_auth?: boolean; device_fingerprint?: string }, ip: string) {
-    if (dto.biometric_auth) {
-      const deviceFingerprint = dto.device_fingerprint || (dto as any).deviceFingerprint;
-      if (!deviceFingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
-      const verifyDevice = (this.authService as any).verifyDevice;
-      if (typeof verifyDevice === 'function') {
-        const verified = await verifyDevice(senderUserId, deviceFingerprint);
-        if (!verified) throw new BadRequestException('Biometric device verification failed');
-      } else if (!dto.pin) {
-        throw new BadRequestException('Transaction PIN is required');
-      } else {
-        await this.authService.verifyPin(senderUserId, dto.pin);
-      }
-    } else {
-      if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
-      await this.authService.verifyPin(senderUserId, dto.pin);
-    }
+  async acceptAndTransfer(senderUserId: string, dto: { request_id: string; pin: string }, ip: string) {
+    await this.authService.verifyPin(senderUserId, dto.pin);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const request = await tx.payment_requests.findUnique({ where: { id: dto.request_id }, include: { wallets_recipient: true, wallets_requester: true, users_recipient: true, users_requester: true } });
@@ -216,7 +187,6 @@ export class PaymentRequestsService {
 
       await tx.payment_requests.update({ where: { id: request.id }, data: { status: 'completed', transaction_id: transaction.id, accepted_at: new Date(), completed_at: new Date() } });
 
-      this.logger.log(`Payment request accepted: ${request.id}`);
       return { data: { transaction_reference: reference, amount: amount, fee, status: 'completed', request_reference: request.request_reference }, message: 'Payment completed successfully', requesterUserId: request.requester_user_id };
     });
 
@@ -233,12 +203,6 @@ export class PaymentRequestsService {
         title: 'Request Completed',
         body: 'Your payment request has been paid.',
       }),
-      this.notificationsService.sendNotification(senderUserId, {
-        type: 'request_completed',
-        entityId: dto.request_id,
-        title: 'Money Request Paid',
-        body: 'You approved a money request and the funds were transferred.',
-      }),
     ]);
 
     return { data: result.data, message: result.message };
@@ -250,23 +214,12 @@ export class PaymentRequestsService {
     if (request.recipient_user_id !== senderUserId) throw new ForbiddenException('You are not authorized for this request');
     if (request.status !== 'pending') throw new BadRequestException(`Request status is ${request.status}`);
     const updated = await this.prisma.payment_requests.update({ where: { id: requestId }, data: { status: 'rejected', rejected_at: new Date() } });
-    this.logger.log(`Payment request declined: ${requestId}`);
-    await Promise.all([
-      this.notificationsService.sendNotification(request.requester_user_id!, {
-        type: 'request_declined',
-        entityId: request.id,
-        title: 'Request Declined',
-        body: 'Your payment request was declined.',
-        metadata: { request_id: request.id },
-      }),
-      this.notificationsService.sendNotification(senderUserId, {
-        type: 'request_declined',
-        entityId: request.id,
-        title: 'Money Request Declined',
-        body: 'You declined the money request.',
-        metadata: { request_id: request.id },
-      }),
-    ]);
+    await this.notificationsService.sendNotification(request.requester_user_id!, {
+      type: 'request_declined',
+      entityId: request.id,
+      title: 'Request Declined',
+      body: 'Your payment request was declined.',
+    });
     return { data: { status: 'rejected', request_reference: updated.request_reference }, message: 'Payment request rejected' };
   }
 
@@ -286,46 +239,10 @@ export class PaymentRequestsService {
   }
 
   async getRequestDetails(userId: string, requestId: string) {
-    this.logger.log(`Payment request details received: ${requestId} for user ${userId}`);
-    let request = await this.prisma.payment_requests.findUnique({
-      where: { id: requestId },
-      include: {
-        users_requester: { select: { id: true, username: true, first_name: true, last_name: true, profile_image: true } },
-        users_recipient: { select: { id: true, username: true, first_name: true, last_name: true } },
-        transactions: { select: { transaction_reference: true, status: true } },
-      },
-    });
+    const request = await this.prisma.payment_requests.findUnique({ where: { id: requestId }, include: { users_requester: { select: { id: true, username: true, first_name: true, last_name: true, profile_image: true } }, users_recipient: { select: { id: true, username: true, first_name: true, last_name: true } }, transactions: { select: { transaction_reference: true, status: true } } } });
     if (!request) throw new NotFoundException('Payment request not found');
     if (request.recipient_user_id !== userId && request.requester_user_id !== userId) throw new ForbiddenException('Unauthorized to view this request');
-
-    const now = new Date();
-    if (request.status === 'pending' && request.expires_at && request.expires_at <= now) {
-      request = await this.prisma.payment_requests.update({
-        where: { id: requestId },
-        data: { status: 'expired', updated_at: now },
-        include: {
-          users_requester: { select: { id: true, username: true, first_name: true, last_name: true, profile_image: true } },
-          users_recipient: { select: { id: true, username: true, first_name: true, last_name: true } },
-          transactions: { select: { transaction_reference: true, status: true } },
-        },
-      });
-    }
-
-    const remainingSeconds = request.expires_at
-      ? Math.max(0, Math.floor((request.expires_at.getTime() - Date.now()) / 1000))
-      : 0;
-
-    const response = {
-      ...request,
-      request_id: request.id,
-      remaining_seconds: remainingSeconds,
-      requester: request.users_requester,
-      recipient: request.users_recipient,
-      reason: request.description,
-    };
-
-    this.logger.log(`Payment request loaded: ${requestId}`);
-    return { data: response };
+    return { data: request };
   }
 
   async getMyRequestHistory(userId: string, query: any) {
@@ -333,43 +250,5 @@ export class PaymentRequestsService {
     const requests = await this.prisma.payment_requests.findMany({ where: { OR: [{ requester_user_id: userId }, { recipient_user_id: userId }] }, include: { users_requester: { select: { id: true, username: true, first_name: true, last_name: true, profile_image: true } }, users_recipient: { select: { id: true, username: true, first_name: true, last_name: true } } }, orderBy: { created_at: 'desc' }, skip, take });
     const total = await this.prisma.payment_requests.count({ where: { OR: [{ requester_user_id: userId }, { recipient_user_id: userId }] } });
     return { data: requests, pagination: { total, page: query.page || 1, limit: query.limit || 10 } };
-  }
-
-  async processExpiredRequests(): Promise<number> {
-    const now = new Date();
-    const expired = await this.prisma.payment_requests.findMany({ where: { status: 'pending', expires_at: { lte: now } } });
-    if (!expired || expired.length === 0) return 0;
-
-    let processed = 0;
-    for (const request of expired) {
-      try {
-        await this.prisma.payment_requests.update({ where: { id: request.id }, data: { status: 'expired' } });
-        this.logger.log(`Payment request expired: ${request.id}`);
-
-        const amount = Number((request as any).amount ?? 0);
-        await Promise.all([
-          request.requester_user_id ? this.notificationsService.sendNotification(request.requester_user_id, {
-            type: 'request_expired',
-            entityId: request.id,
-            title: 'Money Request Expired',
-            body: `Your money request for ${amount} FARM expired.`,
-            metadata: { request_id: request.id, amount },
-          }) : Promise.resolve(null),
-          request.recipient_user_id ? this.notificationsService.sendNotification(request.recipient_user_id, {
-            type: 'request_expired',
-            entityId: request.id,
-            title: 'Money Request Expired',
-            body: `A money request for ${amount} FARM expired.`,
-            metadata: { request_id: request.id, amount },
-          }) : Promise.resolve(null),
-        ]).catch((err) => this.logger.error('Payment request expiry notification failed', err));
-
-        processed++;
-      } catch (e) {
-        this.logger.error(`Failed to process expiry for payment request ${request.id}: ${e}`);
-      }
-    }
-
-    return processed;
   }
 }

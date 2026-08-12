@@ -4,7 +4,6 @@ import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
-import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class AdminService {
@@ -13,7 +12,6 @@ export class AdminService {
     private escrowService: EscrowService,
     private notifications: NotificationsService,
     private withdrawService: WithdrawService,
-    private cache: CacheService,
   ) {}
 
   async getDashboardStats() {
@@ -226,54 +224,6 @@ export class AdminService {
       this.prisma.merchants.count({ where }),
     ]);
     return { data: items, meta: paginate(total, page, limit) };
-  }
-
-  async getMerchant(merchantId: string) {
-    const merchant = await this.prisma.merchants.findUnique({
-      where: { id: merchantId },
-      include: {
-        users_merchants_user_idTousers: {
-          select: { id: true, username: true, email: true, phone: true },
-        },
-      },
-    });
-    if (!merchant) throw new NotFoundException('Merchant not found');
-    return { data: merchant };
-  }
-
-  async listFees() {
-    const fees = await this.prisma.fee_configurations.findMany({ orderBy: { transaction_type: 'asc' } });
-    return {
-      data: fees.map((fee) => ({
-        ...fee,
-        flat_fee: Number(fee.flat_fee ?? 0),
-        percentage_fee: Number(fee.percentage_fee ?? 0),
-        minimum_fee: Number(fee.minimum_fee ?? 0),
-        maximum_fee: Number(fee.maximum_fee ?? 0),
-      })),
-    };
-  }
-
-  async updateFee(id: string, value: string, adminId: string) {
-    const feeValue = Number(value);
-    if (Number.isNaN(feeValue)) throw new BadRequestException('Invalid fee value');
-
-    const fee = await this.prisma.fee_configurations.update({
-      where: { id },
-      data: { flat_fee: feeValue },
-    });
-
-    await this.prisma.audit_logs.create({
-      data: {
-        user_id: adminId,
-        action: 'UPDATE_FEE_CONFIGURATION',
-        entity_type: 'fee_configurations',
-        entity_id: id,
-        new_values: { flat_fee: feeValue } as any,
-      },
-    });
-
-    return { data: fee, message: 'Fee updated successfully' };
   }
 
   async approveMerchant(
@@ -502,28 +452,16 @@ export class AdminService {
   }
 
   async getSettings() {
-    const cacheKey = 'app-settings:all';
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
-    const payload = {
+    return {
       data: await this.prisma.system_settings.findMany({ orderBy: { setting_key: 'asc' } }),
     };
-    await this.cache.cacheSet(cacheKey, payload, 300);
-    return payload;
   }
 
   async getExchangeRates() {
-    const cacheKey = 'exchange-rates:all';
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
     const rates = await this.prisma.exchange_rates.findMany({
       orderBy: [{ base_currency: 'asc' }, { target_currency: 'asc' }],
     });
-    const payload = { data: rates };
-    await this.cache.cacheSet(cacheKey, payload, 300);
-    return payload;
+    return { data: rates };
   }
 
   async updateExchangeRates(rates: { base_currency: string; target_currency: string; rate: number }[], adminId: string): Promise<{ data: any[]; message: string }> {
@@ -553,7 +491,6 @@ export class AdminService {
         upserted.push(entry as any);
       }
     }
-    await this.cache.cacheDelete('exchange-rates:all');
     return { data: upserted, message: 'Exchange rates updated' };
   }
 
@@ -563,7 +500,6 @@ export class AdminService {
       update: { setting_value: value, updated_by: adminId },
       create: { setting_key: key, setting_value: value, updated_by: adminId },
     });
-    await this.cache.cacheDelete('app-settings:all');
     return { data: setting, message: 'Setting updated' };
   }
 
@@ -818,19 +754,6 @@ export class AdminService {
       })),
       meta: paginate(total, page, limit),
     };
-  }
-
-  async getKycDocument(kycDocId: string) {
-    const doc = await this.prisma.kyc_documents.findUnique({
-      where: { id: kycDocId },
-      include: {
-        users_kyc_documents_user_idTousers: {
-          select: { id: true, username: true, email: true, phone: true },
-        },
-      },
-    });
-    if (!doc) throw new NotFoundException('KYC document not found');
-    return { data: doc };
   }
 
   async reviewKyc(

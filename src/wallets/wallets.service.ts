@@ -3,7 +3,6 @@ import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CacheService } from '../common/cache/cache.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 
@@ -16,22 +15,15 @@ export class WalletsService {
     private authService: AuthService,
     private securityService: SecurityService,
     private notificationsService: NotificationsService,
-    private cache: CacheService,
   ) {}
 
   async getMyWallet(userId: string) {
-    const cacheKey = `wallet:${userId}:balance`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const available = Number(wallet.balance) - Number(wallet.locked_balance);
-    const payload = {
+    return {
       data: {
         id: wallet.id,
         wallet_address: wallet.wallet_address,
@@ -44,9 +36,6 @@ export class WalletsService {
         is_frozen: wallet.is_frozen,
       },
     };
-
-    await this.cache.cacheSet(cacheKey, payload, 30);
-    return payload;
   }
 
   async sendFunds(
@@ -227,15 +216,6 @@ export class WalletsService {
       };
     });
 
-    await Promise.all([
-      this.cache.cacheInvalidatePattern(`wallet:${senderId}:balance`),
-      this.cache.cacheInvalidatePattern(`wallet:${receiverUserId}:balance`),
-      this.cache.cacheInvalidatePattern(`dashboard:${senderId}`),
-      this.cache.cacheInvalidatePattern(`dashboard:${receiverUserId}`),
-      this.cache.cacheInvalidatePattern(`transactions:${senderId}:*`),
-      this.cache.cacheInvalidatePattern(`transactions:${receiverUserId}:*`),
-    ]);
-
     if (receiverUserId) {
       this.notificationsService
         .notifyTransfer(senderId, receiverUserId, dto.amount, result.data.transaction_reference)
@@ -253,12 +233,6 @@ export class WalletsService {
     const where: any = { OR: [{ sender_wallet_id: wallet.id }, { receiver_wallet_id: wallet.id }] };
     if (query.type) where.transaction_type = query.type;
     if (query.status) where.status = query.status;
-
-    const cacheKey = `transactions:${userId}:${page}:${limit}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) {
-      return cached;
-    }
 
     const [txns, total] = await Promise.all([
       this.prisma.transactions.findMany({
@@ -301,7 +275,7 @@ export class WalletsService {
       }),
       this.prisma.transactions.count({ where }),
     ]);
-    const payload = {
+    return {
       data: txns.map((t) => {
         const senderUser = this.buildUserSummary(
           t.wallets_transactions_sender_wallet_idTowallets?.users,
@@ -326,9 +300,6 @@ export class WalletsService {
       }),
       meta: paginate(total, page, limit),
     };
-
-    await this.cache.cacheSet(cacheKey, payload, 45);
-    return payload;
   }
 
   private buildUserSummary(user: any) {

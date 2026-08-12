@@ -104,16 +104,10 @@ export class AdminController {
   @Post('escrow/:id/resolve')     resolve(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.resolveDispute(id, u.id, dto); }
   @Permissions('admin:read')
   @Get('merchants')               merchants(@Query() q: any) { return this.svc.listMerchants(q); }
-  @Permissions('admin:read')
-  @Get('merchants/:id')           merchantDetail(@Param('id') id: string) { return this.svc.getMerchant(id); }
   @Permissions('admin:write')
   @Post('merchants/:id/decision') decision(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: MerchantDecisionDto) { return this.svc.approveMerchant(id, u.id, dto); }
   @Permissions('admin:read')
   @Get('payouts')                 payouts(@Query() q: any) { return this.svc.listPayouts(q); }
-  @Permissions('admin:read')
-  @Get('fees')                    fees() { return this.svc.listFees(); }
-  @Permissions('admin:write')
-  @Put('fees/:id')                updateFee(@Param('id') id: string, @Body() dto: { value: string }, @CurrentUser() u: any) { return this.svc.updateFee(id, dto.value, u.id); }
   @Permissions('admin:write')
   @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.processPayout(id, u.id, 'completed'); }
   @Permissions('admin:write')
@@ -124,8 +118,6 @@ export class AdminController {
   @Get('kyc/queue')               kycQueue(@Query() q: any) { return this.svc.listKycQueue(q); }
   @Permissions('admin:write')
   @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
-  @Permissions('admin:read')
-  @Get('kyc/:id')                 kycDetail(@Param('id') id: string) { return this.svc.getKycDocument(id); }
   @Permissions('admin:read')
   @Get('analytics')               analytics() { return this.svc.getAdminAnalytics(); }
   @Permissions('admin:read')

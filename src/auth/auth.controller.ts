@@ -30,6 +30,8 @@ import { AuthService } from './auth.service';
 
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { FirebaseLoginDto } from './dto/firebase-login.dto';
+import { VerifyPhoneDto } from './dto/verify-phone.dto';
 import { SupabaseAuthDto } from './dto/supabase-auth.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { SetPinDto } from './dto/set-pin.dto';
@@ -39,13 +41,9 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { DeleteAccountDto } from './dto/delete-account.dto';
-import { CreateAdminDto } from './dto/create-admin.dto';
 
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '../common/enums';
 
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -266,6 +264,50 @@ export class AuthController {
   }
 
   @Public()
+  @Post('firebase-login')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 5,
+      ttl: 60,
+      generateKey: authThrottleKey,
+    },
+  })
+  @ApiOperation({ summary: 'Complete login with a verified Firebase ID token' })
+  firebaseLogin(
+    @Body() dto: FirebaseLoginDto,
+    @Req() req: Request,
+  ) {
+    return this.authService.firebaseLogin(
+      {
+        ...dto,
+        identifier: dto.identifier || '',
+      },
+      req.ip || '',
+      req.headers['user-agent'] || '',
+    );
+  }
+
+  /**
+   * ================= VERIFY PHONE (Firebase) =================
+   * Public endpoint: verifies Firebase ID token and issues FARM JWT
+   */
+  @Public()
+  @Post('verify-phone')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify phone using Firebase ID token' })
+  async verifyPhone(
+    @Body() dto: VerifyPhoneDto,
+    @Req() req: Request,
+  ) {
+    return this.authService.verifyPhone(
+      dto.firebaseIdToken,
+      req.ip || '',
+      req.headers['user-agent'] || '',
+    );
+  }
+
+  @Public()
   @Post('supabase')
   @HttpCode(HttpStatus.OK)
   @Throttle({
@@ -410,20 +452,6 @@ export class AuthController {
   }
 
   @UseGuards(JwtGuard, RolesGuard)
-  @Post('admin/create')
-  @Roles(UserRole.SUPER_ADMIN)
-  @Permissions('admin:write')
-  @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth('JWT')
-  @ApiOperation({ summary: 'Create a new admin account' })
-  createAdmin(
-    @CurrentUser() user: any,
-    @Body() dto: CreateAdminDto,
-  ) {
-    return this.authService.createAdmin(user.id, dto);
-  }
-
-  @UseGuards(JwtGuard, RolesGuard)
   @Delete('delete-account')
   @Permissions('auth:write')
   @HttpCode(HttpStatus.OK)
@@ -431,9 +459,8 @@ export class AuthController {
   @ApiOperation({ summary: 'Delete the current account and revoke all sessions' })
   deleteAccount(
     @CurrentUser() user: any,
-    @Body() dto: DeleteAccountDto,
   ) {
-    return this.authService.deleteAccount(user.id, dto);
+    return this.authService.deleteAccount(user.id);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
