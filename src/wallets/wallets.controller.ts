@@ -32,7 +32,8 @@ export class WalletsController {
 
   @Permissions('wallet:write')
   @Post('send')
-  @UseGuards(JwtGuard, KycGuard, EmailVerifiedGuard)
+  // Allow sending without mandatory email verification while keeping JWT + KYC checks
+  @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Send FARM tokens (PIN required)' })
   send(@CurrentUser() u: any, @Body() dto: SendFundsDto, @Req() req: Request) {
     return this.svc.sendFunds(u.id, dto, req.ip || '');
