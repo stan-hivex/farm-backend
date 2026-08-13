@@ -4,6 +4,7 @@ import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import { CurrencyConversionService } from '../currency/currency-conversion.service';
 
 @Injectable()
 export class AdminService {
@@ -12,6 +13,7 @@ export class AdminService {
     private escrowService: EscrowService,
     private notifications: NotificationsService,
     private withdrawService: WithdrawService,
+    private readonly currencyConversionService: CurrencyConversionService,
   ) {}
 
   async getDashboardStats() {
@@ -541,6 +543,23 @@ export class AdminService {
       orderBy: [{ base_currency: 'asc' }, { target_currency: 'asc' }],
     });
     return { data: rates };
+  }
+
+  async getCurrencyRates() {
+    const data = await this.prisma.currency_rates.findMany({
+      orderBy: { effective_at: 'desc' },
+    });
+    return { data };
+  }
+
+  async getCurrentCurrencyRate() {
+    const rate = await this.currencyConversionService.getCurrentRate();
+    return { data: rate };
+  }
+
+  async updateCurrencyRate(usdKesRate: number, adminId: string) {
+    const rate = await this.currencyConversionService.updateActiveRate(usdKesRate, adminId);
+    return { data: rate, message: 'Currency conversion rate updated' };
   }
 
   async updateExchangeRates(rates: { base_currency: string; target_currency: string; rate: number }[], adminId: string): Promise<{ data: any[]; message: string }> {

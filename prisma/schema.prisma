@@ -150,6 +150,20 @@ model exchange_rates {
   fetched_at      DateTime? @default(now()) @db.Timestamp(6)
 }
 
+model currency_rates {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  usd_kes_rate  Decimal   @db.Decimal(30, 8)
+  farm_kes_rate Decimal   @default(1) @db.Decimal(30, 8)
+  is_active     Boolean   @default(true)
+  effective_at  DateTime  @default(now()) @db.Timestamp(6)
+  created_at    DateTime? @default(now()) @db.Timestamp(6)
+  updated_at    DateTime? @default(now()) @db.Timestamp(6)
+  updated_by    String?   @db.Uuid
+  users         users?    @relation(fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([is_active], map: "idx_currency_rates_active")
+}
+
 model farm_token_config {
   id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   asset_id          String?           @db.VarChar(255)
@@ -538,6 +552,7 @@ model users {
   support_tickets_support_tickets_assigned_toTousers                    support_tickets[]        @relation("support_tickets_assigned_toTousers")
   support_tickets_support_tickets_user_idTousers                        support_tickets[]        @relation("support_tickets_user_idTousers")
   system_settings                                                       system_settings[]
+  currency_rates                                                        currency_rates[]
   uploads                                                               uploads[]
   user_investments                                                      user_investments[]
   user_sessions                                                         user_sessions[]

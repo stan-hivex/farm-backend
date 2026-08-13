@@ -26,6 +26,10 @@ class ExchangeRatesDto {
   @IsNotEmpty() rates!: ExchangeRateDto[];
 }
 
+class CurrencyRateDto {
+  @IsNumber() usd_kes_rate!: number;
+}
+
 class CreateSuperadminDto {
   @IsString() first_name!: string;
   @IsString() last_name!: string;
@@ -135,6 +139,12 @@ export class AdminController {
   @Permissions('admin:write')
   @Put('exchange-rates')          updateExchangeRates(@Body() dto: ExchangeRatesDto, @CurrentUser() u: any) { return this.svc.updateExchangeRates(dto.rates, u.id); }
   @Permissions('admin:read')
+  @Get('currency-rates')          getCurrencyRates() { return this.svc.getCurrencyRates(); }
+  @Permissions('admin:write')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @Put('currency-rates')          updateCurrencyRate(@Body() dto: CurrencyRateDto, @CurrentUser() u: any) { return this.svc.updateCurrencyRate(dto.usd_kes_rate, u.id); }
+  @Permissions('admin:read')
   @Get('audit-logs')              auditLogs(@Query() q: any) { return this.svc.getAuditLogs(q); }
   @Permissions('admin:write')
   @Post('investments')            createProject(@CurrentUser() u: any, @Body() dto: any) { return this.svc.createProject(u.id, dto); }
@@ -235,5 +245,11 @@ export class SuperadminController {
   @Get('dashboard')
   superadminDashboard() {
     return this.svc.getSuperadminDashboard();
+  }
+
+  @Permissions('admin:read')
+  @Get('currency-rates/current')
+  getCurrentCurrencyRate() {
+    return this.svc.getCurrentCurrencyRate();
   }
 }

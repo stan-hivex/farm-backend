@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CurrencyConversionService } from '../currency/currency-conversion.service';
 
 @Injectable()
 export class WithdrawService {
@@ -23,6 +24,7 @@ export class WithdrawService {
     private ivorypay: IvorypayService,
     private cache: CacheService,
     private notificationsService: NotificationsService,
+    private readonly currencyConversionService: CurrencyConversionService,
   ) {}
 
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
@@ -96,6 +98,28 @@ export class WithdrawService {
     const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
 
+    let cryptoExchangeSnapshot: any = null;
+    if (dto.method === 'CRYPTO') {
+      const rate = await this.currencyConversionService.getCurrentRate();
+      const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
+      const amountUsd = Number((amount * farmUsdRate).toFixed(8));
+      const feeUsd = Number((fee * farmUsdRate).toFixed(8));
+      const settlementUsd = Number((settlement * farmUsdRate).toFixed(8));
+      cryptoExchangeSnapshot = {
+        usd_kes_rate: Number(rate.usd_kes_rate ?? 0),
+        farm_kes_rate: Number(rate.farm_kes_rate ?? 1),
+        farm_usd_rate: farmUsdRate,
+        amount_farm: amount,
+        fee_farm: fee,
+        settlement_farm: settlement,
+        amount_usd: amountUsd,
+        fee_usd: feeUsd,
+        settlement_usd: settlementUsd,
+        crypto_asset: dto.cryptoAsset,
+        network: dto.network,
+      };
+    }
+
     const withdrawal = await this.prisma.$transaction(async (tx) => {
       await tx.wallets.update({
         where: { id: wallet.id },
@@ -141,6 +165,7 @@ export class WithdrawService {
             reference,
             cryptoAsset: dto.cryptoAsset,
             network: dto.network,
+            conversion_snapshot: cryptoExchangeSnapshot,
           },
         },
       });
@@ -286,6 +311,11 @@ export class WithdrawService {
   // Support crypto withdrawal processing using Ivorypay (or a stub if not configured)
   private async processCryptoWithdrawal(withdrawal: any, reference: string) {
     try {
+      const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+      const metadata = (transaction?.metadata as any) ?? {};
+      const snapshot = metadata.conversion_snapshot ?? null;
+      const settlementUsd = snapshot?.settlement_usd ?? Number((withdrawal.settlement * (Number(snapshot?.farm_usd_rate ?? 0) || 0)).toFixed(8));
+
       const opts: any = {
         reference,
         amount: withdrawal.settlement,
@@ -296,24 +326,25 @@ export class WithdrawService {
           reference,
           cryptoAsset: withdrawal.cryptoAsset,
           network: withdrawal.network,
+          conversion_snapshot: snapshot,
+          settlement_usd: settlementUsd,
         },
       };
 
       const resp = await this.ivorypay.createWithdrawal(opts);
       const withdrawalId = resp?.data?.id || resp?.providerTransactionId || resp?.providerReference || null;
 
-      // Save provider withdrawal id into transaction metadata
-      const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
       if (transaction) {
-        const metadata = (transaction.metadata as any) ?? {};
+        const existingMetadata = (transaction.metadata as any) ?? {};
         await this.prisma.transactions.update({
           where: { id: transaction.id },
           data: {
             metadata: {
-              ...metadata,
+              ...existingMetadata,
               provider: 'ivorypay',
               ivorypay_withdrawal_id: withdrawalId,
               ivorypay_withdrawal_status: 'pending',
+              settlement_usd: settlementUsd,
             },
           },
         });

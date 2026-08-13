@@ -37,6 +37,7 @@ import { WebsocketModule } from './websocket/websocket.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
+import { CurrencyModule } from './currency/currency.module';
 
 
 @Module({
@@ -92,6 +93,7 @@ import { PaymentRequestsModule } from './payment-requests/payment-requests.modul
     EscrowModule,
     TransferRequestsModule,
     PaymentRequestsModule,
+    CurrencyModule,
   ],
   providers: [
     {
