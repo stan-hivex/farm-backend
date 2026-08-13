@@ -104,10 +104,16 @@ export class AdminController {
   @Post('escrow/:id/resolve')     resolve(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.resolveDispute(id, u.id, dto); }
   @Permissions('admin:read')
   @Get('merchants')               merchants(@Query() q: any) { return this.svc.listMerchants(q); }
+  @Permissions('admin:read')
+  @Get('merchants/:id')           merchant(@Param('id') id: string) { return this.svc.getMerchant(id); }
   @Permissions('admin:write')
   @Post('merchants/:id/decision') decision(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: MerchantDecisionDto) { return this.svc.approveMerchant(id, u.id, dto); }
   @Permissions('admin:read')
   @Get('payouts')                 payouts(@Query() q: any) { return this.svc.listPayouts(q); }
+  @Permissions('admin:read')
+  @Get('fees')                    fees() { return this.svc.getFees(); }
+  @Permissions('admin:write')
+  @Put('fees/:id')                updateFee(@Param('id') id: string, @Body() dto: { value: string }, @CurrentUser() u: any) { return this.svc.updateFee(id, dto.value, u.id); }
   @Permissions('admin:write')
   @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.processPayout(id, u.id, 'completed'); }
   @Permissions('admin:write')

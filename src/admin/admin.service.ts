@@ -215,7 +215,6 @@ export class AdminService {
       this.prisma.merchants.findMany({
         where, skip, take, orderBy: { created_at: 'desc' },
         include: {
-          // Correct relation name: users via user_id FK
           users_merchants_user_idTousers: {
             select: { username: true, email: true, phone: true },
           },
@@ -224,6 +223,29 @@ export class AdminService {
       this.prisma.merchants.count({ where }),
     ]);
     return { data: items, meta: paginate(total, page, limit) };
+  }
+
+  async getMerchant(merchantId: string) {
+    const merchant = await this.prisma.merchants.findUnique({
+      where: { id: merchantId },
+      include: {
+        users_merchants_user_idTousers: {
+          select: { id: true, username: true, email: true, phone: true, first_name: true, last_name: true },
+        },
+        merchant_payouts: { orderBy: { created_at: 'desc' }, take: 5 },
+      },
+    });
+
+    if (!merchant) throw new NotFoundException('Merchant not found');
+
+    return {
+      data: {
+        ...merchant,
+        total_sales: Number(merchant.total_sales ?? 0),
+        daily_limit: Number(merchant.daily_limit ?? 0),
+        transaction_fee_percent: Number(merchant.transaction_fee_percent ?? 0),
+      },
+    };
   }
 
   async approveMerchant(
@@ -244,6 +266,64 @@ export class AdminService {
     return { data: merchant, message: `Merchant ${dto.status}` };
   }
 
+  async getFees() {
+    const fees = await this.prisma.fee_configurations.findMany({
+      orderBy: { created_at: 'desc' },
+    });
+
+    return {
+      data: fees.map((fee) => ({
+        ...fee,
+        flat_fee: Number(fee.flat_fee ?? 0),
+        percentage_fee: Number(fee.percentage_fee ?? 0),
+        minimum_fee: Number(fee.minimum_fee ?? 0),
+        maximum_fee: Number(fee.maximum_fee ?? 0),
+        value: fee.percentage_fee?.toString() ?? fee.flat_fee?.toString() ?? '0',
+      })),
+    };
+  }
+
+  async updateFee(feeId: string, value: string, adminId: string) {
+    const fee = await this.prisma.fee_configurations.findUnique({ where: { id: feeId } });
+    if (!fee) throw new NotFoundException('Fee configuration not found');
+
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+      throw new BadRequestException('Fee value must be numeric');
+    }
+
+    const updated = await this.prisma.fee_configurations.update({
+      where: { id: feeId },
+      data: {
+        percentage_fee: numericValue,
+        flat_fee: 0,
+        minimum_fee: 0,
+        maximum_fee: 0,
+      },
+    });
+
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId,
+        action: 'UPDATE_FEE',
+        entity_type: 'fee_configurations',
+        entity_id: feeId,
+        new_values: { value },
+      },
+    });
+
+    return {
+      data: {
+        ...updated,
+        flat_fee: Number(updated.flat_fee ?? 0),
+        percentage_fee: Number(updated.percentage_fee ?? 0),
+        minimum_fee: Number(updated.minimum_fee ?? 0),
+        maximum_fee: Number(updated.maximum_fee ?? 0),
+      },
+      message: 'Fee updated',
+    };
+  }
+
   async listPayouts(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const where: any = {};
@@ -252,7 +332,6 @@ export class AdminService {
       this.prisma.merchant_payouts.findMany({
         where, skip, take, orderBy: { created_at: 'desc' },
         include: {
-          // Correct relation name for merchant FK
           merchants: { select: { business_name: true } },
         },
       }),
