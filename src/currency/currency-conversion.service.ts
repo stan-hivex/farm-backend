@@ -14,7 +14,46 @@ export class CurrencyConversionService {
     return Number(value.toFixed(digits));
   }
 
+  private async ensureCurrencyRatesTable(): Promise<void> {
+    try {
+      const rows = await this.prisma.$queryRaw<Array<{ exists: string | number }>>`
+        SELECT to_regclass('public.currency_rates') AS exists;
+      `;
+      const exists = Boolean(rows?.[0]?.exists);
+
+      if (exists) {
+        return;
+      }
+
+      await this.prisma.$executeRaw`
+        CREATE TABLE IF NOT EXISTS "currency_rates" (
+          "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+          "usd_kes_rate" DECIMAL(30,8) NOT NULL,
+          "farm_kes_rate" DECIMAL(30,8) NOT NULL DEFAULT 1,
+          "is_active" BOOLEAN NOT NULL DEFAULT true,
+          "effective_at" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "created_at" TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+          "updated_at" TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+          "updated_by" UUID,
+          CONSTRAINT "currency_rates_pkey" PRIMARY KEY ("id"),
+          CONSTRAINT "currency_rates_updated_by_fkey"
+            FOREIGN KEY ("updated_by") REFERENCES "users"("id")
+            ON DELETE NO ACTION ON UPDATE NO ACTION
+        );
+      `;
+
+      await this.prisma.$executeRaw`
+        CREATE INDEX IF NOT EXISTS "idx_currency_rates_active"
+        ON "currency_rates" ("is_active");
+      `;
+    } catch {
+      // The table may be absent only in a partially migrated environment. Remaining
+      // errors are still surfaced by the actual Prisma query call below.
+    }
+  }
+
   async getCurrentRate(): Promise<any> {
+    await this.ensureCurrencyRatesTable();
     const record = await this.prisma.currency_rates.findFirst({
       where: { is_active: true },
       orderBy: { effective_at: 'desc' },
@@ -65,6 +104,7 @@ export class CurrencyConversionService {
   }
 
   async ensureRateExists(): Promise<any> {
+    await this.ensureCurrencyRatesTable();
     const existing = await this.prisma.currency_rates.findFirst({
       where: { is_active: true },
       orderBy: { effective_at: 'desc' },
@@ -83,6 +123,7 @@ export class CurrencyConversionService {
   }
 
   async updateActiveRate(usdKesRate: number, adminId?: string): Promise<any> {
+    await this.ensureCurrencyRatesTable();
     const parsedRate = Number(usdKesRate);
     if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
       throw new BadRequestException('USD/KES conversion rate must be a positive number');
