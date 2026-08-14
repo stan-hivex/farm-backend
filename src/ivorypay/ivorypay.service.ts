@@ -577,12 +577,16 @@ export class IvorypayService {
         `Ivorypay crypto withdrawal request failed: endpoint=${endpoint} method=POST status=${statusCode} request=${JSON.stringify(requestBody)} response=${JSON.stringify(responseBody ?? {})}`,
       );
 
-      // Persist provider message in thrown error for upstream handlers to record
+      // Attach provider response details to the thrown error so callers can persist them
+      const err = new BadRequestException(providerMessage || 'Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.');
+      (err as any).providerResponse = responseBody;
+      (err as any).providerStatus = statusCode;
+
       if (statusCode === 400 || statusCode === 422) {
-        throw new BadRequestException(providerMessage || 'Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.');
+        throw err;
       }
 
-      throw new BadRequestException(`Ivorypay crypto withdrawal failed: ${providerMessage}`);
+      throw err;
     }
   }
 }

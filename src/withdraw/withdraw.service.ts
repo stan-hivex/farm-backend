@@ -401,12 +401,35 @@ export class WithdrawService {
               ivorypay_withdrawal_id: withdrawalId,
               ivorypay_withdrawal_status: 'pending',
               settlement_usd: settlementUsd,
+              // persist raw provider response for debugging (non-sensitive parts)
+              ivorypay_response_body: resp?.rawResponse ?? null,
             },
           },
         });
       }
       // Leave finalization to webhook or manual reconciliation
     } catch (e: any) {
+      // If the Ivorypay service attached provider response details to the error, persist them
+      try {
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+        if (transaction) {
+          const existingMetadata = (transaction.metadata as any) ?? {};
+          const providerResponse = e?.providerResponse ?? e?.response ?? null;
+          const providerStatus = e?.providerStatus ?? e?.response?.status ?? null;
+          const failureMetadata = {
+            ...existingMetadata,
+            provider: 'ivorypay',
+            ivorypay_failure_reason: e.message || existingMetadata.ivorypay_failure_reason || 'Ivorypay error',
+            ivorypay_withdrawal_status: 'failed',
+            ivorypay_response_body: providerResponse,
+            ivorypay_response_status: providerStatus,
+          };
+          await this.prisma.transactions.update({ where: { id: transaction.id }, data: { metadata: failureMetadata } });
+        }
+      } catch (innerErr: any) {
+        this.logger.debug(`Failed to persist provider response for ${reference}: ${innerErr?.message ?? innerErr}`);
+      }
+
       await this.rejectWithdrawal(reference, e.message || 'Crypto withdrawal failed');
     }
   }
