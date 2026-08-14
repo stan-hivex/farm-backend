@@ -37,6 +37,7 @@ export class IvorypayService {
   private readonly logger = new Logger(IvorypayService.name);
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
+  private readonly networkCache: Map<string, { ts: number; networks: string[] }> = new Map();
 
   constructor(private readonly cfg: ConfigService) {
     const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
@@ -61,6 +62,24 @@ export class IvorypayService {
     const normalizedToken = this.normalizeToken(token);
     const raw = (inputNetwork ?? '').toString().trim();
     if (!normalizedToken || !raw) return null;
+    // First try to match against the provider's enabled networks for this token
+    try {
+      const providerNetworks = this.networkCache.has(normalizedToken)
+        ? this.networkCache.get(normalizedToken)!.networks
+        : [];
+      const desired = raw.toString().toUpperCase();
+      for (const n of providerNetworks) {
+        if (!n) continue;
+        const candidate = n.toString().toUpperCase();
+        if (candidate === desired) return n; // exact match
+        const alias = candidate.replace(/[^A-Z0-9]/g, '');
+        const desiredAlias = desired.replace(/[^A-Z0-9]/g, '');
+        if (alias === desiredAlias) return n;
+      }
+    } catch (e) {
+      // fall back to local lookup below
+    }
+
     const lookup = SUPPORTED_NETWORKS_BY_TOKEN[normalizedToken] ?? {};
     const key = raw.toUpperCase();
     if (lookup[key]) return lookup[key];
@@ -71,6 +90,31 @@ export class IvorypayService {
       }
     }
     return null;
+  }
+
+  private async fetchProviderNetworks(token: string): Promise<string[]> {
+    if (!token) return [];
+    const now = Date.now();
+    const cached = this.networkCache.get(token);
+    if (cached && now - cached.ts < 1000 * 60 * 5) {
+      return cached.networks;
+    }
+
+    if (!this.apiKey) return [];
+
+    try {
+      const url = `${this.baseUrl}/v1/crypto-transfer/${encodeURIComponent(token)}/networks`;
+      const resp = await axios.get(url, {
+        headers: { Authorization: `${this.apiKey}`, 'Content-Type': 'application/json' },
+      });
+      const data = resp.data?.data ?? resp.data ?? null;
+      const networks: string[] = Array.isArray(data) ? data.map((i: any) => (i?.network ?? i).toString()) : [];
+      this.networkCache.set(token, { ts: now, networks });
+      return networks;
+    } catch (e: any) {
+      this.logger.debug(`Failed to fetch provider networks for ${token}: ${e?.message ?? e}`);
+      return [];
+    }
   }
 
   private validateAddressForNetwork(network: string, address: string): string | null {
@@ -486,6 +530,16 @@ export class IvorypayService {
     }
 
     try {
+      // Attempt to align network with provider-supported values if possible
+      const providerNetworks = await this.fetchProviderNetworks(token);
+      if (Array.isArray(providerNetworks) && providerNetworks.length) {
+        const candidate = providerNetworks.find((n) => (n ?? '').toString().toUpperCase() === (normalizedNetwork ?? '').toString().toUpperCase()) ||
+          providerNetworks.find((n) => (n ?? '').toString().replace(/[^A-Z0-9]/g, '') === (normalizedNetwork ?? '').toString().replace(/[^A-Z0-9]/g, ''));
+        if (candidate) {
+          requestBody.network = candidate;
+        }
+      }
+
       const response = await axios.post(endpoint, requestBody, {
         headers: {
           Authorization: `${this.apiKey}`,
@@ -499,6 +553,7 @@ export class IvorypayService {
         this.logger.error(
           `Ivorypay crypto withdrawal failed: endpoint=${endpoint} status=${response.status} message=${message} responseBody=${JSON.stringify(rawData ?? {})}`,
         );
+        // Preserve provider response in error
         throw new BadRequestException(message);
       }
 
@@ -522,8 +577,9 @@ export class IvorypayService {
         `Ivorypay crypto withdrawal request failed: endpoint=${endpoint} method=POST status=${statusCode} request=${JSON.stringify(requestBody)} response=${JSON.stringify(responseBody ?? {})}`,
       );
 
+      // Persist provider message in thrown error for upstream handlers to record
       if (statusCode === 400 || statusCode === 422) {
-        throw new BadRequestException('Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.');
+        throw new BadRequestException(providerMessage || 'Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.');
       }
 
       throw new BadRequestException(`Ivorypay crypto withdrawal failed: ${providerMessage}`);
