@@ -97,22 +97,34 @@ export class IvorypayService {
     const now = Date.now();
     const cached = this.networkCache.get(token);
     if (cached && now - cached.ts < 1000 * 60 * 5) {
+      this.logger.log(`[IVORYPAY NETWORK DISCOVERY] token=${token} status=cached response=${JSON.stringify(cached.networks)}`);
       return cached.networks;
     }
 
-    if (!this.apiKey) return [];
+    if (!this.apiKey) {
+      this.logger.warn(`[IVORYPAY NETWORK DISCOVERY] token=${token} status=no_api_key`);
+      return [];
+    }
 
     try {
       const url = `${this.baseUrl}/v1/crypto-transfer/${encodeURIComponent(token)}/networks`;
+      this.logger.log(`[IVORYPAY NETWORK DISCOVERY] token=${token} status=requesting endpoint=${url}`);
       const resp = await axios.get(url, {
         headers: { Authorization: `${this.apiKey}`, 'Content-Type': 'application/json' },
+        timeout: 10000,
       });
       const data = resp.data?.data ?? resp.data ?? null;
       const networks: string[] = Array.isArray(data) ? data.map((i: any) => (i?.network ?? i).toString()) : [];
       this.networkCache.set(token, { ts: now, networks });
+      this.logger.log(`[IVORYPAY NETWORK DISCOVERY] token=${token} status=success response=${JSON.stringify(networks)}`);
       return networks;
     } catch (e: any) {
-      this.logger.debug(`Failed to fetch provider networks for ${token}: ${e?.message ?? e}`);
+      this.logger.error(`[IVORYPAY NETWORK DISCOVERY] token=${token} status=error message=${e?.message ?? e}`);
+      if (e?.response?.data) {
+        try {
+          this.logger.debug(`[IVORYPAY NETWORK DISCOVERY] token=${token} responseBody=${JSON.stringify(e.response.data)}`);
+        } catch { /** ignore */ }
+      }
       return [];
     }
   }
@@ -483,7 +495,7 @@ export class IvorypayService {
     const amount = Number(options.amount);
     const token = this.normalizeToken(options.token || options.crypto || options.cryptoAsset);
     const address = options.address || options.to_address || options.cryptoAddress || options.walletAddress || options.walletaddress || options.wallet_address;
-    const normalizedNetwork = this.normalizeNetwork(token ?? undefined, options.network ?? options.blockchain ?? options.chain);
+    const requestedNetworkInput = (options.network ?? options.blockchain ?? options.chain) as string | undefined;
     const reference = options.reference;
 
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -495,19 +507,63 @@ export class IvorypayService {
     if (!address || !address.trim()) {
       throw new BadRequestException('Destination wallet address is required for crypto withdrawal');
     }
-    if (!normalizedNetwork) {
-      throw new BadRequestException(`Unsupported network for ${token}. Please choose a supported network for this asset.`);
-    }
-    const invalidAddressMessage = this.validateAddressForNetwork(normalizedNetwork, address);
-    if (invalidAddressMessage) {
-      throw new BadRequestException(invalidAddressMessage);
-    }
     if (!reference) {
       throw new BadRequestException('Missing withdrawal reference for crypto transfer');
     }
 
+    // Discover provider-supported networks and match the requested network
+    const providerNetworks = await this.fetchProviderNetworks(token);
+    this.logger.log(`[IVORYPAY NETWORK MATCH] requestedNetwork=${requestedNetworkInput} token=${token} providerNetworks=${JSON.stringify(providerNetworks)}`);
+
+    if (!Array.isArray(providerNetworks) || providerNetworks.length === 0) {
+      this.logger.error(`[IVORYPAY NETWORK MATCH] token=${token} status=no_provider_networks`);
+      throw new BadRequestException('This crypto network is currently unavailable.');
+    }
+
+    const desired = (requestedNetworkInput ?? '').toString().trim().toUpperCase();
+    let matched: string | null = null;
+    for (const n of providerNetworks) {
+      if (!n) continue;
+      const candidate = n.toString().toUpperCase();
+      if (candidate === desired) {
+        matched = n;
+        break;
+      }
+      const alias = candidate.replace(/[^A-Z0-9]/g, '');
+      const desiredAlias = desired.replace(/[^A-Z0-9]/g, '');
+      if (alias && desiredAlias && alias === desiredAlias) {
+        matched = n;
+        break;
+      }
+    }
+
+    this.logger.log(`[IVORYPAY NETWORK MATCH] requestedNetwork=${requestedNetworkInput} token=${token} matchedNetwork=${matched ?? 'none'}`);
+
+    if (!matched) {
+      const requestedLabel = requestedNetworkInput ?? 'the selected network';
+      throw new BadRequestException(`${token} withdrawals are not currently available on ${requestedLabel}.`);
+    }
+
+    // Validate address format using a provider-mapped canonical network where possible
+    const validationNetwork = (matched ?? '').toString().toUpperCase();
+    const validationAlias = (() => {
+      const v = validationNetwork;
+      if (/BSC/.test(v) || /BEP/.test(v) || /BNB/.test(v)) return 'BSC';
+      if (/POLYGON|MATIC/.test(v)) return 'POLYGON';
+      if (/SOLANA|SOL/.test(v)) return 'SOL';
+      if (/ALGORAND/.test(v)) return 'ALGORAND';
+      if (/BASE/.test(v)) return 'BASE';
+      if (/STARKNET/.test(v)) return 'STARKNET';
+      return v;
+    })();
+    const invalidAddressMessage = this.validateAddressForNetwork(validationAlias, address);
+    if (invalidAddressMessage) {
+      throw new BadRequestException(invalidAddressMessage);
+    }
+
+    const normalizedNetwork = (matched ?? requestedNetworkInput ?? '').toString();
     const requestBody = {
-      network: normalizedNetwork,
+      network: matched,
       address: address.trim(),
       amount,
       token,
@@ -515,7 +571,7 @@ export class IvorypayService {
     };
 
     const endpoint = `${this.baseUrl}/v1/crypto-transfer`;
-    this.logger.log(
+      this.logger.log(
       `Ivorypay crypto withdrawal request: endpoint=${endpoint} method=POST token=${token} amount=${amount} network=${normalizedNetwork} address=${this.maskAddress(address)} reference=${reference}`,
     );
 

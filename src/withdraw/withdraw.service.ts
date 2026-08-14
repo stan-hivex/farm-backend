@@ -215,6 +215,24 @@ export class WithdrawService {
     return withdrawal;
   }
 
+  // Return provider-supported networks for a token in a frontend-friendly shape
+  async getProviderNetworks(token: string) {
+    const normalizedToken = (token ?? '').toString().trim().toUpperCase();
+    if (!normalizedToken) return { data: [] };
+    const providerNetworks = await (this.ivorypay as any).fetchProviderNetworks(normalizedToken);
+    const formatted = (providerNetworks ?? []).map((code: string) => {
+      const display = code
+        .toString()
+        .replace(/_/g, ' ')
+        .toLowerCase()
+        .split(' ')
+        .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+      return { providerCode: code, displayName: display };
+    });
+    return { data: formatted };
+  }
+
   async getWithdrawalStatus(reference: string, userId: string) {
     const withdrawal = await this.prisma.withdrawal.findFirst({
       where: { reference, userId },
@@ -345,11 +363,33 @@ export class WithdrawService {
       if (!cryptoAsset || !['USDC', 'USDT'].includes(cryptoAsset)) {
         throw new BadRequestException('Unsupported crypto asset for IvoryPay withdrawal. Only USDC and USDT are allowed.');
       }
-      const supportedNetwork = this.ivorypay['normalizeNetwork']
-        ? this.ivorypay['normalizeNetwork'](cryptoAsset, normalizedNetwork)
-        : normalizedNetwork;
+      // Use IvoryPay as the source of truth for supported networks
+      const providerNetworks = await (this.ivorypay as any).fetchProviderNetworks(cryptoAsset);
+      this.logger.log(`IvoryPay provider networks for ${cryptoAsset}: ${JSON.stringify(providerNetworks)}`);
+      if (!Array.isArray(providerNetworks) || providerNetworks.length === 0) {
+        throw new BadRequestException('This crypto network is currently unavailable.');
+      }
+
+      const desired = (normalizedNetwork ?? '').toString().trim().toUpperCase();
+      let supportedNetwork: string | null = null;
+      for (const n of providerNetworks) {
+        if (!n) continue;
+        const candidate = n.toString().toUpperCase();
+        if (candidate === desired) {
+          supportedNetwork = n;
+          break;
+        }
+        const alias = candidate.replace(/[^A-Z0-9]/g, '');
+        const desiredAlias = desired.replace(/[^A-Z0-9]/g, '');
+        if (alias && desiredAlias && alias === desiredAlias) {
+          supportedNetwork = n;
+          break;
+        }
+      }
+
+      this.logger.log(`IVORYPAY NETWORK MATCH requested=${normalizedNetwork} token=${cryptoAsset} matched=${supportedNetwork ?? 'none'}`);
       if (!supportedNetwork) {
-        throw new BadRequestException(`Unsupported network for ${cryptoAsset}: ${normalizedNetwork}. Please choose a supported network.`);
+        throw new BadRequestException(`${cryptoAsset} withdrawals are not currently available on ${normalizedNetwork}.`);
       }
       if (!cryptoAddress || cryptoAddress.trim().length < 10) {
         throw new BadRequestException('Destination wallet address is required for crypto withdrawal');

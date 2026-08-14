@@ -6,6 +6,7 @@ import {
   Post,
   Req,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -87,6 +88,13 @@ export class WithdrawController {
       return { success: false, message: 'Withdrawal not found' };
     }
     return { success: true, status };
+  }
+
+  @Permissions('withdraw:read')
+  @UseGuards(JwtAuthGuard)
+  @Get('crypto/networks')
+  async getCryptoNetworks(@Req() req, @Query('token') token: string) {
+    return this.withdrawService.getProviderNetworks(token);
   }
 
   @Permissions('withdraw:read')
