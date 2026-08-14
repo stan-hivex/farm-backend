@@ -100,8 +100,12 @@ export class WithdrawService {
     const fee = Number((amount * feePercent).toFixed(8));
     const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
-    const normalizedNetworkValue = dto.method === 'CRYPTO' ? normalizedNetwork.toUpperCase() : dto.network;
-    const normalizedCryptoAsset = dto.method === 'CRYPTO' ? cryptoAsset.toUpperCase() : dto.cryptoAsset;
+    const normalizedNetworkValue = dto.method === 'CRYPTO'
+      ? (normalizedNetwork ? normalizedNetwork.toUpperCase() : dto.network ?? '')
+      : dto.network ?? '';
+    const normalizedCryptoAsset = dto.method === 'CRYPTO'
+      ? (cryptoAsset ? cryptoAsset.toUpperCase() : (dto.cryptoAsset ?? ''))
+      : (dto.cryptoAsset ?? '');
 
     let cryptoExchangeSnapshot: any = null;
     if (dto.method === 'CRYPTO') {
