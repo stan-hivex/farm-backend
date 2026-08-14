@@ -389,7 +389,10 @@ export class WithdrawService {
 
       this.logger.log(`IVORYPAY NETWORK MATCH requested=${normalizedNetwork} token=${cryptoAsset} matched=${supportedNetwork ?? 'none'}`);
       if (!supportedNetwork) {
-        throw new BadRequestException(`${cryptoAsset} withdrawals are not currently available on ${normalizedNetwork}.`);
+        const msg = `${cryptoAsset} withdrawals are not currently available on ${normalizedNetwork}.`;
+        const err = new BadRequestException(msg);
+        try { (err as any).providerNetworks = providerNetworks; } catch {}
+        throw err;
       }
       if (!cryptoAddress || cryptoAddress.trim().length < 10) {
         throw new BadRequestException('Destination wallet address is required for crypto withdrawal');
@@ -456,6 +459,7 @@ export class WithdrawService {
           const existingMetadata = (transaction.metadata as any) ?? {};
           const providerResponse = e?.providerResponse ?? e?.response ?? null;
           const providerStatus = e?.providerStatus ?? e?.response?.status ?? null;
+          const providerNetworksFromErr = e?.providerNetworks ?? null;
           const failureMetadata = {
             ...existingMetadata,
             provider: 'ivorypay',
@@ -463,6 +467,7 @@ export class WithdrawService {
             ivorypay_withdrawal_status: 'failed',
             ivorypay_response_body: providerResponse,
             ivorypay_response_status: providerStatus,
+            ivorypay_provider_networks: providerNetworksFromErr,
           };
           await this.prisma.transactions.update({ where: { id: transaction.id }, data: { metadata: failureMetadata } });
         }

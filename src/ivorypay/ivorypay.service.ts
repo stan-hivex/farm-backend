@@ -541,7 +541,12 @@ export class IvorypayService {
 
     if (!matched) {
       const requestedLabel = requestedNetworkInput ?? 'the selected network';
-      throw new BadRequestException(`${token} withdrawals are not currently available on ${requestedLabel}.`);
+      const msg = `${token} withdrawals are not currently available on ${requestedLabel}.`;
+      const err = new BadRequestException(msg);
+      try {
+        (err as any).providerNetworks = providerNetworks;
+      } catch {}
+      throw err;
     }
 
     // Validate address format using a provider-mapped canonical network where possible
