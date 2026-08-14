@@ -49,6 +49,7 @@ export class WithdrawService {
     const cryptoAddress = dto.cryptoAddress ?? dto.walletAddress ?? dto.walletaddress ?? dto.wallet_address;
     const cryptoAsset = dto.cryptoAsset ?? dto.token;
     const normalizedNetwork = dto.network?.trim();
+    const providerCodeFromDto = (dto.providerCode ?? dto.provider_network ?? dto.provider)?.toString().trim();
     const method = dto.method;
     if (method === 'BANK_TRANSFER') {
       if (amount < 4999) {
@@ -103,6 +104,9 @@ export class WithdrawService {
     const normalizedNetworkValue = dto.method === 'CRYPTO'
       ? (normalizedNetwork ? normalizedNetwork.toUpperCase() : dto.network ?? '')
       : dto.network ?? '';
+    // Will be set to the provider-authoritative network code (e.g. BSC_MAINNET)
+    let providerNetworkToStore: string | null = null;
+    let displayNetworkToStore: string | null = null;
     const normalizedCryptoAsset = dto.method === 'CRYPTO'
       ? (cryptoAsset ? cryptoAsset.toUpperCase() : (dto.cryptoAsset ?? ''))
       : (dto.cryptoAsset ?? '');
@@ -136,6 +140,47 @@ export class WithdrawService {
       };
     }
 
+    // If this is a crypto withdrawal, validate provider networks and map display->provider codes
+    if (dto.method === 'CRYPTO') {
+      const normalizedCrypto = (cryptoAsset ?? '').toString().trim().toUpperCase();
+      if (!normalizedCrypto) throw new BadRequestException('Crypto asset is required');
+      const providerNetworks = await (this.ivorypay as any).fetchProviderNetworks(normalizedCrypto);
+      if (!Array.isArray(providerNetworks) || providerNetworks.length === 0) {
+        throw new BadRequestException('This crypto network is currently unavailable.');
+      }
+
+      // prefer explicit providerCode from dto if provided
+      if (providerCodeFromDto) {
+        const match = providerNetworks.find((n: string) => (n ?? '').toString().toUpperCase() === providerCodeFromDto.toUpperCase());
+        if (!match) throw new BadRequestException(`${normalizedCrypto} withdrawals are not currently available on ${providerCodeFromDto}.`);
+        providerNetworkToStore = match;
+      } else if (normalizedNetwork) {
+        // try exact provider code match first
+        const match = providerNetworks.find((n: string) => (n ?? '').toString().toUpperCase() === normalizedNetwork.toUpperCase());
+        if (match) {
+          providerNetworkToStore = match;
+        } else {
+          // try mapping display-friendly names to provider codes
+          const desired = normalizedNetwork.toString().trim().toLowerCase();
+          for (const code of providerNetworks) {
+            const display = code.toString().replace(/_/g, ' ').toLowerCase().split(' ').map((w: string) => w.length ? (w[0].toUpperCase()+w.slice(1)) : w).join(' ');
+            if (display.toLowerCase() === desired || code.toString().toLowerCase() === desired) {
+              providerNetworkToStore = code;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!providerNetworkToStore) {
+        const msg = `${cryptoAsset} withdrawals are not currently available on ${normalizedNetwork ?? 'the selected network'}.`;
+        throw new BadRequestException(msg);
+      }
+
+      // create a display-friendly network label for UI storage
+      displayNetworkToStore = providerNetworkToStore.replace(/_/g, ' ').split(' ').map((w: string) => w.length ? (w[0].toUpperCase()+w.slice(1)) : w).join(' ');
+    }
+
     const withdrawal = await this.prisma.$transaction(async (tx) => {
       await tx.wallets.update({
         where: { id: wallet.id },
@@ -157,7 +202,8 @@ export class WithdrawService {
           phoneNumber: dto.phoneNumber,
           cryptoAddress,
           cryptoAsset: normalizedCryptoAsset,
-          network: normalizedNetworkValue,
+          network: displayNetworkToStore ?? normalizedNetworkValue,
+          provider_network: providerNetworkToStore,
           reference,
           status: 'PENDING',
         },
@@ -180,7 +226,7 @@ export class WithdrawService {
             user_id: userId,
             reference,
             cryptoAsset: normalizedCryptoAsset,
-            network: normalizedNetworkValue,
+            network: providerNetworkToStore ?? normalizedNetworkValue,
             conversion_snapshot: cryptoExchangeSnapshot,
           },
         },

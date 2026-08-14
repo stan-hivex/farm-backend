@@ -38,6 +38,7 @@ export class IvorypayService {
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
   private readonly networkCache: Map<string, { ts: number; networks: string[] }> = new Map();
+  private readonly networkObjectsCache: Map<string, { ts: number; networks: any[] }> = new Map();
 
   constructor(private readonly cfg: ConfigService) {
     const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
@@ -114,8 +115,23 @@ export class IvorypayService {
         timeout: 10000,
       });
       const data = resp.data?.data ?? resp.data ?? null;
-      const networks: string[] = Array.isArray(data) ? data.map((i: any) => (i?.network ?? i).toString()) : [];
+      const networks: string[] = [];
+      if (Array.isArray(data)) {
+        for (const i of data) {
+          if (i && typeof i === 'object') {
+            const net = (i.network ?? i.id ?? i.code ?? null);
+            if (net) networks.push(net.toString());
+          } else if (i != null) {
+            networks.push(i.toString());
+          }
+        }
+      }
       this.networkCache.set(token, { ts: now, networks });
+      // Also cache object response for name->network mapping
+      try {
+        const objs = Array.isArray(data) ? data.map((i: any) => ({ network: i?.network ?? i, name: i?.name ?? null, isSupported: i?.isSupported ?? null, raw: i })) : [];
+        this.networkObjectsCache.set(token, { ts: now, networks: objs });
+      } catch { /** ignore */ }
       this.logger.log(`[IVORYPAY NETWORK DISCOVERY] token=${token} status=success response=${JSON.stringify(networks)}`);
       return networks;
     } catch (e: any) {
@@ -127,6 +143,58 @@ export class IvorypayService {
       }
       return [];
     }
+  }
+
+  // Return the full provider network objects (includes name/displayName and network code)
+  public async fetchProviderNetworkObjects(token: string) {
+    if (!token) return [];
+    const now = Date.now();
+    const cached = this.networkObjectsCache.get(token);
+    if (cached && now - cached.ts < 1000 * 60 * 5) {
+      this.logger.log(`[IVORYPAY NETWORK DISCOVERY] token=${token} status=cached_objects response=${JSON.stringify(cached.networks)}`);
+      return cached.networks;
+    }
+
+    // Ensure we populate caches via fetchProviderNetworks which also fills objects cache
+    await this.fetchProviderNetworks(token);
+    const post = this.networkObjectsCache.get(token);
+    return post ? post.networks : [];
+  }
+
+  // Resolve a requested network input (providerCode or displayName) to the provider network code
+  public async resolveProviderNetwork(token: string, requestedNetworkInput: string | undefined): Promise<string | null> {
+    if (!token) return null;
+    const desired = (requestedNetworkInput ?? '').toString().trim();
+    if (!desired) return null;
+
+    // Use cached provider network strings first
+    const providerNetworks = await this.fetchProviderNetworks(token);
+    const lookupDesired = desired.toUpperCase();
+    for (const n of providerNetworks) {
+      if (!n) continue;
+      const candidate = n.toString().toUpperCase();
+      if (candidate === lookupDesired) return n;
+      const alias = candidate.replace(/[^A-Z0-9]/g, '');
+      const desiredAlias = lookupDesired.replace(/[^A-Z0-9]/g, '');
+      if (alias && desiredAlias && alias === desiredAlias) return n;
+    }
+
+    // Try matching against provider 'name' or display fields
+    const objs = await this.fetchProviderNetworkObjects(token);
+    const desiredNorm = lookupDesired.replace(/[^A-Z0-9]/g, '');
+    for (const obj of objs) {
+      if (!obj) continue;
+      const networkVal = (obj.network ?? obj.id ?? obj.code ?? '').toString();
+      const nameVal = (obj.name ?? '').toString();
+      if (!networkVal && !nameVal) continue;
+      if (networkVal.toUpperCase() === lookupDesired) return networkVal;
+      if (nameVal.toUpperCase() === lookupDesired) return networkVal;
+      const netAlias = networkVal.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const nameAlias = nameVal.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (netAlias === desiredNorm || nameAlias === desiredNorm) return networkVal;
+    }
+
+    return null;
   }
 
   private validateAddressForNetwork(network: string, address: string): string | null {
