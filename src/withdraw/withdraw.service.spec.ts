@@ -7,6 +7,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CacheService } from '../common/cache/cache.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CurrencyConversionService } from '../currency/currency-conversion.service';
 
 describe('WithdrawService', () => {
   let service: WithdrawService;
@@ -31,6 +32,7 @@ describe('WithdrawService', () => {
         { provide: IvorypayService, useValue: { createWithdrawal: jest.fn() } },
         { provide: CacheService, useValue: { cacheInvalidatePattern: jest.fn().mockResolvedValue(true), cacheDelete: jest.fn().mockResolvedValue(true), cacheGet: jest.fn().mockResolvedValue(null), cacheSet: jest.fn().mockResolvedValue(true) } },
         { provide: NotificationsService, useValue: { sendNotification: jest.fn().mockResolvedValue(true) } },
+        { provide: CurrencyConversionService, useValue: { getCurrentRate: jest.fn().mockResolvedValue({ usd_kes_rate: 150, farm_kes_rate: 1, farm_usd_rate: 0.00666667 }) } },
       ],
     }).compile();
 
@@ -64,7 +66,7 @@ describe('WithdrawService', () => {
     });
 
     await service.createWithdrawal('user-1', {
-      amount: 20,
+      amount: 200,
       method: 'CRYPTO',
       cryptoAddress: '0xabc',
       network: 'Polygon',

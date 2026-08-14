@@ -46,7 +46,9 @@ export class WithdrawService {
       throw new BadRequestException('Invalid withdrawal amount');
     }
 
-    const cryptoAddress = dto.cryptoAddress ?? dto.walletAddress;
+    const cryptoAddress = dto.cryptoAddress ?? dto.walletAddress ?? dto.walletaddress ?? dto.wallet_address;
+    const cryptoAsset = dto.cryptoAsset ?? dto.token;
+    const normalizedNetwork = dto.network?.trim();
     const method = dto.method;
     if (method === 'BANK_TRANSFER') {
       if (amount < 4999) {
@@ -87,7 +89,7 @@ export class WithdrawService {
         throw new BadRequestException('Account name, account number and bank name are required for bank transfer withdrawals');
       }
     } else if (dto.method === 'CRYPTO') {
-      if (!cryptoAddress || !dto.cryptoAsset || !dto.network) {
+      if (!cryptoAddress || !cryptoAsset || !normalizedNetwork) {
         throw new BadRequestException('Crypto asset, address and network are required for cryptocurrency withdrawals');
       }
     } else {
@@ -98,6 +100,8 @@ export class WithdrawService {
     const fee = Number((amount * feePercent).toFixed(8));
     const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
+    const normalizedNetworkValue = dto.method === 'CRYPTO' ? normalizedNetwork.toUpperCase() : dto.network;
+    const normalizedCryptoAsset = dto.method === 'CRYPTO' ? cryptoAsset.toUpperCase() : dto.cryptoAsset;
 
     let cryptoExchangeSnapshot: any = null;
     if (dto.method === 'CRYPTO') {
@@ -116,8 +120,8 @@ export class WithdrawService {
         amount_usd: amountUsd,
         fee_usd: feeUsd,
         settlement_usd: settlementUsd,
-        crypto_asset: dto.cryptoAsset,
-        network: dto.network,
+        crypto_asset: normalizedCryptoAsset,
+        network: normalizedNetworkValue,
       };
     }
 
@@ -141,8 +145,8 @@ export class WithdrawService {
           bankName: dto.bankName,
           phoneNumber: dto.phoneNumber,
           cryptoAddress,
-          cryptoAsset: dto.cryptoAsset,
-          network: dto.network,
+          cryptoAsset: normalizedCryptoAsset,
+          network: normalizedNetworkValue,
           reference,
           status: 'PENDING',
         },
@@ -164,8 +168,8 @@ export class WithdrawService {
             provider: dto.method === 'CRYPTO' ? 'ivorypay' : 'paystack',
             user_id: userId,
             reference,
-            cryptoAsset: dto.cryptoAsset,
-            network: dto.network,
+            cryptoAsset: normalizedCryptoAsset,
+            network: normalizedNetworkValue,
             conversion_snapshot: cryptoExchangeSnapshot,
           },
         },
@@ -316,17 +320,24 @@ export class WithdrawService {
       const metadata = (transaction?.metadata as any) ?? {};
       const snapshot = metadata.conversion_snapshot ?? null;
       const settlementUsd = snapshot?.settlement_usd ?? Number((withdrawal.settlement * (Number(snapshot?.farm_usd_rate ?? 0) || 0)).toFixed(8));
+      const cryptoAddress = withdrawal.cryptoAddress ?? withdrawal.walletAddress ?? withdrawal.walletaddress ?? withdrawal.wallet_address ?? '';
+      const cryptoAsset = (withdrawal.cryptoAsset ?? withdrawal.token ?? 'USDT').toString().toUpperCase();
+      const network = (withdrawal.network ?? 'POLYGON').toString().toUpperCase();
 
       const opts: any = {
         reference,
         amount: withdrawal.settlement,
-        crypto: withdrawal.cryptoAsset || 'USDT',
-        to_address: withdrawal.cryptoAddress ?? withdrawal.cryptoAddress,
+        crypto: cryptoAsset,
+        token: cryptoAsset,
+        cryptoAsset: cryptoAsset,
+        to_address: cryptoAddress,
+        address: cryptoAddress,
+        network,
         metadata: {
           user_id: withdrawal.userId,
           reference,
-          cryptoAsset: withdrawal.cryptoAsset,
-          network: withdrawal.network,
+          cryptoAsset: cryptoAsset,
+          network,
           conversion_snapshot: snapshot,
           settlement_usd: settlementUsd,
         },
