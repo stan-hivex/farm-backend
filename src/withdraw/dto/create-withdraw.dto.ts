@@ -54,6 +54,18 @@ export class CreateWithdrawDto {
 
   @IsOptional()
   @IsString()
+  providerCode?: string;
+
+  @IsOptional()
+  @IsString()
+  provider_network?: string;
+
+  @IsOptional()
+  @IsString()
+  provider?: string;
+
+  @IsOptional()
+  @IsString()
   pin?: string; // Transaction PIN (optional when biometric_auth is used)
 
   @IsOptional()
