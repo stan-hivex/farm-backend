@@ -46,6 +46,7 @@ export class WithdrawService {
       throw new BadRequestException('Invalid withdrawal amount');
     }
 
+    const cryptoAddress = dto.cryptoAddress ?? dto.walletAddress;
     const method = dto.method;
     if (method === 'BANK_TRANSFER') {
       if (amount < 4999) {
@@ -86,7 +87,7 @@ export class WithdrawService {
         throw new BadRequestException('Account name, account number and bank name are required for bank transfer withdrawals');
       }
     } else if (dto.method === 'CRYPTO') {
-      if (!dto.cryptoAddress || !dto.cryptoAsset || !dto.network) {
+      if (!cryptoAddress || !dto.cryptoAsset || !dto.network) {
         throw new BadRequestException('Crypto asset, address and network are required for cryptocurrency withdrawals');
       }
     } else {
@@ -139,7 +140,7 @@ export class WithdrawService {
           accountNumber: dto.accountNumber,
           bankName: dto.bankName,
           phoneNumber: dto.phoneNumber,
-          cryptoAddress: dto.cryptoAddress,
+          cryptoAddress,
           cryptoAsset: dto.cryptoAsset,
           network: dto.network,
           reference,
@@ -320,7 +321,7 @@ export class WithdrawService {
         reference,
         amount: withdrawal.settlement,
         crypto: withdrawal.cryptoAsset || 'USDT',
-        to_address: withdrawal.cryptoAddress,
+        to_address: withdrawal.cryptoAddress ?? withdrawal.cryptoAddress,
         metadata: {
           user_id: withdrawal.userId,
           reference,

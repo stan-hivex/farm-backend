@@ -30,6 +30,10 @@ export class CreateWithdrawDto {
 
   @IsOptional()
   @IsString()
+  walletAddress?: string;
+
+  @IsOptional()
+  @IsString()
   cryptoAsset?: string;
 
   @IsOptional()
