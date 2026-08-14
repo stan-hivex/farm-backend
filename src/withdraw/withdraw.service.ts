@@ -505,6 +505,8 @@ export class WithdrawService {
           const existingMetadata = (transaction.metadata as any) ?? {};
           const providerResponse = e?.providerResponse ?? e?.response ?? null;
           const providerStatus = e?.providerStatus ?? e?.response?.status ?? null;
+              const providerRequest = e?.providerRequest ?? null;
+              const providerShortfall = e?.providerShortfall ?? null;
           const providerNetworksFromErr = e?.providerNetworks ?? null;
           const failureMetadata = {
             ...existingMetadata,
@@ -513,6 +515,8 @@ export class WithdrawService {
             ivorypay_withdrawal_status: 'failed',
             ivorypay_response_body: providerResponse,
             ivorypay_response_status: providerStatus,
+                ivorypay_request_body: providerRequest,
+                ivorypay_provider_shortfall: providerShortfall,
             ivorypay_provider_networks: providerNetworksFromErr,
           };
           await this.prisma.transactions.update({ where: { id: transaction.id }, data: { metadata: failureMetadata } });

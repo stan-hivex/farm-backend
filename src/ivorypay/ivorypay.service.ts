@@ -710,6 +710,19 @@ export class IvorypayService {
       const err = new BadRequestException(providerMessage || 'Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.');
       (err as any).providerResponse = responseBody;
       (err as any).providerStatus = statusCode;
+      (err as any).providerRequest = requestBody;
+
+      // parse shortfall messages like: "You require additional 2.585670849999999 USDT to complete this transaction."
+      try {
+        const m = (providerMessage || '').toString().match(/additional\s+([0-9]*\.?[0-9]+)\s*([A-Za-z0-9_\-]+)/i);
+        if (m) {
+          const shortfall = Number(m[1]);
+          const currency = m[2];
+          if (!Number.isNaN(shortfall)) {
+            (err as any).providerShortfall = { amount: shortfall, currency };
+          }
+        }
+      } catch { /** ignore */ }
 
       if (statusCode === 400 || statusCode === 422) {
         throw err;
