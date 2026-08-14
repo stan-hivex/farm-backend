@@ -127,21 +127,23 @@ describe('WithdrawService', () => {
       userId: 'user-1',
       settlement: 90,
       cryptoAsset: 'USDC',
-      cryptoAddress: '0xabc',
+      cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
       network: 'POLYGON',
     };
-    const ivorypay = module.get<IvorypayService>(IvorypayService);
-    const createWithdrawalSpy = jest.spyOn(ivorypay as any, 'createWithdrawal').mockResolvedValue({ data: { id: 'WD_1' }, providerTransactionId: 'WD_1' });
+    const createWithdrawalSpy = jest.spyOn((service as any).ivorypay as any, 'createWithdrawal').mockResolvedValue({ data: { id: 'WD_1' }, providerTransactionId: 'WD_1' });
 
     await (service as any).processCryptoWithdrawal(withdrawal, 'ref-1');
 
-    expect(createWithdrawalSpy).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createWithdrawalSpy).toHaveBeenCalled();
+    const callArg = createWithdrawalSpy.mock.calls[0][0];
+    expect(callArg).toMatchObject({
       reference: 'ref-1',
-      amount: 90,
       crypto: 'USDC',
-      to_address: '0xabc',
+      to_address: '0xabc1234567890abcdef1234567890abcdef1234',
       network: 'POLYGON',
-    }));
+    });
+    // crypto amount is derived from the authoritative farm->USD rate (mock returns farm_usd_rate=0.00666667)
+    expect(callArg.amount).toBeCloseTo(0.6000003, 6);
   });
 
   it('marks a completed withdrawal as success and updates user wallet', async () => {

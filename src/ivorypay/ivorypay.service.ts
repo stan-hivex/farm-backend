@@ -2,6 +2,36 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
+const SUPPORTED_CRYPTO_TOKENS = ['USDC', 'USDT'] as const;
+const SUPPORTED_NETWORKS_BY_TOKEN: Record<string, Record<string, string>> = {
+  USDC: {
+    BSC: 'BSC',
+    BEP20: 'BSC',
+    'BNB SMART CHAIN': 'BSC',
+    'BNB SMART CHAIN (BEP20)': 'BSC',
+    POLYGON: 'POLYGON',
+    MATIC: 'POLYGON',
+    SOL: 'SOL',
+    SOLANA: 'SOL',
+    BASE: 'BASE',
+    STARKNET: 'STARKNET',
+    ALGORAND: 'ALGORAND',
+  },
+  USDT: {
+    BSC: 'BSC',
+    BEP20: 'BSC',
+    'BNB SMART CHAIN': 'BSC',
+    'BNB SMART CHAIN (BEP20)': 'BSC',
+    POLYGON: 'POLYGON',
+    MATIC: 'POLYGON',
+    SOL: 'SOL',
+    SOLANA: 'SOL',
+    BASE: 'BASE',
+    STARKNET: 'STARKNET',
+    ALGORAND: 'ALGORAND',
+  },
+};
+
 @Injectable()
 export class IvorypayService {
   private readonly logger = new Logger(IvorypayService.name);
@@ -12,6 +42,60 @@ export class IvorypayService {
     const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
     this.baseUrl = rawBaseUrl.replace(/\/+$/, '');
     this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
+  }
+
+  private maskAddress(address: string | null | undefined): string {
+    if (!address) return 'missing';
+    const trimmed = address.trim();
+    if (trimmed.length <= 10) return `${trimmed.slice(0, 2)}***`;
+    return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
+  }
+
+  private normalizeToken(token: string | undefined): string | null {
+    const raw = (token ?? '').toString().trim().toUpperCase();
+    if (!raw) return null;
+    return SUPPORTED_CRYPTO_TOKENS.includes(raw as typeof SUPPORTED_CRYPTO_TOKENS[number]) ? raw : null;
+  }
+
+  private normalizeNetwork(token: string | undefined, inputNetwork: string | undefined): string | null {
+    const normalizedToken = this.normalizeToken(token);
+    const raw = (inputNetwork ?? '').toString().trim();
+    if (!normalizedToken || !raw) return null;
+    const lookup = SUPPORTED_NETWORKS_BY_TOKEN[normalizedToken] ?? {};
+    const key = raw.toUpperCase();
+    if (lookup[key]) return lookup[key];
+    const alias = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    for (const [candidate, value] of Object.entries(lookup)) {
+      if (candidate.replace(/[^A-Z0-9]/g, '') === alias) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private validateAddressForNetwork(network: string, address: string): string | null {
+    const trimmed = address.trim();
+    if (!trimmed) return 'Destination wallet address is required';
+
+    if (['BSC', 'POLYGON', 'BASE', 'STARKNET'].includes(network)) {
+      if (!/^0x[a-fA-F0-9]+$/.test(trimmed) || trimmed.length < 20) {
+        return `Invalid destination address for ${network}.`;
+      }
+    }
+
+    if (network === 'SOL') {
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed)) {
+        return `Invalid Solana address for ${network}.`;
+      }
+    }
+
+    if (network === 'ALGORAND') {
+      if (!/^[A-Z2-7]{58}$/.test(trimmed)) {
+        return `Invalid Algorand address for ${network}.`;
+      }
+    }
+
+    return null;
   }
 
   private scanProviderIdentifiers(data: any) {
@@ -353,36 +437,56 @@ export class IvorypayService {
 
   async createWithdrawal(options: any) {
     const amount = Number(options.amount);
-    const token = (options.token || options.crypto || options.cryptoAsset)?.toString().toUpperCase();
-    const address = options.address || options.to_address || options.cryptoAddress || options.walletAddress || options.walletaddress;
-    const network = options.network?.toString().toUpperCase();
+    const token = this.normalizeToken(options.token || options.crypto || options.cryptoAsset);
+    const address = options.address || options.to_address || options.cryptoAddress || options.walletAddress || options.walletaddress || options.wallet_address;
+    const normalizedNetwork = this.normalizeNetwork(token ?? undefined, options.network ?? options.blockchain ?? options.chain);
     const reference = options.reference;
 
-    if (!amount || !token || !address || !network || !reference) {
-      throw new BadRequestException('Invalid Ivorypay crypto withdrawal request');
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('Invalid crypto withdrawal amount');
     }
+    if (!token) {
+      throw new BadRequestException('Unsupported crypto asset for withdrawal. Only USDC and USDT are allowed.');
+    }
+    if (!address || !address.trim()) {
+      throw new BadRequestException('Destination wallet address is required for crypto withdrawal');
+    }
+    if (!normalizedNetwork) {
+      throw new BadRequestException(`Unsupported network for ${token}. Please choose a supported network for this asset.`);
+    }
+    const invalidAddressMessage = this.validateAddressForNetwork(normalizedNetwork, address);
+    if (invalidAddressMessage) {
+      throw new BadRequestException(invalidAddressMessage);
+    }
+    if (!reference) {
+      throw new BadRequestException('Missing withdrawal reference for crypto transfer');
+    }
+
+    const requestBody = {
+      network: normalizedNetwork,
+      address: address.trim(),
+      amount,
+      token,
+      reference,
+    };
+
+    const endpoint = `${this.baseUrl}/v1/crypto-transfer`;
+    this.logger.log(
+      `Ivorypay crypto withdrawal request: endpoint=${endpoint} method=POST token=${token} amount=${amount} network=${normalizedNetwork} address=${this.maskAddress(address)} reference=${reference}`,
+    );
 
     if (!this.apiKey) {
       this.logger.warn('IVORYPAY_API_KEY not configured, returning mock Ivorypay create withdrawal');
       return {
-        rawResponse: { status: true, message: 'Mock withdrawal created', data: { id: 'WD_123456', reference, amount, token, network, address, status: 'PENDING' } },
-        data: { id: 'WD_123456', reference, amount, token, network, address, status: 'PENDING' },
+        rawResponse: { status: true, message: 'Mock withdrawal created', data: { id: 'WD_123456', reference, amount, token, network: normalizedNetwork, address, status: 'PENDING' } },
+        data: { id: 'WD_123456', reference, amount, token, network: normalizedNetwork, address, status: 'PENDING' },
         providerReference: reference,
         providerTransactionId: 'WD_123456',
       };
     }
 
     try {
-      const body = {
-        network,
-        address,
-        amount,
-        token,
-        reference,
-      };
-
-      this.logger.log(`Ivorypay: creating crypto withdrawal ${reference} via ${this.baseUrl}/v1/crypto-transfer`);
-      const response = await axios.post(`${this.baseUrl}/v1/crypto-transfer`, body, {
+      const response = await axios.post(endpoint, requestBody, {
         headers: {
           Authorization: `${this.apiKey}`,
           'Content-Type': 'application/json',
@@ -391,16 +495,18 @@ export class IvorypayService {
 
       const rawData = response.data;
       if (!rawData || rawData.status === false) {
-        const message = rawData?.message || 'Invalid Ivorypay response';
-        this.logger.error('Ivorypay createWithdrawal returned invalid response', rawData);
-        throw new BadRequestException(`Ivorypay crypto withdrawal failed: ${message}`);
+        const message = rawData?.message || rawData?.error || 'Invalid Ivorypay response';
+        this.logger.error(
+          `Ivorypay crypto withdrawal failed: endpoint=${endpoint} status=${response.status} message=${message} responseBody=${JSON.stringify(rawData ?? {})}`,
+        );
+        throw new BadRequestException(message);
       }
 
       const data = rawData.data ?? rawData;
       const providerReference = data.reference ?? reference;
       const providerTransactionId = data.id ?? null;
 
-      this.logger.log(`Ivorypay crypto withdrawal created: reference=${providerReference}, id=${providerTransactionId}`);
+      this.logger.log(`Ivorypay crypto withdrawal created: reference=${providerReference}, id=${providerTransactionId}, status=${data.status ?? 'unknown'}`);
       return {
         rawResponse: rawData,
         data,
@@ -408,15 +514,19 @@ export class IvorypayService {
         providerTransactionId,
       };
     } catch (e: any) {
-      const message = e.response?.data?.message || e.response?.data?.error || e.message;
-      const statusCode = e.response?.status;
-      const endpoint = `${this.baseUrl}/v1/crypto-transfer`;
+      const providerMessage = e.response?.data?.message || e.response?.data?.error || e.response?.data?.detail || e.message || 'Invalid data';
+      const statusCode = e.response?.status ?? 'unknown';
+      const responseBody = e.response?.data ?? e.response ?? null;
 
-      this.logger.error(`Ivorypay createWithdrawal error [${statusCode}] ${endpoint}: ${message}`);
-      if (e.response?.data) {
-        this.logger.debug(`Ivorypay createWithdrawal response body: ${JSON.stringify(e.response.data)}`);
+      this.logger.error(
+        `Ivorypay crypto withdrawal request failed: endpoint=${endpoint} method=POST status=${statusCode} request=${JSON.stringify(requestBody)} response=${JSON.stringify(responseBody ?? {})}`,
+      );
+
+      if (statusCode === 400 || statusCode === 422) {
+        throw new BadRequestException('Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.');
       }
-      throw new BadRequestException(`Ivorypay crypto withdrawal failed: ${message}`);
+
+      throw new BadRequestException(`Ivorypay crypto withdrawal failed: ${providerMessage}`);
     }
   }
 }

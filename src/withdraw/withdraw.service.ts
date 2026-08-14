@@ -111,13 +111,21 @@ export class WithdrawService {
     if (dto.method === 'CRYPTO') {
       const rate = await this.currencyConversionService.getCurrentRate();
       const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
+      const farmKesRate = Number(rate.farm_kes_rate ?? 1);
+      const usdKesRate = Number(rate.usd_kes_rate ?? 150);
+      const cryptoAmount = Number((settlement * farmUsdRate).toFixed(8));
       const amountUsd = Number((amount * farmUsdRate).toFixed(8));
       const feeUsd = Number((fee * farmUsdRate).toFixed(8));
       const settlementUsd = Number((settlement * farmUsdRate).toFixed(8));
       cryptoExchangeSnapshot = {
-        usd_kes_rate: Number(rate.usd_kes_rate ?? 0),
-        farm_kes_rate: Number(rate.farm_kes_rate ?? 1),
-        farm_usd_rate: farmUsdRate,
+        farmAmount: amount,
+        farmKesRate,
+        usdKesRate,
+        farmUsdRate,
+        cryptoCurrency: normalizedCryptoAsset,
+        cryptoAmount,
+        network: normalizedNetworkValue,
+        conversionTimestamp: new Date().toISOString(),
         amount_farm: amount,
         fee_farm: fee,
         settlement_farm: settlement,
@@ -125,7 +133,6 @@ export class WithdrawService {
         fee_usd: feeUsd,
         settlement_usd: settlementUsd,
         crypto_asset: normalizedCryptoAsset,
-        network: normalizedNetworkValue,
       };
     }
 
@@ -323,26 +330,59 @@ export class WithdrawService {
       const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
       const metadata = (transaction?.metadata as any) ?? {};
       const snapshot = metadata.conversion_snapshot ?? null;
-      const settlementUsd = snapshot?.settlement_usd ?? Number((withdrawal.settlement * (Number(snapshot?.farm_usd_rate ?? 0) || 0)).toFixed(8));
+      const rate = snapshot ? {
+        farm_usd_rate: Number(snapshot.farmUsdRate ?? snapshot.farm_usd_rate ?? 0),
+        farm_kes_rate: Number(snapshot.farmKesRate ?? snapshot.farm_kes_rate ?? 1),
+        usd_kes_rate: Number(snapshot.usdKesRate ?? snapshot.usd_kes_rate ?? 150),
+      } : await this.currencyConversionService.getCurrentRate();
+      const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
       const cryptoAddress = withdrawal.cryptoAddress ?? withdrawal.walletAddress ?? withdrawal.walletaddress ?? withdrawal.wallet_address ?? '';
-      const cryptoAsset = (withdrawal.cryptoAsset ?? withdrawal.token ?? 'USDT').toString().toUpperCase();
-      const network = (withdrawal.network ?? 'POLYGON').toString().toUpperCase();
+      const cryptoAsset = ((withdrawal.cryptoAsset ?? withdrawal.token ?? 'USDT') as string).toString().toUpperCase();
+      const normalizedNetwork = (withdrawal.network ?? 'POLYGON').toString().toUpperCase();
+      const cryptoAmount = Number((Number(withdrawal.settlement ?? withdrawal.amount ?? 0) * farmUsdRate).toFixed(8));
+      const settlementUsd = Number((Number(withdrawal.settlement ?? 0) * farmUsdRate).toFixed(8));
+
+      if (!cryptoAsset || !['USDC', 'USDT'].includes(cryptoAsset)) {
+        throw new BadRequestException('Unsupported crypto asset for IvoryPay withdrawal. Only USDC and USDT are allowed.');
+      }
+      const supportedNetwork = this.ivorypay['normalizeNetwork']
+        ? this.ivorypay['normalizeNetwork'](cryptoAsset, normalizedNetwork)
+        : normalizedNetwork;
+      if (!supportedNetwork) {
+        throw new BadRequestException(`Unsupported network for ${cryptoAsset}: ${normalizedNetwork}. Please choose a supported network.`);
+      }
+      if (!cryptoAddress || cryptoAddress.trim().length < 10) {
+        throw new BadRequestException('Destination wallet address is required for crypto withdrawal');
+      }
+      if (!Number.isFinite(cryptoAmount) || cryptoAmount <= 0) {
+        throw new BadRequestException('Invalid crypto conversion amount');
+      }
 
       const opts: any = {
         reference,
-        amount: withdrawal.settlement,
+        amount: cryptoAmount,
         crypto: cryptoAsset,
         token: cryptoAsset,
         cryptoAsset: cryptoAsset,
         to_address: cryptoAddress,
         address: cryptoAddress,
-        network,
+        network: supportedNetwork,
         metadata: {
           user_id: withdrawal.userId,
           reference,
           cryptoAsset: cryptoAsset,
-          network,
-          conversion_snapshot: snapshot,
+          network: supportedNetwork,
+          conversion_snapshot: {
+            ...(snapshot ?? {}),
+            farmAmount: Number(withdrawal.amount ?? 0),
+            farmKesRate: Number(rate.farm_kes_rate ?? 1),
+            usdKesRate: Number(rate.usd_kes_rate ?? 150),
+            farmUsdRate: farmUsdRate,
+            cryptoCurrency: cryptoAsset,
+            cryptoAmount,
+            network: supportedNetwork,
+            conversionTimestamp: new Date().toISOString(),
+          },
           settlement_usd: settlementUsd,
         },
       };
