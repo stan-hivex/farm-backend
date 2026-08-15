@@ -59,8 +59,8 @@ export class WithdrawService {
         throw new BadRequestException('Maximum withdrawal amount for bank transfer is 999,999 FARM');
       }
     } else if (method === 'MOBILE_MONEY') {
-      if (amount < 1499) {
-        throw new BadRequestException('Minimum withdrawal amount for mobile money is 1,499 FARM');
+      if (amount < 10) {
+        throw new BadRequestException('Minimum withdrawal amount for mobile money is 10 FARM');
       }
       if (amount > 249999) {
         throw new BadRequestException('Maximum withdrawal amount for mobile money is 249,999 FARM');
