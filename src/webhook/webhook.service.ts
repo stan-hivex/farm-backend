@@ -1715,6 +1715,31 @@ export class WebhookService {
       const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);
       const isFailureEvent = this.isIvorypayFailureEvent(event, status);
 
+      // If this webhook resolves to an existing transaction that is a withdrawal,
+      // prioritize finalizing the withdrawal when the provider indicates success/failure.
+      // Some providers use generic event names (e.g. 'transaction.completed') for both
+      // deposits and withdrawals; ensure we handle withdrawals by transaction type.
+      if (transaction && transaction.transaction_type === 'withdrawal') {
+        if (isSuccessEvent) {
+          try {
+            // Verify with Ivorypay where possible before finalizing.
+            const verified = await this.verifyIvorypayWebhookTransaction(resolvedReference, resolverProviderRef, candidateRefs);
+            if (verified) {
+              await this.finalizeWithdrawal(resolvedReference, true);
+            } else {
+              this.logger.warn(`Ivorypay webhook for withdrawal ${resolvedReference} could not be verified immediately; skipping finalize`);
+            }
+          } catch (err) {
+            this.logger.warn(`Ivorypay webhook withdrawal verify error for ${resolvedReference}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          return;
+        }
+        if (isFailureEvent) {
+          await this.finalizeWithdrawal(resolvedReference, false, payload.data?.reason || payload.message);
+          return;
+        }
+      }
+
       if (isSuccessEvent) {
         const verifiedTransaction = await this.verifyIvorypayWebhookTransaction(resolvedReference, resolverProviderRef, candidateRefs);
         if (!verifiedTransaction) {
