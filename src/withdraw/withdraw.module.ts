@@ -7,6 +7,7 @@ import { PaystackModule } from '../paystack/paystack.module';
 import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SecurityModule } from '../security/security.module';
+import { WebsocketModule } from '../websocket/websocket.module';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CurrencyModule } from '../currency/currency.module';
 
@@ -18,6 +19,7 @@ import { CurrencyModule } from '../currency/currency.module';
     NotificationsModule,
     IvorypayModule,
     SecurityModule,
+    WebsocketModule,
     CurrencyModule,
   ],
   controllers: [WithdrawController],
