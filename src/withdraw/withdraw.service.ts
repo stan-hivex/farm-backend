@@ -481,22 +481,31 @@ export class WithdrawService {
 
       if (transaction) {
         const existingMetadata = (transaction.metadata as any) ?? {};
+        const newMetadata = {
+          ...existingMetadata,
+          provider: 'ivorypay',
+          ivorypay_withdrawal_id: withdrawalId,
+          ivorypay_withdrawal_status: 'pending',
+          settlement_usd: settlementUsd,
+          ivorypay_response_body: resp?.rawResponse ?? null,
+        };
+
         await this.prisma.transactions.update({
           where: { id: transaction.id },
-          data: {
-            metadata: {
-              ...existingMetadata,
-              provider: 'ivorypay',
-              ivorypay_withdrawal_id: withdrawalId,
-              ivorypay_withdrawal_status: 'pending',
-              settlement_usd: settlementUsd,
-              // persist raw provider response for debugging (non-sensitive parts)
-              ivorypay_response_body: resp?.rawResponse ?? null,
-            },
-          },
+          data: { metadata: newMetadata },
         });
+
+        // If the provider returned an immediate success/completed status, finalize now
+        const providerStatus = (resp?.data?.status ?? resp?.data?.state ?? '').toString().toLowerCase();
+        if (['success', 'completed'].includes(providerStatus)) {
+          try {
+            await this.markAsSuccess(reference);
+          } catch (err: any) {
+            this.logger.warn(`processCryptoWithdrawal: markAsSuccess failed for ${reference}: ${err?.message ?? err}`);
+          }
+        }
       }
-      // Leave finalization to webhook or manual reconciliation
+      // Leave finalization to webhook or manual reconciliation when provider returns pending
     } catch (e: any) {
       // If the Ivorypay service attached provider response details to the error, persist them
       try {
