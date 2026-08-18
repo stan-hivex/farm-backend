@@ -503,6 +503,25 @@ export class WithdrawService {
           } catch (err: any) {
             this.logger.warn(`processCryptoWithdrawal: markAsSuccess failed for ${reference}: ${err?.message ?? err}`);
           }
+        } else {
+          // Attempt an immediate verification call to Ivorypay using the provider id we received.
+          // If verification reports the transfer completed, finalize the withdrawal now so wallets and
+          // transactions are updated even if the provider webhook is delayed/missed.
+          try {
+            if (withdrawalId) {
+              const verified = await (this.ivorypay as any).verifyTransaction(reference, withdrawalId, [withdrawalId]);
+              const verifiedStatus = (verified?.status ?? verified?.data?.status ?? '').toString().toLowerCase();
+              if (['success', 'completed'].includes(verifiedStatus)) {
+                try {
+                  await this.markAsSuccess(reference);
+                } catch (err: any) {
+                  this.logger.warn(`processCryptoWithdrawal: markAsSuccess (after verify) failed for ${reference}: ${err?.message ?? err}`);
+                }
+              }
+            }
+          } catch (verifyErr: any) {
+            this.logger.debug(`processCryptoWithdrawal: immediate verify failed for ${reference}: ${verifyErr?.message ?? verifyErr}`);
+          }
         }
       }
       // Leave finalization to webhook or manual reconciliation when provider returns pending
