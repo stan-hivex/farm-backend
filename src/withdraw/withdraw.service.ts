@@ -8,7 +8,6 @@ import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { CacheService } from '../common/cache/cache.service';
-import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
@@ -25,7 +24,6 @@ export class WithdrawService {
     private ivorypay: IvorypayService,
     private cache: CacheService,
     private notificationsService: NotificationsService,
-    private websocket: WebsocketGateway,
     private readonly currencyConversionService: CurrencyConversionService,
   ) {}
 
@@ -629,14 +627,6 @@ export class WithdrawService {
       metadata: { reference, amount: Number(withdrawal.amount ?? 0), currency: withdrawal.currency || 'FARM' },
     });
 
-    try {
-      const newBalance = previousBalance - amount;
-      this.websocket.emitBalanceUpdate(withdrawal.userId, newBalance);
-      this.websocket.emitTransactionUpdate(withdrawal.userId, { reference, status: 'SUCCESS' });
-    } catch (e) {
-      this.logger.debug('Failed to emit websocket updates for withdrawal success', e as any);
-    }
-
     return true;
   }
 
@@ -706,15 +696,6 @@ export class WithdrawService {
       entityId: withdrawal.id,
       metadata: { reference, reason },
     });
-
-    try {
-      const refreshed = await this.prisma.wallets.findUnique({ where: { id: wallet.id } });
-      const bal = Number(refreshed?.balance ?? 0);
-      this.websocket.emitBalanceUpdate(withdrawal.userId, bal);
-      this.websocket.emitTransactionUpdate(withdrawal.userId, { reference, status: 'FAILED' });
-    } catch (e) {
-      this.logger.debug('Failed to emit websocket updates for withdrawal failure', e as any);
-    }
 
     return true;
   }

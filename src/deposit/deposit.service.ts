@@ -494,14 +494,6 @@ export class DepositService {
     });
 
     await this.invalidateFinancialCaches(transaction?.metadata?.user_id ?? undefined);
-    try {
-      const userId = transaction?.metadata?.user_id ?? undefined;
-      if (userId) {
-        this.websocket.emitTransactionUpdate(userId, { reference, status: 'SUCCESS' });
-      }
-    } catch (e) {
-      this.logger.debug('Failed to emit websocket update for completePendingTransaction', e as any);
-    }
 
     return true;
   }
@@ -666,21 +658,10 @@ export class DepositService {
         });
       }
 
-      return { ok: true, wallet, previousBalance, amount };
+      return { ok: true };
     });
-
     if (result.ok) {
       await this.invalidateFinancialCaches(deposit?.userId);
-      try {
-        const wallet = (result as any).wallet;
-        const previousBalance = (result as any).previousBalance;
-        const amount = (result as any).amount;
-        this.websocket.emitBalanceUpdate(deposit.userId, previousBalance + amount);
-        this.websocket.emitTransactionUpdate(deposit.userId, { reference, status: 'SUCCESS' });
-      } catch (e) {
-        this.logger.debug('Failed to emit websocket updates for creditPendingDepositWithWallet', e as any);
-      }
-
       if (deposit?.userId) {
         await this.notificationsService.sendNotification(deposit.userId, {
           type: 'deposit_completed',
