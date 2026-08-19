@@ -17,8 +17,8 @@ describe('WithdrawService', () => {
   beforeEach(async () => {
     const prismaMock = {
       wallets: { findFirst: jest.fn() },
-      withdrawal: { create: jest.fn(), findUnique: jest.fn() },
-      transactions: { create: jest.fn(), findUnique: jest.fn() },
+      withdrawal: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+      transactions: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
       $transaction: jest.fn(),
     };
 
@@ -29,7 +29,11 @@ describe('WithdrawService', () => {
         { provide: AuthService, useValue: { verifyPin: jest.fn().mockResolvedValue(true) } },
         { provide: SecurityService, useValue: { verifyDevice: jest.fn().mockResolvedValue({ trusted: true }) } },
         { provide: PaystackService, useValue: {} },
-        { provide: IvorypayService, useValue: { createWithdrawal: jest.fn() } },
+        { provide: IvorypayService, useValue: {
+          createWithdrawal: jest.fn().mockResolvedValue({ data: { id: 'WD_1', status: 'PENDING' }, providerTransactionId: 'WD_1' }),
+          fetchProviderNetworks: jest.fn().mockResolvedValue(['POLYGON']),
+          verifyTransaction: jest.fn().mockResolvedValue({ status: 'completed' }),
+        } },
         { provide: CacheService, useValue: { cacheInvalidatePattern: jest.fn().mockResolvedValue(true), cacheDelete: jest.fn().mockResolvedValue(true), cacheGet: jest.fn().mockResolvedValue(null), cacheSet: jest.fn().mockResolvedValue(true) } },
         { provide: NotificationsService, useValue: { sendNotification: jest.fn().mockResolvedValue(true) } },
         { provide: CurrencyConversionService, useValue: { getCurrentRate: jest.fn().mockResolvedValue({ usd_kes_rate: 150, farm_kes_rate: 1, farm_usd_rate: 0.00666667 }) } },
@@ -194,5 +198,43 @@ describe('WithdrawService', () => {
         expect.objectContaining({ entry_type: 'debit', amount: 1000 }),
       ]),
     );
+  });
+
+  it('finalizes a crypto withdrawal when Ivorypay verification reports success even if provider response is pending', async () => {
+    const withdrawSpy = jest.spyOn(service as any, 'markAsSuccess').mockResolvedValue(true);
+    const transaction = { id: 'tx-1', transaction_reference: 'ref-crypto', metadata: { conversion_snapshot: {} } };
+
+    prisma.transactions.findUnique.mockResolvedValue(transaction);
+    prisma.transactions.update.mockResolvedValue({});
+    prisma.wallets.findFirst.mockResolvedValue({ id: 'wallet-user', balance: 1000, locked_balance: 1000 });
+    prisma.withdrawal.findUnique.mockResolvedValue({
+      id: 'withdrawal-crypto',
+      reference: 'ref-crypto',
+      userId: 'user-1',
+      amount: 100,
+      status: 'PROCESSING',
+      method: 'CRYPTO',
+    });
+
+    const ivorypay = (service as any).ivorypay;
+    jest.spyOn(ivorypay, 'createWithdrawal').mockResolvedValue({
+      data: { id: 'wd-1', status: 'PENDING' },
+      providerTransactionId: 'wd-1',
+      providerReference: 'wd-1',
+    });
+    jest.spyOn(ivorypay, 'verifyTransaction').mockResolvedValue({ status: 'completed' });
+
+    await (service as any).processCryptoWithdrawal({
+      userId: 'user-1',
+      amount: 100,
+      settlement: 100,
+      cryptoAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      cryptoAsset: 'USDT',
+      network: 'POLYGON',
+      reference: 'ref-crypto',
+    }, 'ref-crypto');
+
+    expect((service as any).ivorypay.verifyTransaction).toHaveBeenCalled();
+    expect(withdrawSpy).toHaveBeenCalledWith('ref-crypto');
   });
 });

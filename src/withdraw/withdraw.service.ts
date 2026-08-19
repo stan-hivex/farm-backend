@@ -437,12 +437,14 @@ export class WithdrawService {
     try {
       const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
       const metadata = (transaction?.metadata as any) ?? {};
-      const snapshot = metadata.conversion_snapshot ?? null;
+      const rawSnapshot = metadata.conversion_snapshot ?? null;
+      const snapshot = rawSnapshot && typeof rawSnapshot === 'object' && Object.keys(rawSnapshot).length > 0 ? rawSnapshot : null;
+      const fallbackRate = await this.currencyConversionService.getCurrentRate();
       const rate = snapshot ? {
-        farm_usd_rate: Number(snapshot.farmUsdRate ?? snapshot.farm_usd_rate ?? 0),
-        farm_kes_rate: Number(snapshot.farmKesRate ?? snapshot.farm_kes_rate ?? 1),
-        usd_kes_rate: Number(snapshot.usdKesRate ?? snapshot.usd_kes_rate ?? 150),
-      } : await this.currencyConversionService.getCurrentRate();
+        farm_usd_rate: Number(snapshot.farmUsdRate ?? snapshot.farm_usd_rate ?? fallbackRate?.farm_usd_rate ?? 0),
+        farm_kes_rate: Number(snapshot.farmKesRate ?? snapshot.farm_kes_rate ?? fallbackRate?.farm_kes_rate ?? 1),
+        usd_kes_rate: Number(snapshot.usdKesRate ?? snapshot.usd_kes_rate ?? fallbackRate?.usd_kes_rate ?? 150),
+      } : fallbackRate;
       const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
       const cryptoAddress = withdrawal.cryptoAddress ?? withdrawal.walletAddress ?? withdrawal.walletaddress ?? withdrawal.wallet_address ?? '';
       const cryptoAsset = ((withdrawal.cryptoAsset ?? withdrawal.token ?? 'USDT') as string).toString().toUpperCase();

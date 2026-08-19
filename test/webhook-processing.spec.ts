@@ -147,4 +147,48 @@ describe('WebhookService processing', () => {
     expect(mockPrisma.deposit.update).toHaveBeenCalled();
     expect(mockPrisma.transactions.update).toHaveBeenCalled();
   });
+
+  it('finalizes a crypto withdrawal when the webhook uses the Ivorypay withdrawal id stored in transaction metadata', async () => {
+    const internalReference = 'withdrawal-internal-300';
+    const providerWithdrawalId = 'ivory-withdrawal-900';
+    const transaction = {
+      id: 77,
+      transaction_reference: internalReference,
+      amount: 120,
+      status: 'pending',
+      transaction_type: 'withdrawal',
+      metadata: { provider: 'ivorypay', user_id: 'user-1', ivorypay_withdrawal_id: providerWithdrawalId },
+    };
+
+    mockPrisma.transactions.findFirst.mockImplementation(async ({ where }: any) => {
+      const candidate = where.OR?.find((condition: any) => condition.metadata?.path?.[0] === 'ivorypay_withdrawal_id');
+      if (candidate && candidate.metadata.equals === providerWithdrawalId) return transaction;
+      return null;
+    });
+    mockPrisma.transactions.findUnique.mockImplementation(({ where }: any) => {
+      if (where.transaction_reference === internalReference) return Promise.resolve(transaction);
+      return Promise.resolve(null);
+    });
+    mockPrisma.wallets.findFirst.mockResolvedValue({ id: 'wallet-user', balance: 500, locked_balance: 200, user_id: 'user-1' });
+    mockPrisma.withdrawal = {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'w-1',
+        reference: internalReference,
+        userId: 'user-1',
+        amount: 120,
+        status: 'PROCESSING',
+        method: 'CRYPTO',
+      }),
+      update: jest.fn().mockResolvedValue({}),
+    };
+    mockPrisma.$transaction.mockImplementation(async (cb: any) => cb(mockPrisma));
+    mockIvorypayService.verifyTransaction = jest.fn().mockResolvedValue({ status: 'completed', amount: 120, providerIdentifiers: { transaction_id: providerWithdrawalId } });
+
+    const payload = { event: 'withdrawal.success', data: { reference: providerWithdrawalId, status: 'SUCCESS', amount: 120 } } as any;
+    await svc.handleIvorypayWebhookProcessing(payload);
+
+    expect(mockIvorypayService.verifyTransaction).toHaveBeenCalled();
+    expect(mockPrisma.wallets.findFirst).toHaveBeenCalled();
+    expect(mockPrisma.withdrawal.findUnique).toHaveBeenCalledWith({ where: { reference: internalReference } });
+  });
 });

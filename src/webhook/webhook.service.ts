@@ -469,6 +469,12 @@ export class WebhookService {
       payload?.data?.transactionReference,
       payload?.data?.reference,
       payload?.reference,
+      payload?.data?.withdrawal_id,
+      payload?.data?.withdrawalId,
+      payload?.data?.transfer_id,
+      payload?.data?.transferId,
+      payload?.data?.payout_id,
+      payload?.data?.payoutId,
       payload?.data?.checkoutUrl,
       payload?.data?.payment_link,
       payload?.data?.paymentUrl,
@@ -479,6 +485,11 @@ export class WebhookService {
       metadata.provider_ref,
       metadata.provider_transaction_id,
       metadata.provider_reference,
+      metadata.ivorypay_withdrawal_id,
+      metadata.ivorypay_withdrawal_id ?? metadata.withdrawal_id,
+      metadata.withdrawal_id,
+      metadata.transfer_id,
+      metadata.payout_id,
       ...urlCandidates,
     ]
       .filter((value) => value !== undefined && value !== null && value !== '')
@@ -565,6 +576,9 @@ export class WebhookService {
           { metadata: { path: ['trxref'], equals: reference } as any },
           { metadata: { path: ['transaction_reference'], equals: reference } as any },
           { metadata: { path: ['ivorypay_withdrawal_id'], equals: reference } as any },
+          { metadata: { path: ['withdrawal_id'], equals: reference } as any },
+          { metadata: { path: ['transfer_id'], equals: reference } as any },
+          { metadata: { path: ['payout_id'], equals: reference } as any },
         ],
       },
       select: { transaction_reference: true },
@@ -600,6 +614,10 @@ export class WebhookService {
             { metadata: { path: ['tx_ref'], equals: candidate } as any },
             { metadata: { path: ['trxref'], equals: candidate } as any },
             { metadata: { path: ['transaction_reference'], equals: candidate } as any },
+            { metadata: { path: ['ivorypay_withdrawal_id'], equals: candidate } as any },
+            { metadata: { path: ['withdrawal_id'], equals: candidate } as any },
+            { metadata: { path: ['transfer_id'], equals: candidate } as any },
+            { metadata: { path: ['payout_id'], equals: candidate } as any },
           ],
         },
       });
@@ -669,6 +687,12 @@ export class WebhookService {
       'fiatCollection.success',
       'payment.completed',
       'transaction.success',
+      'withdrawal.success',
+      'withdrawal.completed',
+      'transfer.success',
+      'transfer.completed',
+      'payout.success',
+      'payout.completed',
       'completed',
       'success',
     ];
@@ -1998,7 +2022,7 @@ export class WebhookService {
         }
       }
 
-      if (['withdrawal.success', 'transfer.success', 'payout.success'].includes(event)) {
+      if (transaction?.transaction_type === 'withdrawal' || ['withdrawal.success', 'transfer.success', 'payout.success', 'withdrawal.completed', 'transfer.completed', 'payout.completed'].includes(event)) {
         await this.finalizeWithdrawal(reference, true);
       } else if (['withdrawal.failed'].includes(event)) {
         this.logger.warn(`Ivorypay webhook withdrawal failure event: event=${event} reference=${reference} status=${status}`);
