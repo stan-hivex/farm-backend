@@ -1,8 +1,7 @@
-import { IsNumber, IsString, Min } from 'class-validator';
+import { IsNumber, IsString } from 'class-validator';
 
 export class TransferWithdrawDto {
   @IsNumber()
-  @Min(10, { message: 'Minimum withdrawal amount is 10 FARM' })
   amount!: number;
 
   @IsString()
