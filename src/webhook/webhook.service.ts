@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, Inject, BadRequestException, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
@@ -17,6 +17,7 @@ import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { RedisService } from '../common/redis/redis.service';
 import { QUEUES } from '../common/constants';
 import type { Queue } from 'bull';
 import type { Redis } from 'ioredis';
@@ -37,8 +38,18 @@ export class WebhookService {
     private readonly paystackService: PaystackService,
     private readonly ivorypayService: IvorypayService,
     @InjectQueue(QUEUES.WEBHOOKS) private readonly webhookQueue: Queue,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis | null,
+    @Optional() private readonly redisService?: RedisService,
   ) {}
+
+  private getRedisClient(): Redis | null {
+    try {
+      return this.redisService ? this.redisService.getClient() : null;
+    } catch (e) {
+      const msg = (e as any)?.message ?? String(e);
+      this.logger.debug('getRedisClient failed: ' + msg);
+      return null;
+    }
+  }
 
   async handlePaystackWebhook(payload: any, verified = false, rawBody?: string, signature?: string) {
     const event = payload.event;
@@ -161,9 +172,10 @@ export class WebhookService {
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
       queued = true;
     } catch (e) {
-      if (this.redis) {
+      const client = this.getRedisClient();
+      if (client) {
         try {
-          await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+          await client.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
           await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
           queued = true;
         } catch (fallbackError) {
@@ -322,9 +334,10 @@ export class WebhookService {
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
       queued = true;
     } catch (e) {
-      if (this.redis) {
+      const client = this.getRedisClient();
+      if (client) {
         try {
-          await this.redis.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+          await client.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
           await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
           queued = true;
         } catch (fallbackError) {
@@ -706,9 +719,10 @@ export class WebhookService {
 
   private async isReplay(provider: string, eventId: string) {
     try {
-      if (!this.redis) return false;
+      const client = this.getRedisClient();
+      if (!client) return false;
       const key = `${this.cfg.get<string>('WEBHOOK_DEDUP_PREFIX', 'webhook:processed:')}${provider}:${eventId}`;
-      const v = await this.redis.get(key);
+      const v = await client.get(key);
       return !!v;
     } catch (e) {
       this.logger.error('Failed to access Redis for webhook replay check', e as any);
@@ -718,13 +732,14 @@ export class WebhookService {
 
   private async markProcessed(provider: string, eventId: string) {
     try {
-      if (!this.redis) return;
+      const client = this.getRedisClient();
+      if (!client) return;
       const key = `${this.cfg.get<string>('WEBHOOK_DEDUP_PREFIX', 'webhook:processed:')}${provider}:${eventId}`;
       const ttl = Number(this.cfg.get<number>('WEBHOOK_DEDUP_TTL_MS', 0));
       if (ttl > 0) {
-        await this.redis.set(key, '1', 'PX', ttl, 'NX');
+        await client.set(key, '1', 'PX', ttl, 'NX');
       } else {
-        await this.redis.set(key, '1', 'NX');
+        await client.set(key, '1', 'NX');
       }
     } catch (e) {
       this.logger.error('Failed to mark webhook processed in Redis', e as any);
@@ -1685,11 +1700,12 @@ export class WebhookService {
 
   private async acquireLock(key: string, ttlMs = 60000): Promise<boolean> {
     try {
-      if (!this.redis) {
+      const client = this.getRedisClient();
+      if (!client) {
         this.logger.warn('Redis client not available; skipping webhook lock acquisition');
         return true;
       }
-      const res = await (this.redis as any).set(key, 'locked', 'NX', 'PX', ttlMs);
+      const res = await (client as any).set(key, 'locked', 'NX', 'PX', ttlMs);
       return res === 'OK';
     } catch (e) {
       this.logger.error('Error acquiring webhook lock', e as any);
@@ -1699,8 +1715,9 @@ export class WebhookService {
 
   private async releaseLock(key: string) {
     try {
-      if (!this.redis) return;
-      await this.redis.del(key);
+      const client = this.getRedisClient();
+      if (!client) return;
+      await client.del(key);
     } catch (e) {
       this.logger.debug('Error releasing webhook lock', e as any);
     }
