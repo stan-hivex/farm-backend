@@ -1566,6 +1566,26 @@ export class WebhookService {
     return Math.round(n * 100) / 100;
   }
 
+  private async retryVerifyTransaction(reference: string) {
+    const attempts = 6;
+    const intervalMs = 5000;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        const verified = await this.paystackService.verifyTransaction(reference);
+        if (verified && (verified.status ?? '').toString().toLowerCase() === 'success') {
+          this.logger.log(`retryVerifyTransaction: verified success for ${reference} on attempt ${i + 1}`);
+          await this.depositService.finalizeSuccessfulDeposit(reference);
+          return true;
+        }
+      } catch (e: any) {
+        this.logger.debug(`retryVerifyTransaction attempt ${i + 1} failed for ${reference}: ${e?.message ?? e}`);
+      }
+    }
+    this.logger.log(`retryVerifyTransaction: no success for ${reference} after ${attempts} attempts`);
+    return false;
+  }
+
   private getFarmAmountForCredit(transaction: any, deposit?: any): number {
     const metadata = (transaction?.metadata as any) ?? {};
     const depositMetadata = (deposit?.metadata as any) ?? {};
@@ -1656,7 +1676,11 @@ export class WebhookService {
 
         const verifiedTransaction = await this.paystackService.verifyTransaction(reference);
         if (!verifiedTransaction || verifiedTransaction.status !== 'success') {
-          this.logger.warn(`Paystack webhook processing: transaction ${reference} verification status=${verifiedTransaction?.status ?? 'unknown'}; skipping deposit finalization`);
+          this.logger.warn(`Paystack webhook processing: transaction ${reference} verification status=${verifiedTransaction?.status ?? 'unknown'}; scheduling short retry attempts`);
+          // Schedule background retry attempts to catch fast provider confirmations when webhooks are received before provider finality
+          setImmediate(() => {
+            this.retryVerifyTransaction(reference).catch((err: any) => this.logger.debug(`Background verify retries failed for ${reference}: ${err?.message ?? err}`));
+          });
           return;
         }
 

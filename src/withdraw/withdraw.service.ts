@@ -244,6 +244,30 @@ export class WithdrawService {
     return { success: true, reference, withdrawal };
   }
 
+  private async pollPaystackTransferStatus(reference: string, transferCode: string) {
+    const attempts = 6;
+    const intervalMs = 5000;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        const statusResp = await this.paystack.getTransferStatus(transferCode);
+        const status = (statusResp?.status || statusResp?.data?.status || '')?.toString().toLowerCase();
+        if (['success', 'completed'].includes(status)) {
+          await this.markAsSuccess(reference);
+          return;
+        }
+        if (['failed', 'reversed'].includes(status)) {
+          const reason = statusResp?.message || 'transfer_failed';
+          await this.rejectWithdrawal(reference, reason);
+          return;
+        }
+      } catch (e: any) {
+        this.logger.debug(`pollPaystackTransferStatus attempt ${i + 1} failed for ${reference}: ${e?.message ?? e}`);
+      }
+    }
+    this.logger.log(`pollPaystackTransferStatus: no terminal status observed for ${reference} after ${attempts} attempts`);
+  }
+
   async getUserWithdrawals(userId: string) {
     return this.prisma.withdrawal.findMany({
       where: { userId, status: { not: 'FAILED' } },
@@ -380,6 +404,26 @@ export class WithdrawService {
             where: { id: transaction.id },
             data: { metadata: updatedMetadata },
           });
+          // If Paystack returned an immediate success/completed response, finalize now
+          try {
+            const provStatus = (transferData.status || transferResponse?.status || '')?.toString().toLowerCase();
+            if (['success', 'completed'].includes(provStatus)) {
+              // best-effort immediate finalization; markAsSuccess is idempotent
+              await this.markAsSuccess(reference);
+            } else {
+              // Start a short background poll to catch fast provider confirmations
+              const transferCode = transferData.transfer_code || transferData.id || null;
+              if (transferCode) {
+                setImmediate(() => {
+                  this.pollPaystackTransferStatus(reference, transferCode).catch((err: any) =>
+                    this.logger.debug(`Background transfer status poll failed for ${reference}: ${err?.message ?? err}`),
+                  );
+                });
+              }
+            }
+          } catch (e: any) {
+            this.logger.debug(`Immediate transfer finalization attempt failed for ${reference}: ${e?.message ?? e}`);
+          }
         }
       }
       // Do NOT mark success here – wait for webhook or provider callback
