@@ -432,6 +432,32 @@ export class WithdrawService {
     }
   }
 
+  private async pollIvorypayWithdrawalStatus(reference: string, withdrawalId: string | null, maxAttempts = 8) {
+    if (!withdrawalId) return;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 15000));
+        const verified = await (this.ivorypay as any).verifyTransaction(reference, withdrawalId, [withdrawalId]);
+        const verifiedStatus = (verified?.status ?? verified?.data?.status ?? '').toString().toLowerCase();
+
+        if (['success', 'completed'].includes(verifiedStatus)) {
+          await this.markAsSuccess(reference);
+          return;
+        }
+
+        if (['failed', 'reversed', 'cancelled', 'declined'].includes(verifiedStatus)) {
+          await this.rejectWithdrawal(reference, verified?.message || `Ivorypay withdrawal status: ${verifiedStatus}`);
+          return;
+        }
+      } catch (err: any) {
+        this.logger.debug(`pollIvorypayWithdrawalStatus attempt ${attempt}/${maxAttempts} failed for ${reference}: ${err?.message ?? err}`);
+      }
+    }
+
+    this.logger.log(`pollIvorypayWithdrawalStatus: no terminal status observed for ${reference} after ${maxAttempts} attempts`);
+  }
+
   // Support crypto withdrawal processing using Ivorypay (or a stub if not configured)
   private async processCryptoWithdrawal(withdrawal: any, reference: string) {
     try {
@@ -563,10 +589,23 @@ export class WithdrawService {
                 } catch (err: any) {
                   this.logger.warn(`processCryptoWithdrawal: markAsSuccess (after verify) failed for ${reference}: ${err?.message ?? err}`);
                 }
+              } else {
+                setImmediate(() => {
+                  this.pollIvorypayWithdrawalStatus(reference, withdrawalId).catch((err: any) =>
+                    this.logger.debug(`Background Ivorypay verification poll failed for ${reference}: ${err?.message ?? err}`),
+                  );
+                });
               }
             }
           } catch (verifyErr: any) {
             this.logger.debug(`processCryptoWithdrawal: immediate verify failed for ${reference}: ${verifyErr?.message ?? verifyErr}`);
+            if (withdrawalId) {
+              setImmediate(() => {
+                this.pollIvorypayWithdrawalStatus(reference, withdrawalId).catch((err: any) =>
+                  this.logger.debug(`Background Ivorypay verification poll failed for ${reference}: ${err?.message ?? err}`),
+                );
+              });
+            }
           }
         }
       }

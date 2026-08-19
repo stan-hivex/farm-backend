@@ -237,4 +237,37 @@ describe('WithdrawService', () => {
     expect((service as any).ivorypay.verifyTransaction).toHaveBeenCalled();
     expect(withdrawSpy).toHaveBeenCalledWith('ref-crypto');
   });
+
+  it('retries Ivorypay verification in the background when the initial crypto payout stays pending', async () => {
+    jest.useFakeTimers();
+    const withdrawSpy = jest.spyOn(service as any, 'markAsSuccess').mockResolvedValue(true);
+    const transaction = { id: 'tx-1', transaction_reference: 'ref-crypto-2', metadata: { conversion_snapshot: {} } };
+
+    prisma.transactions.findUnique.mockResolvedValue(transaction);
+    prisma.transactions.update.mockResolvedValue({});
+
+    const ivorypay = (service as any).ivorypay;
+    jest.spyOn(ivorypay, 'createWithdrawal').mockResolvedValue({
+      data: { id: 'wd-2', status: 'PENDING' },
+      providerTransactionId: 'wd-2',
+      providerReference: 'wd-2',
+    });
+    const verifySpy = jest.spyOn(ivorypay, 'verifyTransaction').mockResolvedValue({ status: 'completed' });
+
+    await (service as any).processCryptoWithdrawal({
+      userId: 'user-1',
+      amount: 100,
+      settlement: 100,
+      cryptoAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      cryptoAsset: 'USDT',
+      network: 'POLYGON',
+      reference: 'ref-crypto-2',
+    }, 'ref-crypto-2');
+
+    await jest.runOnlyPendingTimersAsync();
+
+    expect(verifySpy).toHaveBeenCalled();
+    expect(withdrawSpy).toHaveBeenCalledWith('ref-crypto-2');
+    jest.useRealTimers();
+  });
 });
