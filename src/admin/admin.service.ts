@@ -1181,6 +1181,15 @@ export class AdminService {
     const escrow_release_earnings = Number(escrowReleaseAgg._sum.fee ?? 0);
     const escrow_total_earnings = Number(escrow_creation_earnings + escrow_release_earnings);
 
+    // Compute withdrawal fee aggregates (platform fees collected on withdrawals)
+    const withdrawalAgg = await this.prisma.transactions.aggregate({
+      where: { transaction_type: 'withdrawal', status: 'completed' },
+      _sum: { fee: true },
+      _count: { id: true },
+    });
+    const withdrawal_total_earnings = Number(withdrawalAgg._sum.fee ?? 0);
+    const total_platform_fee_earnings = Number(escrow_total_earnings + withdrawal_total_earnings);
+
     return {
       data: {
         total_users: totalUsers,
@@ -1198,6 +1207,8 @@ export class AdminService {
         })),
         // Escrow revenue breakdown (amounts are in FARM)
         escrow_total_earnings,
+        withdrawal_total_earnings,
+        platform_fee_total_earnings: total_platform_fee_earnings,
         escrow_creation_earnings,
         escrow_release_earnings,
         total_escrow_count: (escrowCreationAgg._count.id ?? 0) + (escrowReleaseAgg._count.id ?? 0),
