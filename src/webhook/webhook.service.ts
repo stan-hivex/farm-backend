@@ -1941,7 +1941,26 @@ export class WebhookService {
         const checkoutId = providerIdentifiers.checkout_id ?? payload?.data?.checkout_id ?? payload?.data?.checkoutId ?? null;
         const paymentReference = providerIdentifiers.payment_reference ?? providerIdentifiers.reference ?? payload?.data?.payment_reference ?? payload?.data?.reference ?? payload?.reference ?? null;
         const merchantReference = providerIdentifiers.merchant_reference ?? payload?.data?.merchant_reference ?? payload?.data?.merchantReference ?? null;
-        const txHash = verifiedTransaction?.tx_hash ?? verifiedTransaction?.transaction_hash ?? verifiedTransaction?.hash ?? verifiedTransaction?.data?.tx_hash ?? verifiedTransaction?.data?.transaction_hash ?? verifiedTransaction?.data?.hash ?? null;
+        const txHash =
+          verifiedTransaction?.tx_hash ??
+          verifiedTransaction?.transaction_hash ??
+          verifiedTransaction?.hash ??
+          verifiedTransaction?.withdrawalTxHash ??
+          verifiedTransaction?.txid ??
+          verifiedTransaction?.transactionId ??
+          verifiedTransaction?.data?.tx_hash ??
+          verifiedTransaction?.data?.transaction_hash ??
+          verifiedTransaction?.data?.hash ??
+          verifiedTransaction?.data?.withdrawalTxHash ??
+          verifiedTransaction?.data?.txid ??
+          verifiedTransaction?.data?.transactionId ??
+          payload?.data?.withdrawalTxHash ??
+          payload?.data?.txid ??
+          payload?.data?.transactionId ??
+          payload?.withdrawalTxHash ??
+          payload?.txid ??
+          payload?.transactionId ??
+          null;
         const verificationPayload = verifiedTransaction ?? payload;
         const normalizedStatus = (verifiedTransaction?.status ?? verifiedTransaction?.data?.status ?? '').toString().toLowerCase();
         const expectedAmount = Number(transaction?.amount ?? 0);
