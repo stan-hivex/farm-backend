@@ -1,4 +1,6 @@
 import { forwardRef, Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bull';
+import { ScheduleModule } from '@nestjs/schedule';
 import {
   WebhookController,
   WebhookNoVersionController,
@@ -17,6 +19,7 @@ import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaService } from '../database/prisma.service';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
+import { QUEUES } from '../common/constants';
 
 @Module({
   imports: [
@@ -27,6 +30,10 @@ import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard'
     forwardRef(() => PaystackModule),
     forwardRef(() => IvorypayModule),
     NotificationsModule,
+    ScheduleModule.forRoot(),
+    BullModule.registerQueue({
+      name: QUEUES.WEBHOOKS,
+    }),
   ],
   controllers: [
     WebhookController,

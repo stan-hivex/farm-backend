@@ -1,20 +1,14 @@
-import { Body, Controller, Get, Post, UseGuards, Optional } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { WebhookService } from './webhook.service';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
-import { ConfigService } from '@nestjs/config';
-import { BullmqService } from '../common/bullmq/bullmq.service';
 
 @Controller({
   path: 'webhooks',
   version: '1',
 })
 export class WebhookController {
-  constructor(
-    private readonly webhookService: WebhookService,
-    private readonly cfg: ConfigService,
-    @Optional() private readonly bull?: BullmqService,
-  ) {}
+  constructor(private readonly webhookService: WebhookService) {}
 
   private getWebhookJobId(provider: string, payload: any) {
     const eventId = payload.id ?? payload.data?.id ?? payload.data?.reference ?? payload.reference;
@@ -29,18 +23,10 @@ export class WebhookController {
     },
   })
   @Post('paystack')
-  async paystack(@Body() body: any) {
-    const queueName = this.cfg.get<string>('WEBHOOK_QUEUE_NAME', 'webhook');
-    const jobId = this.getWebhookJobId('paystack', body);
-    if (this.bull) {
-      const q = this.bull.getQueue(queueName) ?? this.bull.createQueue(queueName);
-      await q.add(jobId, { provider: 'paystack', event: body.event, reference: body.data?.reference, payload: body, receivedAt: Date.now() });
-      return { received: true, queued: true };
-    }
-
-    await this.webhookService.handlePaystackWebhook(body, true);
-    return { received: true, queued: false };
-  }
+async paystack(@Body() body: any) {
+  await this.webhookService.handlePaystackWebhook(body, true);
+  return { received: true };
+}
 
   @UseGuards(WebhookSignatureGuard)
   @Throttle({
@@ -51,16 +37,8 @@ export class WebhookController {
   })
   @Post('ivorypay')
   async ivorypay(@Body() body: any) {
-    const queueName = this.cfg.get<string>('WEBHOOK_QUEUE_NAME', 'webhook');
-    const jobId = this.getWebhookJobId('ivorypay', body);
-    if (this.bull) {
-      const q = this.bull.getQueue(queueName) ?? this.bull.createQueue(queueName);
-      await q.add(jobId, { provider: 'ivorypay', event: body.event ?? body.status, reference: body.data?.reference ?? body.reference, payload: body, receivedAt: Date.now() });
-      return { received: true, queued: true };
-    }
-
     await this.webhookService.handleIvorypayWebhook(body, true);
-    return { received: true, queued: false };
+    return { received: true };
   }
 
   @Get('ivorypay')

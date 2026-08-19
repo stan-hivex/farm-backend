@@ -1,32 +1,22 @@
-import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { Processor, Process } from '@nestjs/bull';
+import type { Job } from 'bull';
 import { PaymentProcessor } from './payment.processor';
-import { BullmqService } from '../common/bullmq/bullmq.service';
-import { ConfigService } from '@nestjs/config';
+import { QUEUES } from '../common/constants';
 
 @Injectable()
-export class WebhookProcessor implements OnModuleInit {
+@Processor(QUEUES.WEBHOOKS)
+export class WebhookProcessor {
   private readonly logger = new Logger(WebhookProcessor.name);
 
-  constructor(
-    private readonly paymentProcessor: PaymentProcessor,
-    private readonly cfg: ConfigService,
-    @Optional() private readonly bull: BullmqService,
-  ) {}
+  constructor(private readonly paymentProcessor: PaymentProcessor) {}
 
-  onModuleInit() {
-    const queueName = this.cfg.get<string>('WEBHOOK_QUEUE_NAME', 'webhook');
-    if (!this.bull) {
-      this.logger.warn('WebhookProcessor worker not initialized: BullmqService not available');
-      return;
-    }
-
-    this.logger.log(`WebhookProcessor starting worker for queue=${queueName}`);
-    this.bull.createWorker(queueName, async (job: any) => {
-      return this.processWebhookQueue(job);
-    });
+  @Process()
+  async handleWebhookJob(job: Job<any>) {
+    return this.processWebhookQueue(job);
   }
 
-  async processWebhookQueue(job: any) {
+  async processWebhookQueue(job: Job<any>) {
     if (!job?.data) {
       this.logger.warn('Received empty webhook job');
       return;
