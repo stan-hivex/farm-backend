@@ -19,13 +19,6 @@ import { Injectable, Logger } from '@nestjs/common';
 export class PaymentProcessorService {
 	private readonly logger = new Logger(PaymentProcessorService.name);
 
-	constructor() {
-		this.logger.warn(
-			'PaymentProcessorService instantiated but is DEPRECATED. ' +
-			'All wallet credit operations must use WebhookService.finalizeDeposit().',
-		);
-	}
-
 	/**
 	 * DEPRECATED: This method should never be called.
 	 * Wallet credit must ONLY happen in WebhookService.handlePaystackWebhookProcessing().
