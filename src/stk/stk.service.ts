@@ -12,6 +12,7 @@ export class StkPushService {
   private readonly passKey: string;
   private readonly callbackUrl: string;
   private readonly transactionType: string;
+  private readonly enabled: boolean;
 
   constructor(private cfg: ConfigService) {
     this.baseUrl = this.cfg.get<string>('STK_PUSH_BASE_URL', 'https://sandbox.safaricom.co.ke');
@@ -21,9 +22,10 @@ export class StkPushService {
     this.passKey = this.cfg.get<string>('STK_PUSH_PASSKEY') || '';
     this.callbackUrl = this.cfg.get<string>('STK_PUSH_CALLBACK_URL', 'https://app.farm/webhooks/stk-push');
     this.transactionType = this.cfg.get<string>('STK_PUSH_TRANSACTION_TYPE', 'CustomerPayBillOnline');
+    this.enabled = this.cfg.get<string>('STK_PUSH_ENABLED', 'false').toLowerCase() === 'true';
 
-    if (!this.consumerKey || !this.consumerSecret || !this.shortCode || !this.passKey) {
-      this.logger.warn('STK push provider is not fully configured. Make sure STK_PUSH_* config values are set.');
+    if (this.enabled && (!this.consumerKey || !this.consumerSecret || !this.shortCode || !this.passKey)) {
+      this.logger.warn('STK push provider is enabled but not fully configured. Make sure STK_PUSH_* config values are set.');
     }
   }
 
@@ -86,6 +88,10 @@ export class StkPushService {
     accountReference?: string;
     description?: string;
   }) {
+    if (!this.enabled || !this.consumerKey || !this.consumerSecret || !this.shortCode || !this.passKey) {
+      throw new BadRequestException('STK push is not configured for this environment. Set STK_PUSH_ENABLED=true and the required STK_PUSH_* values.');
+    }
+
     const phoneNumber = this.formatPhone(data.phone);
     const timestamp = this.formatTimestamp();
     const password = this.formatPassword(timestamp);
