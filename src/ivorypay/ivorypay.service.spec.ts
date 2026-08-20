@@ -47,6 +47,18 @@ describe('IvorypayService', () => {
     });
   });
 
+  it('returns canonical provider networks for supported tokens', () => {
+    expect(service.getProviderNetworks('usdc')).toEqual({
+      success: true,
+      token: 'USDC',
+      networks: ['BSC', 'POLYGON', 'SOL', 'BASE', 'STARKNET', 'ALGORAND'],
+    });
+  });
+
+  it('rejects unsupported provider network tokens', () => {
+    expect(() => service.getProviderNetworks('DAI')).toThrow('Unsupported crypto token');
+  });
+
   it('chooses tx_ref before trxref and transaction_reference when determining primary reference', () => {
     const identifiers = {
       transaction_id: null,

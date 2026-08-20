@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bull';
 import { EscrowController } from './escrow.controller';
 import { EscrowService } from './escrow.service';
 import { AuthModule } from '../auth/auth.module';
@@ -17,6 +18,7 @@ import { ExpiryTasksProcessor } from '../common/tasks/expiry-tasks.processor';
     NotificationsModule,
     SecurityModule,
     TransferRequestsModule,
+    BullModule.registerQueue({ name: 'expiry-tasks' }),
   ],
   controllers: [EscrowController],
   providers: [EscrowService, KycGuard, ExpiryTasksProcessor],

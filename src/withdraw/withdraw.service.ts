@@ -96,8 +96,7 @@ export class WithdrawService {
       throw new BadRequestException(`Unsupported withdrawal method: ${dto.method}`);
     }
 
-    // Platform withdrawal fee: enforce 1.5% for all withdrawal methods
-    const feePercent = 0.015;
+    const feePercent = dto.method === 'MOBILE_MONEY' ? 0.02 : 0.015;
     const fee = Number((amount * feePercent).toFixed(8));
     const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
@@ -462,14 +461,8 @@ export class WithdrawService {
             description: `Withdrawal completed — ref: ${reference}`,
           },
         });
-
-        // Platform fee crediting is handled after the main transaction to avoid nested tx expectations in tests
-        // The actual crediting will be performed below outside of this $transaction
       }
     });
-
-    // Attempt to credit platform fee after completion
-    this.creditPlatformFee(reference).catch((e) => this.logger.error(`creditPlatformFee error: ${e?.message ?? e}`));
 
     await Promise.all([
       this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
@@ -489,41 +482,6 @@ export class WithdrawService {
     });
 
     return true;
-  }
-
-  // Credit the platform (superadmin) wallet with the withdrawal fee. This runs outside the main transaction
-  // to avoid nested transaction expectations in unit tests and to keep the primary flow intact.
-  private async creditPlatformFee(reference: string) {
-    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
-    if (!withdrawal) return;
-    const platformFee = Number(withdrawal.fee ?? 0);
-    if (platformFee <= 0) return;
-
-    try {
-      const superadminUser = await this.prisma.users.findFirst({
-        where: { role: 'super_admin', is_deleted: false },
-        include: { wallets: { where: { is_active: true }, take: 1 } },
-      });
-      if (!superadminUser || !superadminUser.wallets || superadminUser.wallets.length === 0) return;
-      const superWallet = superadminUser.wallets[0];
-
-      await this.prisma.$transaction(async (tx) => {
-        await tx.wallets.update({ where: { id: superWallet.id }, data: { balance: { increment: platformFee } } });
-        await tx.ledger_entries.create({
-          data: {
-            transaction_id: null,
-            wallet_id: superWallet.id,
-            entry_type: 'credit',
-            amount: platformFee,
-            balance_before: Number(superWallet.balance ?? 0),
-            balance_after: Number(superWallet.balance ?? 0) + platformFee,
-            description: `Platform withdrawal fee credited — ref: ${reference}`,
-          },
-        });
-      });
-    } catch (e) {
-      this.logger.error(`Failed to credit platform fee for ${reference}: ${e?.message ?? e}`);
-    }
   }
 
   async rejectWithdrawal(reference: string, reason: string) {

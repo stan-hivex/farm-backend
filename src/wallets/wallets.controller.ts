@@ -20,7 +20,7 @@ class SendFundsDto {
 
 @ApiTags('Wallet')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, EmailVerifiedGuard)
 @Controller({ path: 'wallet', version: '1' })
 export class WalletsController {
   constructor(private readonly svc: WalletsService) {}
@@ -32,7 +32,6 @@ export class WalletsController {
 
   @Permissions('wallet:write')
   @Post('send')
-  // Allow sending without mandatory email verification while keeping JWT + KYC checks
   @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Send FARM tokens (PIN required)' })
   send(@CurrentUser() u: any, @Body() dto: SendFundsDto, @Req() req: Request) {

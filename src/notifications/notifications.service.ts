@@ -274,12 +274,7 @@ async updateSettings(userId: string, body: any) {
         data: payloadData,
         tokens,
       };
-      if (!this.firebase || !this.firebase.messaging) {
-        this.logger.warn('Firebase messaging not initialized; skipping push send');
-        return false;
-      }
-      const messaging = (this.firebase as any).messaging;
-      const resp = await messaging.sendEachForMulticast(payload as any);
+      const resp = await this.firebase.messaging.sendEachForMulticast(payload as any);
       const invalidTokens = resp.responses
         .map((result, index) => ({ result, token: tokens[index] }))
         .filter(({ result }) => {

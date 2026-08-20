@@ -1,11 +1,11 @@
 import { Module, Logger } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
-import { RedisModule } from './common/redis/redis.module';
-import { BullmqModule } from './common/bullmq/bullmq.module';
+import { RedisModule } from './common/redis.module';
 import { CacheModule } from './common/cache/cache.module';
 import { CacheInterceptor } from './common/interceptors/cache.interceptor';
 import { EncryptionModule } from './common/encryption/encryption.module';
@@ -37,7 +37,7 @@ import { WebsocketModule } from './websocket/websocket.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
-import { CurrencyModule } from './currency/currency.module';
+import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
 
 
 @Module({
@@ -61,7 +61,31 @@ import { CurrencyModule } from './currency/currency.module';
         ],
       }),
     }),
-    BullmqModule,
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (cfg: ConfigService) => {
+        const redisUrl = cfg.get<string>('REDIS_URL');
+        if (!redisUrl) {
+          const logger = new Logger('AppModule');
+          logger.warn(
+            'REDIS_URL not configured. Bull queue processing will attempt local Redis at 127.0.0.1:6379.',
+          );
+        }
+
+        return {
+          redis: redisUrl ?? {
+            host: '127.0.0.1',
+            port: 6379,
+          },
+          defaultJobOptions: {
+            removeOnComplete: true,
+            removeOnFail: false,
+          },
+        };
+      },
+    }),
+    BullModule.registerQueue({ name: 'expiry-tasks' }),
     DatabaseModule,
     PrismaModule,
     RedisModule,
@@ -93,9 +117,9 @@ import { CurrencyModule } from './currency/currency.module';
     EscrowModule,
     TransferRequestsModule,
     PaymentRequestsModule,
-    CurrencyModule,
   ],
   providers: [
+    ExpiryTasksService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
