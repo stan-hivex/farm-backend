@@ -9,6 +9,7 @@ import { PaystackModule } from '../paystack/paystack.module';
 import { WithdrawModule } from '../withdraw/withdraw.module';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { AuthModule } from '../auth/auth.module';
+import { CurrencyModule } from '../currency/currency.module';
 
 @Module({
 	imports: [
@@ -18,6 +19,7 @@ import { AuthModule } from '../auth/auth.module';
 		AuthModule,
 		forwardRef(() => PaystackModule),
 		forwardRef(() => WithdrawModule),
+		CurrencyModule,
 	],
 	controllers: [PaymentsController, PaymentsWebhookController],
 	providers: [PaymentsService, KycGuard],

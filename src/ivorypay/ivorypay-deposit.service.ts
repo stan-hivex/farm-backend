@@ -4,6 +4,7 @@ import { IvorypayService } from './ivorypay.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { v4 as uuidv4 } from 'uuid';
+import { CurrencyConversionService } from '../currency/currency-conversion.service';
 
 @Injectable()
 export class IvorypayDepositService {
@@ -14,6 +15,7 @@ export class IvorypayDepositService {
     private readonly ivorypayService: IvorypayService,
     private readonly notificationsService: NotificationsService,
     private readonly websocket: WebsocketGateway,
+    private readonly currencyConversionService: CurrencyConversionService,
   ) {}
 
   async createDeposit(userId: string, dto: any) {
@@ -38,7 +40,13 @@ export class IvorypayDepositService {
       },
     });
 
-    const amountUsd = Number((amount / 130).toFixed(2));
+    const currentRate = await this.currencyConversionService.getCurrentRate();
+    const farmToUsdRate = Number(currentRate.farm_usd_rate);
+    if (!Number.isFinite(farmToUsdRate) || farmToUsdRate <= 0) {
+      throw new BadRequestException('The FARM/USD conversion rate is unavailable');
+    }
+    const amountUsd = Number((amount * farmToUsdRate).toFixed(2));
+    const usdToFarmRate = Number((1 / farmToUsdRate).toFixed(8));
     const init = await this.ivorypayService.createPayment({
       amount: amountUsd,
       currency: 'USD',
@@ -50,6 +58,8 @@ export class IvorypayDepositService {
         provider: 'ivorypay',
         amount_farm: amount,
         amount_usd: amountUsd,
+        farm_to_usd_rate: farmToUsdRate,
+        usd_to_farm_rate: usdToFarmRate,
         currency_fiat: 'USD',
         user_id: userId,
         payment_method: 'CRYPTO',
@@ -74,6 +84,8 @@ export class IvorypayDepositService {
           provider_ref: providerRef,
           amount_farm: amount,
           amount_usd: amountUsd,
+          farm_to_usd_rate: farmToUsdRate,
+          usd_to_farm_rate: usdToFarmRate,
           currency_fiat: 'USD',
           user_id: userId,
           payment_method: 'CRYPTO',

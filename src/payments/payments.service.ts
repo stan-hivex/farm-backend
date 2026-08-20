@@ -8,6 +8,7 @@ import { PaymentMethod } from '@prisma/client';
 import { CacheService } from '../common/cache/cache.service';
 import * as fs from 'fs';
 import * as path from 'path';
+import { CurrencyConversionService } from '../currency/currency-conversion.service';
 
 @Injectable()
 export class PaymentsService {
@@ -19,6 +20,7 @@ export class PaymentsService {
     private ivorypay: IvorypayService,
     private paystack: PaystackService,
     private cache: CacheService,
+    private currencyConversionService: CurrencyConversionService,
   ) {}
 
   async initiateDeposit(
@@ -169,11 +171,15 @@ export class PaymentsService {
     }
 
     if (paymentMethod === 'CRYPTO') {
-      // Convert FARM -> USD before creating Ivorypay payment to avoid double hops.
-      // Assumption: 1 FARM == 1 KES, and 1 USD == 130 KES (therefore 130 FARM == 1 USD).
+      // Convert FARM -> USD using the active superadmin-managed currency rate.
       const farmAmount = amount_farm; // amount in FARM
-      const farmToUsdRate = Number(this.cfg.get<string>('IVORYPAY_FARM_TO_USD_RATE', '130')) || 130;
-      const amountUsd = Number((farmAmount / farmToUsdRate).toFixed(2));
+      const currentRate = await this.currencyConversionService.getCurrentRate();
+      const farmToUsdRate = Number(currentRate.farm_usd_rate);
+      if (!Number.isFinite(farmToUsdRate) || farmToUsdRate <= 0) {
+        throw new BadRequestException('The FARM/USD conversion rate is unavailable');
+      }
+      const amountUsd = Number((farmAmount * farmToUsdRate).toFixed(2));
+      const usdToFarmRate = Number((1 / farmToUsdRate).toFixed(8));
 
       const payment = await this.ivorypay.createPayment({
         amount: amountUsd,
@@ -187,6 +193,7 @@ export class PaymentsService {
           amount_farm: farmAmount,
           amount_usd: amountUsd,
           farm_to_usd_rate: farmToUsdRate,
+          usd_to_farm_rate: usdToFarmRate,
           currency_fiat: 'USD',
           exchange_rate: rate,
           user_id: userId,
@@ -219,6 +226,7 @@ export class PaymentsService {
             amount_farm: farmAmount,
             amount_usd: amountUsd,
             farm_to_usd_rate: farmToUsdRate,
+            usd_to_farm_rate: usdToFarmRate,
             currency_fiat: 'USD',
             exchange_rate: rate,
             user_id: userId,
