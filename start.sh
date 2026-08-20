@@ -3,7 +3,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 export NODE_ENV=${NODE_ENV:-production}
-export WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
+export WEB_CONCURRENCY=${WEB_CONCURRENCY:-1}
+export ENABLE_CLUSTER=${ENABLE_CLUSTER:-false}
 
 if [ -f dist/main.js ]; then
   node dist/main.js

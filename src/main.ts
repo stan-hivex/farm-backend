@@ -204,7 +204,9 @@ async function bootstrap() {
   }
 }
 
-if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
+const clusteringEnabled = process.env.ENABLE_CLUSTER === 'true';
+
+if (cluster.isPrimary && process.env.NODE_ENV === 'production' && clusteringEnabled) {
   const workerCount = Number(process.env.WEB_CONCURRENCY) || cpus().length;
   const logger = new Logger('Cluster');
 
@@ -222,5 +224,12 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production') {
     cluster.fork();
   });
 } else {
-  bootstrap();
+  bootstrap().catch((error) => {
+    const logger = new Logger('Bootstrap');
+    logger.error(
+      `Fatal application startup error: ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? error.stack : undefined,
+    );
+    process.exitCode = 1;
+  });
 }
