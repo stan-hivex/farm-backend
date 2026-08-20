@@ -11,6 +11,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
+import { PAYMENT_REQUEST_EXPIRY_MS } from './payment-request-expiry';
 
 @Injectable()
 export class PaymentRequestsService {
@@ -64,7 +65,7 @@ export class PaymentRequestsService {
       if (requesterUserId === recipientUserId) throw new BadRequestException('Cannot request from yourself');
 
       const reference = generateTxReference();
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + PAYMENT_REQUEST_EXPIRY_MS);
 
       const request = await tx.payment_requests.create({
         data: {
@@ -133,6 +134,38 @@ export class PaymentRequestsService {
     const total = await this.prisma.payment_requests.count({ where: { recipient_user_id: userId, status: 'pending', expires_at: { gt: now } } });
 
     return { data: requests, pagination: { total, page: query.page || 1, limit: query.limit || 10 } };
+  }
+
+  async processExpiredRequests() {
+    const now = new Date();
+    const expiredRequests = await this.prisma.payment_requests.findMany({
+      where: { status: 'pending', expires_at: { lte: now } },
+      include: { users_requester: true, users_recipient: true },
+    });
+
+    for (const request of expiredRequests) {
+      await this.prisma.payment_requests.update({
+        where: { id: request.id },
+        data: { status: 'expired' },
+      });
+
+      await Promise.all([
+        this.notificationsService.sendNotification(request.requester_user_id, {
+          type: 'payment_request_expired',
+          entityId: request.id,
+          title: 'Payment Request Expired',
+          body: 'Your payment request has expired.',
+        }),
+        this.notificationsService.sendNotification(request.recipient_user_id, {
+          type: 'payment_request_expired',
+          entityId: request.id,
+          title: 'Payment Request Expired',
+          body: 'A payment request sent to you has expired.',
+        }),
+      ]);
+    }
+
+    return expiredRequests.length;
   }
 
   async acceptAndTransfer(senderUserId: string, dto: { request_id: string; pin: string }, ip: string) {

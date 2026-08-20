@@ -54,61 +54,20 @@ describe('DepositService', () => {
     service = module.get(DepositService);
   });
 
-  it('does not persist internal reference when Ivorypay returns no external provider identifiers', async () => {
-    const deposit = { id: 'dep-1', amount: 1, currency: 'FARM', paymentMethod: 'CRYPTO' };
-    prisma.deposit.create.mockResolvedValue(deposit);
-    prisma.transactions.create.mockResolvedValue({ id: 'tx-1' });
-    ivorypay.createPayment.mockResolvedValue({
-      data: { payment_link: 'https://example.com/checkout' },
-      providerIdentifiers: {},
-    });
-
-    const result = await service.createDeposit('user-1', {
+  it('rejects crypto deposits on the generic deposit endpoint', async () => {
+    await expect(service.createDeposit('user-1', {
       amount_fiat: 1,
       paymentMethod: 'CRYPTO',
       email: 'user@example.com',
-    });
-
-    expect(prisma.deposit.update).not.toHaveBeenCalled();
-    expect(prisma.transactions.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        metadata: expect.objectContaining({
-          provider_ref: null,
-        }),
-      }),
-    }));
-    expect(result.data.provider).toBe('IVORYPAY');
-    expect(result.data.payment_url).toBe('https://example.com/checkout');
+    })).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
   });
 
-  it('persists the Ivorypay provider transaction ID when available', async () => {
-    const deposit = { id: 'dep-2', amount: 2, currency: 'FARM', paymentMethod: 'CRYPTO' };
-    prisma.deposit.create.mockResolvedValue(deposit);
-    prisma.transactions.create.mockResolvedValue({ id: 'tx-2' });
-    ivorypay.createPayment.mockResolvedValue({
-      data: { payment_link: 'https://example.com/checkout-2' },
-      providerIdentifiers: { transaction_id: 'ivory-123' },
-      providerReference: 'ivory-123',
-    });
-
-    const result = await service.createDeposit('user-2', {
+  it('does not create a generic deposit for crypto requests', async () => {
+    await expect(service.createDeposit('user-2', {
       amount_fiat: 2,
       paymentMethod: 'CRYPTO',
       email: 'user2@example.com',
-    });
-
-    expect(prisma.deposit.update).toHaveBeenCalledWith({
-      where: { id: 'dep-2' },
-      data: { providerRef: 'ivory-123' },
-    });
-    expect(prisma.transactions.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        metadata: expect.objectContaining({
-          provider_ref: 'ivory-123',
-        }),
-      }),
-    }));
-    expect(result.data.provider).toBe('IVORYPAY');
-    expect(result.data.payment_url).toBe('https://example.com/checkout-2');
+    })).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    expect(prisma.deposit.create).not.toHaveBeenCalled();
   });
 });

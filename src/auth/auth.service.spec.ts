@@ -76,7 +76,7 @@ describe('AuthService', () => {
       return 'token';
     });
 
-    const result = await service.login({
+    const result: any = await service.login({
       identifier: '+254700123456',
       password: 'secret123',
     } as any, '127.0.0.1', 'jest');
@@ -127,7 +127,7 @@ describe('AuthService', () => {
       return 'token';
     });
 
-    const result = await service.login({
+    const result: any = await service.login({
       identifier: '+254710000000',
       password: 'secret123',
     } as any, '127.0.0.1', 'jest');

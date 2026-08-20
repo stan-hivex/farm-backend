@@ -135,7 +135,7 @@ describe('WithdrawService', () => {
     await (service as any).processCryptoWithdrawal(withdrawal, 'ref-1');
 
     expect(createWithdrawalSpy).toHaveBeenCalled();
-    const callArg = createWithdrawalSpy.mock.calls[0][0];
+    const callArg: any = createWithdrawalSpy.mock.calls[0][0];
     expect(callArg).toMatchObject({
       reference: 'ref-1',
       crypto: 'USDC',

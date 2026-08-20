@@ -175,13 +175,9 @@ export class WebhookService {
       const client = this.getRedisClient();
       if (client) {
         try {
-          await client.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
-          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
-          queued = true;
+          this.logger.warn('Bull Paystack webhook queue unavailable; using direct processing fallback');
         } catch (fallbackError) {
-          this.logger.error('Failed to enqueue Paystack webhook via fallback Redis list', fallbackError as any);
-          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-          await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
+          this.logger.error('Failed to prepare Paystack webhook fallback', fallbackError as any);
         }
       } else {
         this.logger.error('Failed to enqueue Paystack webhook to Bull queue', e as any);
@@ -337,13 +333,9 @@ export class WebhookService {
       const client = this.getRedisClient();
       if (client) {
         try {
-          await client.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
-          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
-          queued = true;
+          this.logger.warn('Bull Ivorypay webhook queue unavailable; using direct processing fallback');
         } catch (fallbackError) {
-          this.logger.error('Failed to enqueue Ivorypay webhook via fallback Redis list', fallbackError as any);
-          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-          await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
+          this.logger.error('Failed to prepare Ivorypay webhook fallback', fallbackError as any);
         }
       } else {
         this.logger.error('Failed to enqueue Ivorypay webhook to Bull queue', e as any);

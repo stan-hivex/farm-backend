@@ -79,8 +79,8 @@ import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
             port: 6379,
           },
           defaultJobOptions: {
-            removeOnComplete: true,
-            removeOnFail: false,
+            removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
+            removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
           },
         };
       },
