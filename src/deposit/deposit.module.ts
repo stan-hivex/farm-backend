@@ -5,9 +5,10 @@ import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { WebsocketModule } from '../websocket/websocket.module';
 import { PaystackModule } from '../paystack/paystack.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CurrencyModule } from '../currency/currency.module';
 
 @Module({
-  imports: [forwardRef(() => IvorypayModule), WebsocketModule, forwardRef(() => PaystackModule), NotificationsModule],
+  imports: [forwardRef(() => IvorypayModule), WebsocketModule, forwardRef(() => PaystackModule), NotificationsModule, CurrencyModule],
   controllers: [DepositController],
   providers: [DepositService],
   exports: [DepositService],

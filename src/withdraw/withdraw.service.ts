@@ -199,32 +199,15 @@ export class WithdrawService {
     return { success: true, reference, withdrawal };
   }
 
-  async getProviderNetworks(token: string) {
-    const normalizedToken = (token ?? '').toString().trim().toUpperCase();
-    if (!normalizedToken) {
-      return { data: [] };
-    }
-
-    const providerNetworks = await (this.ivorypay as any).fetchProviderNetworks(normalizedToken);
-    const formatted = (providerNetworks ?? []).map((code: string) => {
-      const display = code
-        .toString()
-        .replace(/_/g, ' ')
-        .toLowerCase()
-        .split(' ')
-        .map((word: string) => word ? word.charAt(0).toUpperCase() + word.slice(1) : word)
-        .join(' ');
-      return { providerCode: code, displayName: display };
-    });
-
-    return { data: formatted };
-  }
-
   async getUserWithdrawals(userId: string) {
     return this.prisma.withdrawal.findMany({
       where: { userId, status: { not: 'FAILED' } },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  getProviderNetworks(token?: string) {
+    return this.ivorypay.getProviderNetworks(token);
   }
 
   async getWithdrawal(id: string, userId?: string) {

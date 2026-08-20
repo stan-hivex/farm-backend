@@ -99,8 +99,10 @@ export class CurrencyConversionService {
   }
 
   async usdToFarm(amount: number): Promise<number> {
-    const usdKesRate = await this.getCurrentUsdKesRate();
-    return this.round(this.toNumber(amount) * usdKesRate);
+    const current = await this.getCurrentRate();
+    const usdKesRate = this.toNumber(current.usd_kes_rate, 150);
+    const farmKesRate = this.toNumber(current.farm_kes_rate, 1);
+    return this.round((this.toNumber(amount) * usdKesRate) / farmKesRate);
   }
 
   async ensureRateExists(): Promise<any> {
