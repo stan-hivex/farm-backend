@@ -41,6 +41,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -459,8 +460,9 @@ export class AuthController {
   @ApiOperation({ summary: 'Delete the current account and revoke all sessions' })
   deleteAccount(
     @CurrentUser() user: any,
+    @Body() dto: DeleteAccountDto,
   ) {
-    return this.authService.deleteAccount(user.id);
+    return this.authService.deleteAccount(user.id, dto);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
