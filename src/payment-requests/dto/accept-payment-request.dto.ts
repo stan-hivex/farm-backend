@@ -1,12 +1,20 @@
-import { IsNotEmpty, IsString, Length } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, Length } from 'class-validator';
 
 export class AcceptPaymentRequestDto {
   @IsNotEmpty()
   @IsString()
   request_id!: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
   @Length(4, 6)
-  pin!: string;
+  pin?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  biometric_auth?: boolean;
+
+  @IsOptional()
+  @IsString()
+  device_fingerprint?: string;
 }

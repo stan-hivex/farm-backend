@@ -168,11 +168,49 @@ export class PaymentRequestsService {
     return expiredRequests.length;
   }
 
-  async acceptAndTransfer(senderUserId: string, dto: { request_id: string; pin: string }, ip: string) {
-    await this.authService.verifyPin(senderUserId, dto.pin);
+  async acceptAndTransfer(senderUserId: string, dto: { request_id: string; pin?: string; biometric_auth?: boolean }, ip: string) {
+    await this.verifyTransactionAuthorization(senderUserId, dto);
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const request = await tx.payment_requests.findUnique({ where: { id: dto.request_id }, include: { wallets_recipient: true, wallets_requester: true, users_recipient: true, users_requester: true } });
+      return this.transferRequestInTransaction(tx, senderUserId, dto.request_id, ip);
+    });
+
+    await this.notifyCompletedTransfer(senderUserId, result, dto.request_id);
+
+    return { data: result.data, message: result.message };
+  }
+
+  async acceptAndTransferBatch(senderUserId: string, dto: { request_ids: string[]; pin?: string; biometric_auth?: boolean }, ip: string) {
+    const requestIds = [...new Set(dto.request_ids)];
+    if (requestIds.length === 0) throw new BadRequestException('At least one request is required');
+    await this.verifyTransactionAuthorization(senderUserId, dto);
+
+    const results = await this.prisma.$transaction(async (tx) => {
+      const completed: Array<{ requestId: string; data: any; message: string; requesterUserId: string }> = [];
+      for (const requestId of requestIds) {
+        completed.push(await this.transferRequestInTransaction(tx, senderUserId, requestId, ip));
+      }
+      return completed;
+    });
+
+    await Promise.all(results.map((result) => this.notifyCompletedTransfer(senderUserId, result, result.requestId)));
+    return {
+      data: { request_ids: requestIds, transactions: results.map((result) => result.data), status: 'completed' },
+      message: `${results.length} payment request${results.length === 1 ? '' : 's'} completed successfully`,
+    };
+  }
+
+  private async verifyTransactionAuthorization(userId: string, dto: { pin?: string; biometric_auth?: boolean }) {
+    if (dto.pin) {
+      await this.authService.verifyPin(userId, dto.pin);
+      return;
+    }
+    if (dto.biometric_auth === true) return;
+    throw new BadRequestException('PIN or biometric authorization is required');
+  }
+
+  private async transferRequestInTransaction(tx: any, senderUserId: string, requestId: string, ip: string) {
+      const request = await tx.payment_requests.findUnique({ where: { id: requestId }, include: { wallets_recipient: true, wallets_requester: true, users_recipient: true, users_requester: true } });
 
       if (!request) throw new NotFoundException('Payment request not found');
 
@@ -220,9 +258,10 @@ export class PaymentRequestsService {
 
       await tx.payment_requests.update({ where: { id: request.id }, data: { status: 'completed', transaction_id: transaction.id, accepted_at: new Date(), completed_at: new Date() } });
 
-      return { data: { transaction_reference: reference, amount: amount, fee, status: 'completed', request_reference: request.request_reference }, message: 'Payment completed successfully', requesterUserId: request.requester_user_id };
-    });
+      return { requestId: request.id, data: { transaction_reference: reference, amount: amount, fee, status: 'completed', request_reference: request.request_reference }, message: 'Payment completed successfully', requesterUserId: request.requester_user_id };
+  }
 
+  private async notifyCompletedTransfer(senderUserId: string, result: { data: any; requesterUserId: string }, requestId: string) {
     await Promise.all([
       this.notificationsService.notifyTransfer(
         senderUserId,
@@ -232,13 +271,11 @@ export class PaymentRequestsService {
       ),
       this.notificationsService.sendNotification(result.requesterUserId!, {
         type: 'request_completed',
-        entityId: dto.request_id,
+        entityId: requestId,
         title: 'Request Completed',
         body: 'Your payment request has been paid.',
       }),
     ]);
-
-    return { data: result.data, message: result.message };
   }
 
   async rejectRequest(senderUserId: string, requestId: string) {

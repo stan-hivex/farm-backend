@@ -7,6 +7,7 @@ import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CreatePaymentRequestDto } from './dto/create-payment-request.dto';
 import { AcceptPaymentRequestDto } from './dto/accept-payment-request.dto';
+import { AcceptPaymentRequestsBatchDto } from './dto/accept-payment-requests-batch.dto';
 import { PaymentRequestsService } from './payment-requests.service';
 
 @ApiTags('Payment Requests')
@@ -37,6 +38,14 @@ export class PaymentRequestsController {
   @ApiOperation({ summary: 'Accept and complete a payment request' })
   acceptAndTransfer(@CurrentUser() u: any, @Body() dto: AcceptPaymentRequestDto, @Req() req: Request) {
     return this.svc.acceptAndTransfer(u.id, dto as any, req.ip || '');
+  }
+
+  @Permissions('transfer:write')
+  @Post('accept-batch')
+  @UseGuards(JwtGuard, KycGuard)
+  @ApiOperation({ summary: 'Accept and complete multiple payment requests with one authorization' })
+  acceptAndTransferBatch(@CurrentUser() u: any, @Body() dto: AcceptPaymentRequestsBatchDto, @Req() req: Request) {
+    return this.svc.acceptAndTransferBatch(u.id, dto as any, req.ip || '');
   }
 
   @Permissions('transfer:write')
