@@ -305,7 +305,7 @@ if (new Date() > expiryDate) {
         jwt_id: tokens.jti,
         ip_address: ip,
         user_agent: userAgent,
-        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        expires_at: this.refreshSessionExpiry(),
       },
     });
 
@@ -499,8 +499,9 @@ if (new Date() > expiryDate) {
 
   // ── Refresh ──────────────────────────────────────────────────────────────────
   async refresh(userId: string, rawRefreshToken: string, ip?: string) {
-    // Find the most recent active session for this user
-    const session = await this.prisma.user_sessions.findFirst({
+    // Match the presented token to its own active session. This prevents a
+    // refresh on one device from consuming another device's session.
+    const sessions = await this.prisma.user_sessions.findMany({
       where: {
         user_id: userId,
         expires_at: { gt: new Date() },
@@ -515,7 +516,15 @@ if (new Date() > expiryDate) {
           include: { wallets: { take: 1 } }
         }
       },
-    }) as any;
+    }) as any[];
+
+    let session: any = null;
+    for (const candidate of sessions) {
+      if (await bcrypt.compare(rawRefreshToken, candidate.refresh_token)) {
+        session = candidate;
+        break;
+      }
+    }
 
     if (!session) {
       await this.logSecurityEvent(userId, 'REFRESH_TOKEN_INVALID', 'No valid session found', 'high', ip);
@@ -529,22 +538,23 @@ if (new Date() > expiryDate) {
       throw new UnauthorizedException('Refresh token has been compromised. All sessions revoked.');
     }
 
-    // Verify the refresh token hash
-    const tokenValid = await bcrypt.compare(rawRefreshToken, session.refresh_token);
-    if (!tokenValid) {
-      await this.logSecurityEvent(userId, 'REFRESH_TOKEN_INVALID', 'Invalid refresh token hash', 'high', ip);
-      await this.handleTokenTheft(userId, session, ip);
-      throw new UnauthorizedException('Invalid refresh token. All sessions revoked.');
-    }
-
-    // Mark this token as used (rotation)
-    await this.prisma.user_sessions.update({
-      where: { id: session.id },
+    // Atomically claim the token. A concurrent request that loses this
+    // update has replayed an already-rotated token.
+    const claimed = await this.prisma.user_sessions.updateMany({
+      where: {
+        id: session.id,
+        is_revoked: false,
+        used_at: null,
+      },
       data: {
         used_at: new Date(),
-        is_revoked: true // Revoke after use
+        is_revoked: true,
       },
     });
+    if (claimed.count !== 1) {
+      await this.handleTokenTheft(userId, session, ip);
+      throw new UnauthorizedException('Refresh token has been compromised. All sessions revoked.');
+    }
 
     // Check for suspicious activity (different IP, user agent, etc.)
     if (ip && session.ip_address && session.ip_address !== ip) {
@@ -573,7 +583,7 @@ if (new Date() > expiryDate) {
         user_agent: session.user_agent, // Keep same user agent
         device_name: session.device_name,
         device_os: session.device_os,
-        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+        expires_at: this.refreshSessionExpiry(),
       },
     });
 
@@ -1042,6 +1052,14 @@ async resendOtp(userId: string) {
       }),
     ]);
     return { access_token, refresh_token, jti };
+  }
+
+  private refreshSessionExpiry(): Date {
+    const configuredDays = Number(this.cfg.get('JWT_REFRESH_SESSION_DAYS', '365'));
+    const days = Number.isFinite(configuredDays) && configuredDays > 0
+      ? configuredDays
+      : 365;
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 
   private async handleTokenTheft(userId: string, session: any, ip?: string) {
