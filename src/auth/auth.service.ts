@@ -296,6 +296,53 @@ if (new Date() > expiryDate) {
     });
 
     const userRole = (user.role ?? 'user').toString().toLowerCase();
+
+    if (userRole === 'admin' || userRole === 'super_admin') {
+      const walletId = user.wallets[0]?.id;
+      const tokens = await this.issueTokens(user.id, userRole, walletId);
+      const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+      await this.prisma.user_sessions.create({
+        data: {
+          user_id: user.id,
+          refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
+          jwt_id: tokens.jti,
+          ip_address: ip,
+          user_agent: userAgent,
+          expires_at: this.refreshSessionExpiry(),
+        },
+      });
+
+      await this.prisma.activity_logs.create({
+        data: { user_id: user.id, activity: 'LOGIN_SUCCESS', ip_address: ip },
+      });
+
+      return {
+        success: true,
+        data: {
+          requiresPhoneVerification: false,
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          token_type: 'Bearer',
+          expires_in: 900,
+          user: {
+            id: user.id,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            username: user.username,
+            phone: user.phone,
+            email: user.email,
+            role: user.role,
+            kyc_status: user.kyc_status,
+            kyc_level: user.kyc_level,
+            phone_verified: user.phone_verified,
+            has_pin: !!user.pin_hash,
+            profile_image: user.profile_image,
+          },
+        },
+        message: 'Login successful',
+      };
+    }
+
     const pending = await this.prisma.pending_login_verifications.create({
       data: {
         user_id: user.id,
@@ -310,6 +357,7 @@ if (new Date() > expiryDate) {
     });
 
     return {
+      success: true,
       data: {
         requiresPhoneVerification: true,
         pendingLoginId: pending.id,
