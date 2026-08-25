@@ -7,6 +7,13 @@ export class FirebaseService {
   private readonly logger = new Logger(FirebaseService.name);
   public readonly messaging: Messaging | null;
 
+  async verifyIdToken(token: string): Promise<admin.auth.DecodedIdToken> {
+    if (!admin.apps.length) {
+      throw new Error('Firebase Admin is not configured');
+    }
+    return admin.auth().verifyIdToken(token);
+  }
+
   constructor() {
     if (admin.apps.length === 0) {
       const projectId = process.env.FIREBASE_PROJECT_ID;

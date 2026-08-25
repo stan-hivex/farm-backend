@@ -10,6 +10,7 @@ import * as admin from 'firebase-admin';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { FirebaseService } from '../notifications/firebase.service';
 import { TurnstileService } from '../common/services/turnstile.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -37,6 +38,7 @@ export class AuthService {
     private cfg: ConfigService,
     private notifications: NotificationsService,
     private turnstile: TurnstileService,
+    private firebase: FirebaseService,
   ) {}
 
   // ── Register ────────────────────────────────────────────────────────────────
@@ -293,19 +295,13 @@ if (new Date() > expiryDate) {
       data: { failed_login_attempts: 0, last_login_at: new Date(), last_seen_at: new Date() },
     });
 
-    const walletId = user.wallets[0]?.id;
     const userRole = (user.role ?? 'user').toString().toLowerCase();
-    const tokens = await this.issueTokens(user.id, userRole, walletId);
-    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
-
-    await this.prisma.user_sessions.create({
+    const pending = await this.prisma.pending_login_verifications.create({
       data: {
         user_id: user.id,
-        refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
-        jwt_id: tokens.jti,
-        ip_address: ip,
-        user_agent: userAgent,
-        expires_at: this.refreshSessionExpiry(),
+        phone: this.normalizePhoneNumber(user.phone),
+        role: user.role ?? 'user',
+        expires_at: new Date(Date.now() + 5 * 60 * 1000),
       },
     });
 
@@ -315,27 +311,11 @@ if (new Date() > expiryDate) {
 
     return {
       data: {
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        token_type: 'Bearer',
-        expires_in: 900,
+        requiresPhoneVerification: true,
+        pendingLoginId: pending.id,
         phone: this.normalizePhoneNumber(user.phone),
-        user: {
-          id: user.id,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          username: user.username,
-          phone: user.phone,
-          email: user.email,
-          role: user.role,
-          kyc_status: user.kyc_status,
-          kyc_level: user.kyc_level,
-          phone_verified: user.phone_verified,
-          has_pin: !!user.pin_hash,
-          profile_image: user.profile_image,
-        },
       },
-      message: 'Login successful',
+      message: 'Password verified. Phone verification required.',
     };
   }
 
@@ -354,8 +334,93 @@ if (new Date() > expiryDate) {
     return { message: 'Firebase login is not configured in this environment', data: {} };
   }
 
-  async verifyPhone(firebaseIdToken: string, ip: string, userAgent: string) {
-    return { message: 'Firebase phone verification is not configured in this environment', data: {} };
+  async verifyPhone(
+    firebaseIdToken: string,
+    pendingLoginId: string,
+    ip: string,
+    userAgent: string,
+  ) {
+    const pending = await this.prisma.pending_login_verifications.findUnique({
+      where: { id: pendingLoginId },
+      include: { users: { include: { wallets: { where: { is_active: true }, take: 1 } } } },
+    }) as any;
+
+    if (!pending || pending.status !== 'pending' || pending.expires_at <= new Date()) {
+      throw new UnauthorizedException('Login verification session expired');
+    }
+
+    let decoded: admin.auth.DecodedIdToken;
+    try {
+      decoded = await this.firebase.verifyIdToken(firebaseIdToken);
+    } catch {
+      throw new UnauthorizedException('Invalid Firebase verification token');
+    }
+
+    const firebasePhone = this.normalizePhoneNumber(decoded.phone_number);
+    if (!firebasePhone || firebasePhone !== pending.phone) {
+      await this.prisma.pending_login_verifications.update({
+        where: { id: pending.id },
+        data: { attempt_count: { increment: 1 } },
+      });
+      throw new ForbiddenException('Phone verification does not match this account.');
+    }
+
+    const claimed = await this.prisma.pending_login_verifications.updateMany({
+      where: { id: pending.id, status: 'pending', expires_at: { gt: new Date() } },
+      data: { status: 'verified', verified_at: new Date() },
+    });
+    if (claimed.count !== 1) {
+      throw new UnauthorizedException('Login verification session has already been used');
+    }
+
+    const user = pending.users;
+    if (!user || user.is_deleted || user.is_suspended || !user.is_active) {
+      throw new ForbiddenException('Account is unavailable');
+    }
+
+    const walletId = user.wallets[0]?.id;
+    const tokens = await this.issueTokens(user.id, pending.role.toString().toLowerCase(), walletId);
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    await this.prisma.user_sessions.create({
+      data: {
+        user_id: user.id,
+        refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
+        jwt_id: tokens.jti,
+        ip_address: ip,
+        user_agent: userAgent,
+        expires_at: this.refreshSessionExpiry(),
+      },
+    });
+
+    await this.prisma.users.update({
+      where: { id: user.id },
+      data: { phone_verified: true },
+    });
+
+    return {
+      success: true,
+      data: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        token_type: 'Bearer',
+        expires_in: 900,
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          username: user.username,
+          phone: user.phone,
+          email: user.email,
+          role: user.role,
+          kyc_status: user.kyc_status,
+          kyc_level: user.kyc_level,
+          phone_verified: true,
+          has_pin: !!user.pin_hash,
+          profile_image: user.profile_image,
+        },
+      },
+      message: 'Login successful',
+    };
   }
 
   async sendPasswordResetOtp(email: string, ip: string, turnstileToken?: string) {
@@ -1005,30 +1070,6 @@ async resendOtp(userId: string) {
     return `+${digits}`;
   }
 
-  private async verifyFirebaseToken(token: string) {
-    try {
-      if (!admin.apps.length) {
-        const projectId = this.cfg.get<string>('FIREBASE_PROJECT_ID');
-        const credentialsPath = this.cfg.get<string>('GOOGLE_APPLICATION_CREDENTIALS');
-
-        if (credentialsPath) {
-          admin.initializeApp({
-            projectId: projectId || undefined,
-            credential: admin.credential.applicationDefault(),
-          });
-        } else if (projectId) {
-          admin.initializeApp({ projectId });
-        } else {
-          admin.initializeApp();
-        }
-      }
-      return await admin.auth().verifyIdToken(token);
-    } catch (error) {
-      this.logger.warn(`Firebase token verification failed: ${error}`);
-      throw new UnauthorizedException('Invalid Firebase verification token');
-    }
-  }
-
   private async issueTokens(userId: string, role: string, walletId?: string) {
     // Security: Secrets MUST be set in environment (no hardcoded fallbacks)
     const accessSecret = this.cfg.get<string>('JWT_ACCESS_SECRET');
@@ -1094,6 +1135,10 @@ async resendOtp(userId: string) {
     if (deleted.count > 0) {
       this.logger.log(`Cleaned up ${deleted.count} expired user session(s)`);
     }
+
+    await this.prisma.pending_login_verifications.deleteMany({
+      where: { expires_at: { lt: new Date() } },
+    });
   }
 
   private async logSecurityEvent(

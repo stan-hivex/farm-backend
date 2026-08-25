@@ -7,6 +7,11 @@ export class VerifyPhoneDto {
   @IsString()
   firebaseIdToken!: string;
 
+  @ApiProperty({ description: 'Server-issued pending password-login identifier' })
+  @IsNotEmpty()
+  @IsString()
+  pendingLoginId!: string;
+
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
