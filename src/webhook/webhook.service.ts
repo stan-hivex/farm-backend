@@ -195,14 +195,7 @@ export class WebhookService {
         this.logger.error('Direct processing fallback failed for Paystack webhook', directError as any);
       }
     } else {
-      this.logger.log('Paystack webhook queued successfully; processing directly in-process as a worker fallback');
-      setImmediate(async () => {
-        try {
-          await this.handlePaystackWebhookProcessing(payload);
-        } catch (directError) {
-          this.logger.error('In-process fallback processing failed for Paystack webhook', directError as any);
-        }
-      });
+      this.logger.log('Paystack webhook queued successfully for asynchronous processing');
     }
 
     if (eventId) await this.markProcessed('paystack', eventId);
@@ -353,14 +346,7 @@ export class WebhookService {
         this.logger.error('Direct processing fallback failed for Ivorypay webhook', directError as any);
       }
     } else {
-      this.logger.log('Ivorypay webhook queued successfully; processing directly in-process as a worker fallback');
-      setImmediate(async () => {
-        try {
-          await this.handleIvorypayWebhookProcessing(payload);
-        } catch (directError) {
-          this.logger.error('In-process fallback processing failed for Ivorypay webhook', directError as any);
-        }
-      });
+      this.logger.log('Ivorypay webhook queued successfully for asynchronous processing');
     }
 
     if (eventId) await this.markProcessed('ivorypay', eventId);

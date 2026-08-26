@@ -312,6 +312,9 @@ model notifications {
   is_read    Boolean?           @default(false)
   created_at DateTime?          @default(now()) @db.Timestamp(6)
   users      users?             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, created_at(sort: Desc)], map: "idx_notifications_user_created")
+  @@index([user_id, is_read], map: "idx_notifications_user_read")
 }
 
 model otp_verifications {
@@ -432,6 +435,8 @@ model transactions {
 
   @@index([receiver_wallet_id], map: "idx_transactions_receiver")
   @@index([sender_wallet_id], map: "idx_transactions_sender")
+  @@index([receiver_wallet_id, created_at(sort: Desc)], map: "idx_transactions_receiver_created")
+  @@index([sender_wallet_id, created_at(sort: Desc)], map: "idx_transactions_sender_created")
   @@index([status], map: "idx_transactions_status")
   @@index([transaction_type], map: "idx_transactions_type")
 }
@@ -713,6 +718,10 @@ model Deposit {
   updatedAt     DateTime      @updatedAt
   provider      String?       @db.VarChar(100)
   user          users         @relation(fields: [userId], references: [id])
+
+  @@index([userId, status, createdAt(sort: Desc)], map: "idx_deposits_user_status_created")
+  @@index([status, updatedAt], map: "idx_deposits_status_updated")
+  @@index([providerRef], map: "idx_deposits_provider_ref")
 }
 
 model Withdrawal {
@@ -740,6 +749,8 @@ model Withdrawal {
 
   @@index([userId])
   @@index([status])
+  @@index([userId, status, createdAt(sort: Desc)], map: "idx_withdrawals_user_status_created")
+  @@index([status, updatedAt], map: "idx_withdrawals_status_updated")
 }
 
 model biometric_settings {
@@ -910,6 +921,8 @@ model transfer_requests {
   @@index([requester_user_id], map: "idx_transfer_requests_requester")
   @@index([sender_user_id], map: "idx_transfer_requests_sender")
   @@index([status], map: "idx_transfer_requests_status")
+  @@index([sender_user_id, status, expires_at, created_at(sort: Desc)], map: "idx_transfer_requests_sender_status_expiry")
+  @@index([requester_user_id, created_at(sort: Desc)], map: "idx_transfer_requests_requester_created")
 }
 
 model payment_requests {
@@ -940,6 +953,8 @@ model payment_requests {
   @@index([requester_user_id], map: "idx_payment_requests_requester")
   @@index([recipient_user_id], map: "idx_payment_requests_recipient")
   @@index([status], map: "idx_payment_requests_status")
+  @@index([recipient_user_id, status, expires_at, created_at(sort: Desc)], map: "idx_payment_requests_recipient_status_expiry")
+  @@index([requester_user_id, created_at(sort: Desc)], map: "idx_payment_requests_requester_created")
 }
 
 model user_settings {

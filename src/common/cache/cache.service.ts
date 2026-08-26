@@ -8,6 +8,7 @@ export class CacheService {
   private readonly prefix: string;
   private readonly defaultTtl: number;
   private readonly enabled: boolean;
+  private readonly inFlight = new Map<string, Promise<unknown>>();
 
   constructor(private readonly cfg: ConfigService, @Optional() private readonly redis?: RedisService) {
     this.prefix = this.cfg.get<string>('CACHE_PREFIX', 'cache:');
@@ -85,11 +86,23 @@ export class CacheService {
     try {
       const client = this.redis?.getClient();
       if (!client) return;
-      const keys = await client.keys(this.buildKey(pattern));
-      if (keys.length === 0) return;
-      const pipeline = client.pipeline();
-      keys.forEach((k: string) => pipeline.del(k));
-      await pipeline.exec();
+      const matchedKeys: string[] = [];
+      let cursor = '0';
+      do {
+        const [nextCursor, keys] = await client.scan(
+          cursor,
+          'MATCH',
+          this.buildKey(pattern),
+          'COUNT',
+          200,
+        );
+        cursor = nextCursor;
+        matchedKeys.push(...keys);
+      } while (cursor !== '0');
+
+      for (let offset = 0; offset < matchedKeys.length; offset += 200) {
+        await client.del(...matchedKeys.slice(offset, offset + 200));
+      }
     } catch (e) {
       this.logger.warn('Cache invalidate pattern failed', e as any);
     }
@@ -101,8 +114,21 @@ export class CacheService {
       return cached;
     }
 
-    const result = await fetch();
-    await this.set(key, result, ttlSeconds ?? this.defaultTtl);
-    return result;
+    const existing = this.inFlight.get(key) as Promise<T> | undefined;
+    if (existing) return existing;
+
+    const pending = (async () => {
+      const result = await fetch();
+      await this.set(key, result, ttlSeconds ?? this.defaultTtl);
+      return result;
+    })();
+    this.inFlight.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.inFlight.get(key) === pending) {
+        this.inFlight.delete(key);
+      }
+    }
   }
 }
