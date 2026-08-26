@@ -178,6 +178,25 @@ export class IvorypayDepositService {
       return { processed: true, reference, status: 'failed' };
     }
 
+    let verifiedTransaction: any;
+    try {
+      const transactionMetadata = (transaction.metadata as Record<string, unknown> | null) ?? {};
+      verifiedTransaction = await this.ivorypayService.verifyTransaction(
+        reference,
+        deposit.providerRef ?? undefined,
+        [transactionMetadata.provider_ref].filter((value): value is string => typeof value === 'string' && value.length > 0),
+      );
+    } catch (error) {
+      this.logger.warn(`IvoryPay deposit verification failed for ${reference}: ${error instanceof Error ? error.message : String(error)}`);
+      return { processed: false, reason: 'provider_verification_failed', reference };
+    }
+
+    const verifiedStatus = verifiedTransaction?.status?.toString().toUpperCase();
+    if (verifiedStatus !== 'SUCCESS' && verifiedStatus !== 'COMPLETED') {
+      this.logger.warn(`IvoryPay deposit verification is not successful for ${reference}: status=${verifiedStatus ?? 'unknown'}`);
+      return { processed: false, reason: 'provider_not_successful', reference, status: verifiedStatus };
+    }
+
     const result = await this.prisma.$transaction(async (tx: any) => {
       const currentDeposit = await tx.deposit.findFirst({ where: { reference } });
       if (!currentDeposit) {

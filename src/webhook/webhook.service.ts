@@ -119,7 +119,7 @@ export class WebhookService {
     // Amount validation (anti-fraud): verify webhook amount matches transaction amount.
     // Use transaction.metadata.amount_fiat when available (initiator provides fiat + exchange rate),
     // otherwise fall back to the stored transaction.amount conversion.
-    if (event === 'charge.success') {
+    if (['charge.success', 'payment.success', 'transaction.success'].includes(event)) {
       try {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
@@ -1583,7 +1583,8 @@ export class WebhookService {
   }
 
   private async retryVerifyTransaction(reference: string) {
-    const attempts = 6;
+    // Mobile-money and bank-transfer settlement can take up to 180 seconds.
+    const attempts = 36;
     const intervalMs = 5000;
     for (let i = 0; i < attempts; i++) {
       try {
@@ -1662,7 +1663,7 @@ export class WebhookService {
 
     try {
       // Defense-in-depth: validate amount before processing (catches queue corruption/manipulation)
-      if (event === 'charge.success') {
+      if (['charge.success', 'payment.success', 'transaction.success'].includes(event)) {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
           const metadata = transaction.metadata as any ?? {};
@@ -1702,6 +1703,12 @@ export class WebhookService {
 
         await this.depositService.finalizeSuccessfulDeposit(reference);
       } else if (event === 'transfer.success') {
+        const transferCode = payload.data?.transfer_code || payload.data?.id || reference;
+        const verifiedTransfer = await this.paystackService.getTransferStatus(transferCode);
+        if (verifiedTransfer?.status?.toString().toLowerCase() !== 'success') {
+          this.logger.warn(`Paystack transfer ${reference} verification returned status=${verifiedTransfer?.status ?? 'unknown'}; skipping completion`);
+          return;
+        }
         await this.withdrawService.markAsSuccess(reference);
       } else if (['transfer.failed', 'transfer.reversed'].includes(event)) {
         const failureDetail =
@@ -1898,15 +1905,6 @@ export class WebhookService {
         const verifiedTransaction = await this.verifyIvorypayWebhookTransaction(resolvedReference, resolverProviderRef, candidateRefs);
         if (!verifiedTransaction) {
           this.logger.warn(`Ivorypay webhook processing: verification did not confirm success for ${resolvedReference} providerRef=${resolverProviderRef ?? rawReference}`);
-          if (deposit || transaction) {
-            this.logger.warn(`Ivorypay webhook processing: fallback finalize for ${resolvedReference} due to verified transaction unavailable`);
-            try {
-              const credited = await this.finalizeDeposit(resolvedReference);
-              this.logger.log(`Ivorypay webhook processing fallback finalize result for ${resolvedReference}: ${credited}`);
-            } catch (fallbackError) {
-              this.logger.error(`Ivorypay webhook processing fallback finalize failed for ${resolvedReference}: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
-            }
-          }
           return;
         }
 

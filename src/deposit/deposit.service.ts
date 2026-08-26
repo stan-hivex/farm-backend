@@ -230,7 +230,9 @@ export class DepositService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (deposits.length === 0) return deposits;
+    if (deposits.length === 0) {
+      return { success: true, data: deposits };
+    }
 
     const references = deposits.map((deposit) => deposit.reference);
     const transactions = await this.prisma.transactions.findMany({
@@ -241,21 +243,24 @@ export class DepositService {
       transactions.map((transaction) => [transaction.transaction_reference, transaction]),
     );
 
-    return deposits.map((deposit) => {
-      const transaction = transactionByReference.get(deposit.reference);
-      const metadata = (transaction?.metadata as Record<string, unknown> | null) ?? {};
-      return {
-        ...deposit,
-        amount_farm: metadata.amount_farm ?? (transaction?.currency === 'FARM' ? transaction.amount : null),
-        amount_usd: metadata.amount_usd ?? null,
-        farm_to_usd_rate: metadata.farm_to_usd_rate ?? null,
-        metadata: {
-          ...metadata,
-          payment_method: metadata.payment_method ?? deposit.paymentMethod,
-          currency_fiat: metadata.currency_fiat ?? deposit.currency,
-        },
-      };
-    });
+    return {
+      success: true,
+      data: deposits.map((deposit) => {
+        const transaction = transactionByReference.get(deposit.reference);
+        const metadata = (transaction?.metadata as Record<string, unknown> | null) ?? {};
+        return {
+          ...deposit,
+          amount_farm: metadata.amount_farm ?? (transaction?.currency === 'FARM' ? transaction.amount : null),
+          amount_usd: metadata.amount_usd ?? null,
+          farm_to_usd_rate: metadata.farm_to_usd_rate ?? null,
+          metadata: {
+            ...metadata,
+            payment_method: metadata.payment_method ?? deposit.paymentMethod,
+            currency_fiat: metadata.currency_fiat ?? deposit.currency,
+          },
+        };
+      }),
+    };
   }
 
   async getWalletBalance(userId: string) {

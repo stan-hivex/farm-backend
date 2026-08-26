@@ -285,7 +285,7 @@ export class WithdrawService {
         const bankCode = await this.paystack.getBankCodeByName(withdrawal.bankName || '');
         this.logger.log(`Resolved bank name='${withdrawal.bankName}' -> bank_code='${bankCode}'`);
         recipient = await this.paystack.createTransferRecipient({
-          type: 'nuban',
+          type: 'kepss',
           name: withdrawal.accountName!,
           account_number: withdrawal.accountNumber!,
           bank_code: bankCode,
@@ -431,11 +431,12 @@ export class WithdrawService {
     const previousLocked = Number(wallet.locked_balance ?? 0);
     const unlockAmount = Math.min(previousLocked, amount);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.withdrawal.update({
-        where: { reference },
+    const finalized = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.withdrawal.updateMany({
+        where: { reference, status: { not: 'COMPLETED' } },
         data: { status: 'COMPLETED' },
       });
+      if (claimed.count !== 1) return false;
 
       await tx.wallets.update({
         where: { id: wallet.id },
@@ -470,7 +471,10 @@ export class WithdrawService {
         // Platform fee crediting is handled after the main transaction to avoid nested tx expectations in tests
         // The actual crediting will be performed below outside of this $transaction
       }
+      return true;
     });
+
+    if (!finalized) return true;
 
     // Attempt to credit platform fee after completion
     this.creditPlatformFee(reference).catch((e) => this.logger.error(`creditPlatformFee error: ${e?.message ?? e}`));
@@ -525,7 +529,7 @@ export class WithdrawService {
           },
         });
       });
-    } catch (e) {
+    } catch (e: any) {
       this.logger.error(`Failed to credit platform fee for ${reference}: ${e?.message ?? e}`);
     }
   }
