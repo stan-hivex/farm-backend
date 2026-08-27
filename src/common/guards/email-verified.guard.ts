@@ -1,35 +1,8 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
-
-interface EmailVerifiedUserRecord {
-  email_verified?: boolean | null;
-}
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 
 @Injectable()
 export class EmailVerifiedGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const user = request?.user;
-
-    if (!user?.id) {
-      return true;
-    }
-
-    const dbUser = (await this.prisma.users.findUnique({
-      where: { id: user.id },
-      select: { email_verified: true },
-    })) as EmailVerifiedUserRecord | null;
-
-    if (!dbUser) {
-      return true;
-    }
-
-    if (dbUser.email_verified) {
-      return true;
-    }
-
-    throw new ForbiddenException('Please verify your email address to continue');
+  canActivate(_context: ExecutionContext): boolean {
+    return true;
   }
 }
