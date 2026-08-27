@@ -46,9 +46,8 @@ export class DepositService {
 
     const reference = uuidv4();
     const provider = 'paystack';
-    const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
-    const fee = amount * feeRate;
-    const total = amount + fee;
+    const fee = 0;
+    const total = amount;
 
     const depositCurrency = paymentMethod === 'CRYPTO' ? 'FARM' : dto.currency || 'KES';
     const depositAmount = amount;
