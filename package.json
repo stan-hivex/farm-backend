@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "prestart": "echo 'Skipping migrations for now'",
-    "build": "node ./node_modules/prisma/build/index.js generate && nest build && node ./scripts/ensure-render-entrypoint.js",
+    "build": "node ./node_modules/prisma/build/index.js generate && nest build --builder tsc && node ./scripts/ensure-render-entrypoint.js",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
