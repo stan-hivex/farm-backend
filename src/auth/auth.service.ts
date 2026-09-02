@@ -66,6 +66,10 @@ export class AuthService {
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
     const password_hash = await bcrypt.hash(dto.password, rounds);
 
+    const firebaseUid = dto.email
+      ? await this.ensureFirebaseAccount(dto.email, dto.password)
+      : null;
+
     let referred_by: string | undefined;
     if (dto.referral_code) {
       const referrer = await this.prisma.users.findFirst({
@@ -88,6 +92,7 @@ export class AuthService {
           username: dto.username.toLowerCase(),
           phone: dto.phone,
           email: dto.email,
+          firebase_uid: firebaseUid,
           password_hash,
           country: dto.country,
           referred_by,
@@ -379,7 +384,144 @@ if (new Date() > expiryDate) {
     if (dto.turnstile_token) {
       await this.turnstile.verifyToken(dto.turnstile_token, ip);
     }
-    return { message: 'Firebase login is not configured in this environment', data: {} };
+    const firebaseToken = dto.firebase_token || dto.firebaseIdToken;
+    if (!firebaseToken) throw new UnauthorizedException('Firebase authentication required');
+
+    let decoded: admin.auth.DecodedIdToken;
+    try {
+      decoded = await this.firebase.verifyIdToken(firebaseToken);
+    } catch {
+      throw new UnauthorizedException('Invalid Firebase authentication token');
+    }
+
+    const email = decoded.email?.trim().toLowerCase();
+    if (!email) throw new UnauthorizedException('A Firebase email is required');
+
+    const user = await this.prisma.users.findFirst({
+      where: {
+        OR: [{ firebase_uid: decoded.uid }, { email }],
+        is_deleted: false,
+      },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    }) as any;
+    if (!user) throw new UnauthorizedException('FARM account not found');
+    if (user.is_suspended) throw new ForbiddenException('Account suspended. Contact support.');
+    if (!user.is_active) throw new ForbiddenException('Account is inactive.');
+    if (user.firebase_uid !== decoded.uid) {
+      await this.prisma.users.update({
+        where: { id: user.id },
+        data: { firebase_uid: decoded.uid, email_verified: true },
+      });
+    }
+
+    await this.prisma.users.update({
+      where: { id: user.id },
+      data: { failed_login_attempts: 0, last_login_at: new Date(), last_seen_at: new Date() },
+    });
+
+    const userRole = (user.role ?? 'user').toString().toLowerCase();
+    if (userRole === 'admin' || userRole === 'super_admin') {
+      const tokens = await this.issueTokens(user.id, userRole, user.wallets[0]?.id);
+      const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+      await this.prisma.user_sessions.create({
+        data: {
+          user_id: user.id,
+          refresh_token: await bcrypt.hash(tokens.refresh_token, rounds),
+          jwt_id: tokens.jti,
+          ip_address: ip,
+          user_agent: userAgent,
+          expires_at: this.refreshSessionExpiry(),
+        },
+      });
+      return this.firebaseLoginResponse(user, tokens, false);
+    }
+
+    const pending = await this.prisma.pending_login_verifications.create({
+      data: {
+        user_id: user.id,
+        phone: this.normalizePhoneNumber(user.phone),
+        role: user.role ?? 'user',
+        expires_at: new Date(Date.now() + 5 * 60 * 1000),
+      },
+    });
+    return {
+      success: true,
+      data: {
+        requiresPhoneVerification: true,
+        pendingLoginId: pending.id,
+        phone: this.normalizePhoneNumber(user.phone),
+      },
+      message: 'Password verified. Phone verification required.',
+    };
+  }
+
+  async resolveLoginEmail(identifier: string) {
+    const normalized = identifier.trim();
+    const normalizedPhone = this.normalizePhoneNumber(normalized);
+    const user = await this.prisma.users.findFirst({
+      where: {
+        OR: [
+          { phone: normalizedPhone },
+          { username: { equals: normalized, mode: 'insensitive' as any } },
+        ],
+        is_deleted: false,
+      },
+      select: { email: true, firebase_uid: true },
+    });
+    if (!user?.email || !user.firebase_uid) {
+      throw new UnauthorizedException('Firebase login is not available for this account');
+    }
+    return { data: { email: user.email } };
+  }
+
+  private firebaseLoginResponse(user: any, tokens: { access_token: string; refresh_token: string }, requiresPhoneVerification: boolean) {
+    return {
+      success: true,
+      data: {
+        requiresPhoneVerification,
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        token_type: 'Bearer',
+        expires_in: 900,
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          username: user.username,
+          phone: user.phone,
+          email: user.email,
+          role: user.role,
+          kyc_status: user.kyc_status,
+          kyc_level: user.kyc_level,
+          phone_verified: user.phone_verified,
+          has_pin: !!user.pin_hash,
+          profile_image: user.profile_image,
+        },
+      },
+      message: 'Login successful',
+    };
+  }
+
+  private async ensureFirebaseAccount(email: string, password?: string): Promise<string> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingFarmUser = await this.prisma.users.findUnique({
+      where: { email: normalizedEmail },
+      select: { firebase_uid: true },
+    });
+    if (existingFarmUser?.firebase_uid) return existingFarmUser.firebase_uid;
+
+    let firebaseUser: admin.auth.UserRecord;
+    try {
+      firebaseUser = await this.firebase.auth.getUserByEmail(normalizedEmail);
+    } catch (error: any) {
+      if (error?.code !== 'auth/user-not-found') throw error;
+      firebaseUser = await this.firebase.auth.createUser({
+        email: normalizedEmail,
+        emailVerified: false,
+        password: password || randomBytes(32).toString('base64url'),
+      });
+    }
+    return firebaseUser.uid;
   }
 
   async verifyPhone(
@@ -476,7 +618,21 @@ if (new Date() > expiryDate) {
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
     }
-    return { message: 'Password reset flow is not configured in this environment' };
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.prisma.users.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, firebase_uid: true, email: true, is_deleted: true },
+    });
+    if (user && !user.is_deleted && user.email) {
+      const firebaseUid = user.firebase_uid || await this.ensureFirebaseAccount(user.email);
+      if (!user.firebase_uid) {
+        await this.prisma.users.update({
+          where: { id: user.id },
+          data: { firebase_uid: firebaseUid },
+        });
+      }
+    }
+    return { message: 'If an account exists for this email, a password reset link has been sent.' };
   }
 
   async resetPassword(dto: ResetPasswordDto) {

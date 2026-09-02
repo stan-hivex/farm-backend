@@ -14,6 +14,13 @@ export class FirebaseService {
     return admin.auth().verifyIdToken(token);
   }
 
+  get auth(): admin.auth.Auth {
+    if (!admin.apps.length) {
+      throw new Error('Firebase Admin is not configured');
+    }
+    return admin.auth();
+  }
+
   constructor() {
     if (admin.apps.length === 0) {
       const projectId = process.env.FIREBASE_PROJECT_ID;

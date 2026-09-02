@@ -518,6 +518,7 @@ model users {
   last_name                                                             String                   @db.VarChar(100)
   username                                                              String                   @unique @db.VarChar(50)
   email                                                                 String?                  @unique @db.VarChar(255)
+  firebase_uid                                                          String?                  @unique @db.VarChar(128)
   phone                                                                 String                   @unique @db.VarChar(20)
   password_hash                                                         String
   pin_hash                                                              String?
