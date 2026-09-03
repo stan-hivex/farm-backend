@@ -11,9 +11,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=${DATABASE_URL}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_URL=${REDIS_URL}
       - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - BCRYPT_ROUNDS=12
@@ -23,7 +21,6 @@ services:
       - .env.production
     depends_on:
       - postgres
-      - redis
     networks:
       - farm-network
     expose:
@@ -56,21 +53,6 @@ services:
       timeout: 10s
       retries: 3
 
-  redis:
-    image: redis:7-alpine
-    container_name: farm-redis-prod
-    restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD}
-    volumes:
-      - redis_data:/data
-    networks:
-      - farm-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
   nginx:
     image: nginx:alpine
     container_name: farm-nginx-prod
@@ -88,7 +70,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
 
 networks:
   farm-network:

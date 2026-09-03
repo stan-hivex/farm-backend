@@ -1,4 +1,4 @@
-import { Module, Logger } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -38,6 +38,7 @@ import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
+import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 
 
 @Module({
@@ -65,19 +66,13 @@ import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (cfg: ConfigService) => {
-        const redisUrl = cfg.get<string>('REDIS_URL');
+        const redisUrl = cfg.get<string>('REDIS_URL')?.trim();
         if (!redisUrl) {
-          const logger = new Logger('AppModule');
-          logger.warn(
-            'REDIS_URL not configured. Bull queue processing will attempt local Redis at 127.0.0.1:6379.',
-          );
+          throw new Error('REDIS_URL is required for Bull queue processing. Configure an external managed Redis URL.');
         }
 
         return {
-          redis: redisUrl ?? {
-            host: '127.0.0.1',
-            port: 6379,
-          },
+          redis: redisUrl,
           defaultJobOptions: {
             removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
             removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
@@ -130,4 +125,8 @@ import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(IdempotencyMiddleware).forRoutes('*');
+  }
+}

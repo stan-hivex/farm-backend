@@ -172,28 +172,14 @@ export class WebhookService {
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
       queued = true;
     } catch (e) {
-      const client = this.getRedisClient();
-      if (client) {
-        try {
-          this.logger.warn('Bull Paystack webhook queue unavailable; using direct processing fallback');
-        } catch (fallbackError) {
-          this.logger.error('Failed to prepare Paystack webhook fallback', fallbackError as any);
-        }
-      } else {
-        this.logger.error('Failed to enqueue Paystack webhook to Bull queue', e as any);
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-        await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
-      }
+      this.logger.error('Failed to enqueue Paystack webhook to Bull queue', e as any);
+      await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+      await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
     }
 
     if (!queued) {
-      this.logger.warn('Paystack webhook queue failed, processing directly to finalize deposit');
-      try {
-        await this.handlePaystackWebhookProcessing(payload);
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
-      } catch (directError) {
-        this.logger.error('Direct processing fallback failed for Paystack webhook', directError as any);
-      }
+      this.logger.warn('Paystack webhook queue failed; leaving event retryable');
+      return { received: true };
     } else {
       this.logger.log('Paystack webhook queued successfully for asynchronous processing');
     }
@@ -323,28 +309,14 @@ export class WebhookService {
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
       queued = true;
     } catch (e) {
-      const client = this.getRedisClient();
-      if (client) {
-        try {
-          this.logger.warn('Bull Ivorypay webhook queue unavailable; using direct processing fallback');
-        } catch (fallbackError) {
-          this.logger.error('Failed to prepare Ivorypay webhook fallback', fallbackError as any);
-        }
-      } else {
-        this.logger.error('Failed to enqueue Ivorypay webhook to Bull queue', e as any);
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-        await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
-      }
+      this.logger.error('Failed to enqueue Ivorypay webhook to Bull queue', e as any);
+      await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+      await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
     }
 
     if (!queued) {
-      this.logger.warn('Ivorypay webhook queue failed, processing directly to finalize deposit or withdrawal');
-      try {
-        await this.handleIvorypayWebhookProcessing(payload);
-        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
-      } catch (directError) {
-        this.logger.error('Direct processing fallback failed for Ivorypay webhook', directError as any);
-      }
+      this.logger.warn('Ivorypay webhook queue failed; leaving event retryable');
+      return { received: true };
     } else {
       this.logger.log('Ivorypay webhook queued successfully for asynchronous processing');
     }

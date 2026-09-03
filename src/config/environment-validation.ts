@@ -38,6 +38,10 @@ export function validateSecurityEnvironment() {
       throw new Error('Production security validation failed: DATABASE_URL must be set.');
     }
 
+    if (!process.env.REDIS_URL?.trim()) {
+      throw new Error('Production security validation failed: REDIS_URL must point to an external managed Redis instance.');
+    }
+
     logger.log('✅ Security environment validation completed.');
   } else {
     if (!process.env.JWT_ACCESS_SECRET) {

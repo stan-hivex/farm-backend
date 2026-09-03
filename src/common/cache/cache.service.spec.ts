@@ -7,8 +7,7 @@ describe('CacheService', () => {
       get: jest.fn().mockResolvedValue(null),
       set: jest.fn().mockResolvedValue('OK'),
       del: jest.fn().mockResolvedValue(1),
-      keys: jest.fn().mockResolvedValue([]),
-      pipeline: jest.fn().mockReturnValue({ del: jest.fn(), exec: jest.fn().mockResolvedValue([]) }),
+      scan: jest.fn().mockResolvedValue(['0', []]),
     };
     const mockRedisService: any = { getClient: () => mockRedisClient };
     const cfg = new ConfigService({ CACHE_PREFIX: 'cache:', CACHE_TTL_SECONDS: '60', CACHE_ENABLED: 'true' });
@@ -20,6 +19,6 @@ describe('CacheService', () => {
     await expect(service.cacheDelete('wallet:test:balance')).resolves.toBeUndefined();
     expect(mockRedisClient.del).toHaveBeenCalled();
     await expect(service.cacheInvalidatePattern('transactions:*')).resolves.toBeUndefined();
-    expect(mockRedisClient.keys).toHaveBeenCalled();
+    expect(mockRedisClient.scan).toHaveBeenCalled();
   });
 });

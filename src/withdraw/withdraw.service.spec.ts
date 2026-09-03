@@ -165,7 +165,7 @@ describe('WithdrawService', () => {
     const txLedgerCreates: any[] = [];
     prisma.$transaction.mockImplementation(async (callback: any) => {
       const tx = {
-        withdrawal: { update: jest.fn().mockResolvedValue({}) },
+        withdrawal: { update: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         wallets: {
           update: jest.fn().mockImplementation(async ({ where, data }: { where: any; data: any }) => {
             txWalletUpdates.push({ where, data });

@@ -27,19 +27,9 @@ services:
           name: farm-db
           property: connectionString
       
-      # Redis URL - get from Redis service or use external Redis
+      # External managed Redis URL
       - key: REDIS_URL
         sync: false
-
-      # Optional alternative Redis configuration when using host/port
-      - key: REDIS_HOST
-        sync: false
-      - key: REDIS_PORT
-        sync: false
-      - key: REDIS_PASSWORD
-        sync: false
-      - key: REDIS_TLS
-        value: "false"
 
       - key: WEB_CONCURRENCY
         value: "1"
