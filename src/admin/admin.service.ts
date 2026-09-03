@@ -81,6 +81,8 @@ export class AdminService {
       where.OR = [
         { transaction_reference: { contains: query.search, mode: 'insensitive' } },
         { description: { contains: query.search, mode: 'insensitive' } },
+        { wallets_transactions_sender_wallet_idTowallets: { users: { username: { contains: query.search, mode: 'insensitive' } } } },
+        { wallets_transactions_receiver_wallet_idTowallets: { users: { username: { contains: query.search, mode: 'insensitive' } } } },
       ];
     }
 
@@ -92,10 +94,10 @@ export class AdminService {
         orderBy: { created_at: 'desc' },
         include: {
           wallets_transactions_sender_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true },
+            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
           },
           wallets_transactions_receiver_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true },
+            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
           },
         },
       }),
@@ -113,10 +115,15 @@ export class AdminService {
         net_amount: Number(tx.net_amount ?? 0),
         currency: tx.currency,
         description: tx.description,
+        method: (tx.metadata as any)?.payment_method ?? (tx.metadata as any)?.method ?? (tx.metadata as any)?.provider ?? null,
         created_at: tx.created_at,
         processed_at: tx.processed_at,
         sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
         receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
+        sender_user: tx.wallets_transactions_sender_wallet_idTowallets?.users ?? null,
+        receiver_user: tx.wallets_transactions_receiver_wallet_idTowallets?.users ?? null,
+        user_id: tx.wallets_transactions_sender_wallet_idTowallets?.user_id ?? tx.wallets_transactions_receiver_wallet_idTowallets?.user_id ?? null,
+        username: tx.wallets_transactions_sender_wallet_idTowallets?.users?.username ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.username ?? null,
       })),
       meta: paginate(total, page, limit),
     };
@@ -808,9 +815,10 @@ export class AdminService {
 
   async listKycQueue(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const where = query.status ? { status: query.status } : { status: 'pending' };
     const [items, total] = await Promise.all([
       this.prisma.kyc_documents.findMany({
-        where: { status: 'pending' },
+        where,
         skip,
         take,
         orderBy: { created_at: 'asc' },
@@ -831,7 +839,7 @@ export class AdminService {
           },
         },
       }),
-      this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
+      this.prisma.kyc_documents.count({ where }),
     ]);
     return {
       data: items.map((d) => ({
@@ -1208,6 +1216,7 @@ export class AdminService {
         // Escrow revenue breakdown (amounts are in FARM)
         escrow_total_earnings,
         withdrawal_total_earnings,
+        withdraw_fee_earnings: withdrawal_total_earnings,
         platform_fee_total_earnings: total_platform_fee_earnings,
         escrow_creation_earnings,
         escrow_release_earnings,
@@ -1302,6 +1311,11 @@ export class AdminService {
       _sum: { settlement: true },
     });
 
+    const withdrawalFees = await this.prisma.withdrawal.aggregate({
+      where: { status: 'COMPLETED' },
+      _sum: { fee: true },
+    });
+
     const availableBalance = Math.max(
       0,
       Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0),
@@ -1314,6 +1328,7 @@ export class AdminService {
         locked_balance: Number(wallet.locked_balance ?? 0),
         pending_withdrawals: Number(pendingWithdrawals._sum.amount ?? 0),
         total_withdrawn: Number(totalWithdrawn._sum.settlement ?? 0),
+        withdrawal_fee_earnings: Number(withdrawalFees._sum.fee ?? 0),
         currency: wallet.currency ?? 'FARM',
         wallet_address: wallet.wallet_address,
       },
