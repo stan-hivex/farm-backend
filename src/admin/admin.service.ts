@@ -261,10 +261,44 @@ export class AdminService {
     merchantId: string, adminId: string,
     dto: { status: 'approved' | 'rejected'; rejection_reason?: string },
   ) {
+    const existing = await this.prisma.merchants.findUnique({
+      where: { id: merchantId },
+      include: {
+        users_merchants_user_idTousers: {
+          select: { id: true },
+        },
+      },
+    });
+    if (!existing) throw new NotFoundException('Merchant not found');
+
     const merchant = await this.prisma.merchants.update({
       where: { id: merchantId },
       data: { status: dto.status as any, approved_by: adminId, approved_at: new Date() },
     });
+
+    const applicantId = existing.users_merchants_user_idTousers?.id ?? existing.user_id;
+    if (applicantId) {
+      const approved = dto.status === 'approved';
+      const title = approved ? 'Merchant account approved' : 'Merchant account rejected';
+      const body = approved
+        ? `${existing.business_name} has been approved. You can now access the merchant dashboard.`
+        : `${existing.business_name} was rejected.${dto.rejection_reason ? ` Reason: ${dto.rejection_reason}` : ' Please review your details and resubmit.'}`;
+      const metadata = {
+        merchantId,
+        status: dto.status,
+        rejectionReason: dto.rejection_reason ?? null,
+      };
+
+      await this.notifications.createInApp(applicantId, {
+        type: 'merchant',
+        title,
+        body,
+        metadata,
+        entityId: merchantId,
+      });
+      await this.notifications.sendPush(applicantId, title, body, metadata);
+    }
+
     await this.prisma.audit_logs.create({
       data: {
         user_id: adminId, action: `MERCHANT_${dto.status.toUpperCase()}`,
