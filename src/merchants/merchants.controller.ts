@@ -29,10 +29,8 @@ class PayoutDto {
 export class MerchantsController {
   constructor(private readonly svc: MerchantsService) {}
 
-  @Permissions('merchant:write')
   @Post('apply')           apply(@CurrentUser() u: any, @Body() dto: ApplyDto) { return this.svc.apply(u.id, dto); }
 
-  @Permissions('merchant:read')
   @Get()                   get(@CurrentUser() u: any) { return this.svc.getMyMerchant(u.id); }
 
   @Permissions('merchant:read')

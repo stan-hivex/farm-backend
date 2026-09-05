@@ -42,14 +42,6 @@ export class MerchantsService {
   }
 
   async getDashboard(userId: string) {
-    const user = await this.prisma.users.findUnique({
-      where: { id: userId },
-      select: { kyc_status: true, kyc_level: true },
-    });
-    if (!user || user.kyc_status !== 'verified' || Number(user.kyc_level || 0) < 3) {
-      throw new ForbiddenException('Full KYC verification is required to access the merchant dashboard');
-    }
-
     const merchant = await this.getMerchantByUser(userId);
     if (merchant.status !== 'approved') {
       throw new ForbiddenException('Merchant application is pending approval');

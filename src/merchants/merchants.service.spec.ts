@@ -18,11 +18,25 @@ describe('MerchantsService QR access', () => {
     service = new MerchantsService(prisma, qrService);
   });
 
-  it('allows fetching a QR image for a merchant that is still pending approval', async () => {
+  it('rejects QR access for a merchant that is still pending approval', async () => {
     prisma.merchants.findFirst.mockResolvedValue({
       id: 'merchant-1',
       user_id: 'user-1',
       status: 'pending',
+      qr_code: 'payload',
+    });
+
+    await expect(service.getMerchantQr('user-1')).rejects.toThrow(
+      'Merchant application is pending approval',
+    );
+    expect(qrService.getMerchantQr).not.toHaveBeenCalled();
+  });
+
+  it('allows fetching a QR image for an approved merchant', async () => {
+    prisma.merchants.findFirst.mockResolvedValue({
+      id: 'merchant-1',
+      user_id: 'user-1',
+      status: 'approved',
       qr_code: 'payload',
     });
     qrService.getMerchantQr.mockResolvedValue({ data: { qr_image_base64: 'abc' } });

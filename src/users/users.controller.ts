@@ -31,18 +31,6 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 class UpdateProfileDto {
   @IsOptional()
   @IsString()
-  first_name?: string;
-
-  @IsOptional()
-  @IsString()
-  last_name?: string;
-
-  @IsOptional()
-  @IsString()
-  username?: string;
-
-  @IsOptional()
-  @IsString()
   bio?: string;
 
   @IsOptional()

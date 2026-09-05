@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { CacheService } from '../common/cache/cache.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
@@ -35,27 +35,8 @@ export class UsersService {
   }
 
   async updateProfile(userId: string, dto: {
-    first_name?: string; last_name?: string;
-    username?: string;
     bio?: string; country?: string; city?: string;
   }) {
-    if (dto.username != null) {
-      const normalized = dto.username.trim().toLowerCase();
-      if (normalized.length < 3) {
-        throw new BadRequestException('Username must be at least 3 characters');
-      }
-      const existing = await this.prisma.users.findFirst({
-        where: {
-          username: normalized,
-          NOT: { id: userId },
-        },
-      });
-      if (existing) {
-        throw new ConflictException('Username taken');
-      }
-      dto.username = normalized;
-    }
-
     const user = await this.prisma.users.update({
       where: { id: userId },
       data: dto,
@@ -237,36 +218,6 @@ export class UsersService {
   }
 
   async changePhone(userId: string, dto: { new_phone: string; current_password: string }) {
-    // Validate phone format (basic: digits, +, and hyphens)
-    const phoneRegex = /^[\d+\-() ]{7,20}$/;
-    if (!phoneRegex.test(dto.new_phone)) {
-      throw new BadRequestException('Invalid phone number format');
-    }
-
-    // Check if new phone already exists
-    const existingUser = await this.prisma.users.findFirst({
-      where: { phone: dto.new_phone, is_deleted: false },
-    });
-    if (existingUser && existingUser.id !== userId) {
-      throw new ConflictException('Phone number already in use');
-    }
-
-    // Verify current password
-    const user = await this.prisma.users.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('User not found');
-
-    const passwordMatches = await bcrypt.compare(dto.current_password, user.password_hash);
-    if (!passwordMatches) {
-      throw new BadRequestException('Incorrect current password');
-    }
-
-    // Update phone
-    const updated = await this.prisma.users.update({
-      where: { id: userId },
-      data: { phone: dto.new_phone, phone_verified: false },
-      select: { id: true, phone: true, phone_verified: true },
-    });
-
-    return { data: updated, message: 'Phone number updated successfully. Please verify your new phone.' };
+    throw new ForbiddenException('Phone number cannot be changed after registration');
   }
 }
