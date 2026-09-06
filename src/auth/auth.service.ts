@@ -1,6 +1,11 @@
 import {
-  Injectable, BadRequestException, UnauthorizedException,
-  ConflictException, ForbiddenException, NotFoundException, Logger,
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
@@ -22,10 +27,15 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import {
-  generateWalletAddress, generateOtp, generateReferralCode,
+  generateWalletAddress,
+  generateOtp,
+  generateReferralCode,
 } from '../common/utils/reference.util';
 import {
-  MAX_PIN_ATTEMPTS, MAX_LOGIN_ATTEMPTS, OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS,
+  MAX_PIN_ATTEMPTS,
+  MAX_LOGIN_ATTEMPTS,
+  OTP_EXPIRY_MINUTES,
+  OTP_MAX_ATTEMPTS,
 } from '../common/constants';
 
 @Injectable()
@@ -58,8 +68,10 @@ export class AuthService {
       },
     });
     if (existing) {
-      if (existing.phone === dto.phone) throw new ConflictException('Phone already registered');
-      if (existing.username === dto.username.toLowerCase()) throw new ConflictException('Username taken');
+      if (existing.phone === dto.phone)
+        throw new ConflictException('Phone already registered');
+      if (existing.username === dto.username.toLowerCase())
+        throw new ConflictException('Username taken');
       throw new ConflictException('Email already registered');
     }
 
@@ -81,7 +93,9 @@ export class AuthService {
     // QR_HMAC_SECRET must be set in environment (fail fast if missing)
     const qrSecret = this.cfg.get<string>('QR_HMAC_SECRET');
     if (!qrSecret) {
-      throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
+      throw new Error(
+        'QR_HMAC_SECRET not configured - wallet generation impossible',
+      );
     }
 
     const user = await this.prisma.$transaction(async (tx) => {
@@ -115,7 +129,9 @@ export class AuthService {
     });
 
     await this.sendOtp(user.id, user.phone, 'phone_verification');
-    return { message: 'Registration successful. OTP sent to your phone number.' };
+    return {
+      message: 'Registration successful. OTP sent to your phone number.',
+    };
   }
 
   async createAdmin(actorUserId: string, dto: CreateAdminDto) {
@@ -124,8 +140,13 @@ export class AuthService {
       select: { id: true, role: true },
     });
 
-    if (!actor || !['super_admin', 'admin'].includes(String(actor.role || '').toLowerCase())) {
-      throw new ForbiddenException('Only superadmins can create admin accounts');
+    if (
+      !actor ||
+      !['super_admin', 'admin'].includes(String(actor.role || '').toLowerCase())
+    ) {
+      throw new ForbiddenException(
+        'Only superadmins can create admin accounts',
+      );
     }
 
     const existing = await this.prisma.users.findFirst({
@@ -139,8 +160,10 @@ export class AuthService {
     });
 
     if (existing) {
-      if (existing.phone === dto.phone) throw new ConflictException('Phone already registered');
-      if (existing.username === dto.username.toLowerCase()) throw new ConflictException('Username taken');
+      if (existing.phone === dto.phone)
+        throw new ConflictException('Phone already registered');
+      if (existing.username === dto.username.toLowerCase())
+        throw new ConflictException('Username taken');
       throw new ConflictException('Email already registered');
     }
 
@@ -148,7 +171,9 @@ export class AuthService {
     const password_hash = await bcrypt.hash(dto.password, rounds);
     const qrSecret = this.cfg.get<string>('QR_HMAC_SECRET');
     if (!qrSecret) {
-      throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
+      throw new Error(
+        'QR_HMAC_SECRET not configured - wallet generation impossible',
+      );
     }
 
     const admin = await this.prisma.$transaction(async (tx) => {
@@ -177,7 +202,11 @@ export class AuthService {
       });
 
       await tx.activity_logs.create({
-        data: { user_id: created.id, activity: 'ADMIN_ACCOUNT_CREATED', ip_address: '127.0.0.1' },
+        data: {
+          user_id: created.id,
+          activity: 'ADMIN_ACCOUNT_CREATED',
+          ip_address: '127.0.0.1',
+        },
       });
 
       return created;
@@ -188,7 +217,11 @@ export class AuthService {
   }
 
   // ── Verify OTP ───────────────────────────────────────────────────────────────
-  async verifyOtp(phone: string, otpCode: string, purpose = 'phone_verification') {
+  async verifyOtp(
+    phone: string,
+    otpCode: string,
+    purpose = 'phone_verification',
+  ) {
     const user = await this.prisma.users.findUnique({ where: { phone } });
     if (!user) throw new NotFoundException('User not found');
 
@@ -197,19 +230,18 @@ export class AuthService {
       orderBy: { created_at: 'desc' },
     });
 
-    if (!otp) throw new BadRequestException('No active OTP found. Request a new one.');
+    if (!otp)
+      throw new BadRequestException('No active OTP found. Request a new one.');
 
-const expiryDate = new Date(otp.expires_at as any);
+    const expiryDate = new Date(otp.expires_at as any);
 
-if (isNaN(expiryDate.getTime())) {
-  throw new BadRequestException('Invalid OTP expiry date');
-}
+    if (isNaN(expiryDate.getTime())) {
+      throw new BadRequestException('Invalid OTP expiry date');
+    }
 
-if (new Date() > expiryDate) {
-  throw new BadRequestException('OTP has expired');
-}
-
-
+    if (new Date() > expiryDate) {
+      throw new BadRequestException('OTP has expired');
+    }
 
     const attempts = otp.attempts ?? 0;
 
@@ -218,25 +250,35 @@ if (new Date() > expiryDate) {
 
     if (otp.otp_code !== otpCode) {
       await this.prisma.otp_verifications.update({
-        where: { id: otp.id }, data: { attempts: { increment: 1 } },
+        where: { id: otp.id },
+        data: { attempts: { increment: 1 } },
       });
       const remaining = OTP_MAX_ATTEMPTS - attempts - 1;
-      throw new BadRequestException(`Invalid OTP. ${remaining} attempt(s) remaining.`);
+      throw new BadRequestException(
+        `Invalid OTP. ${remaining} attempt(s) remaining.`,
+      );
     }
 
     await this.prisma.otp_verifications.update({
-      where: { id: otp.id }, data: { verified: true },
+      where: { id: otp.id },
+      data: { verified: true },
     });
     if (purpose === 'phone_verification') {
       await this.prisma.users.update({
-        where: { id: user.id }, data: { phone_verified: true },
+        where: { id: user.id },
+        data: { phone_verified: true },
       });
     }
     return { message: 'OTP verified successfully', user_id: user.id };
   }
 
   // ── Login ────────────────────────────────────────────────────────────────────
-  async login(dto: LoginDto, ip: string, userAgent: string, turnstileToken?: string) {
+  async login(
+    dto: LoginDto,
+    ip: string,
+    userAgent: string,
+    turnstileToken?: string,
+  ) {
     // Validate Turnstile token (bot protection)
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
@@ -245,7 +287,7 @@ if (new Date() > expiryDate) {
     const normalizedIdentifier = dto.identifier.trim();
     const normalizedPhone = this.normalizePhoneNumber(normalizedIdentifier);
 
-    const user = await this.prisma.users.findFirst({
+    const user = (await this.prisma.users.findFirst({
       where: {
         OR: [
           { phone: normalizedPhone },
@@ -265,10 +307,11 @@ if (new Date() > expiryDate) {
         is_deleted: false,
       },
       include: { wallets: { where: { is_active: true }, take: 1 } },
-    }) as any;
+    })) as any;
 
     if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (user.is_suspended) throw new ForbiddenException('Account suspended. Contact support.');
+    if (user.is_suspended)
+      throw new ForbiddenException('Account suspended. Contact support.');
     if (!user.is_active) throw new ForbiddenException('Account is inactive.');
 
     const failedAttempts = user.failed_login_attempts ?? 0;
@@ -297,7 +340,11 @@ if (new Date() > expiryDate) {
 
     await this.prisma.users.update({
       where: { id: user.id },
-      data: { failed_login_attempts: 0, last_login_at: new Date(), last_seen_at: new Date() },
+      data: {
+        failed_login_attempts: 0,
+        last_login_at: new Date(),
+        last_seen_at: new Date(),
+      },
     });
 
     const userRole = (user.role ?? 'user').toString().toLowerCase();
@@ -372,20 +419,39 @@ if (new Date() > expiryDate) {
     };
   }
 
-
-  async supabaseLogin(supabaseToken: string, ip: string, userAgent: string, turnstileToken?: string) {
+  async supabaseLogin(
+    supabaseToken: string,
+    ip: string,
+    userAgent: string,
+    turnstileToken?: string,
+  ) {
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
     }
-    return { message: 'Supabase auth is not configured in this environment', data: {} };
+    return {
+      message: 'Supabase auth is not configured in this environment',
+      data: {},
+    };
   }
 
-  async firebaseLogin(dto: { identifier: string; firebase_token?: string; firebaseIdToken?: string; country_code?: string; cf_turnstile_response?: string; turnstile_token?: string }, ip: string, userAgent: string) {
+  async firebaseLogin(
+    dto: {
+      identifier: string;
+      firebase_token?: string;
+      firebaseIdToken?: string;
+      country_code?: string;
+      cf_turnstile_response?: string;
+      turnstile_token?: string;
+    },
+    ip: string,
+    userAgent: string,
+  ) {
     if (dto.turnstile_token) {
       await this.turnstile.verifyToken(dto.turnstile_token, ip);
     }
     const firebaseToken = dto.firebase_token || dto.firebaseIdToken;
-    if (!firebaseToken) throw new UnauthorizedException('Firebase authentication required');
+    if (!firebaseToken)
+      throw new UnauthorizedException('Firebase authentication required');
 
     let decoded: admin.auth.DecodedIdToken;
     try {
@@ -397,15 +463,16 @@ if (new Date() > expiryDate) {
     const email = decoded.email?.trim().toLowerCase();
     if (!email) throw new UnauthorizedException('A Firebase email is required');
 
-    const user = await this.prisma.users.findFirst({
+    const user = (await this.prisma.users.findFirst({
       where: {
         OR: [{ firebase_uid: decoded.uid }, { email }],
         is_deleted: false,
       },
       include: { wallets: { where: { is_active: true }, take: 1 } },
-    }) as any;
+    })) as any;
     if (!user) throw new UnauthorizedException('FARM account not found');
-    if (user.is_suspended) throw new ForbiddenException('Account suspended. Contact support.');
+    if (user.is_suspended)
+      throw new ForbiddenException('Account suspended. Contact support.');
     if (!user.is_active) throw new ForbiddenException('Account is inactive.');
     if (user.firebase_uid !== decoded.uid) {
       await this.prisma.users.update({
@@ -416,12 +483,20 @@ if (new Date() > expiryDate) {
 
     await this.prisma.users.update({
       where: { id: user.id },
-      data: { failed_login_attempts: 0, last_login_at: new Date(), last_seen_at: new Date() },
+      data: {
+        failed_login_attempts: 0,
+        last_login_at: new Date(),
+        last_seen_at: new Date(),
+      },
     });
 
     const userRole = (user.role ?? 'user').toString().toLowerCase();
     if (userRole === 'admin' || userRole === 'super_admin') {
-      const tokens = await this.issueTokens(user.id, userRole, user.wallets[0]?.id);
+      const tokens = await this.issueTokens(
+        user.id,
+        userRole,
+        user.wallets[0]?.id,
+      );
       const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
       await this.prisma.user_sessions.create({
         data: {
@@ -469,12 +544,18 @@ if (new Date() > expiryDate) {
       select: { email: true, firebase_uid: true },
     });
     if (!user?.email || !user.firebase_uid) {
-      throw new UnauthorizedException('Firebase login is not available for this account');
+      throw new UnauthorizedException(
+        'Firebase login is not available for this account',
+      );
     }
     return { data: { email: user.email } };
   }
 
-  private firebaseLoginResponse(user: any, tokens: { access_token: string; refresh_token: string }, requiresPhoneVerification: boolean) {
+  private firebaseLoginResponse(
+    user: any,
+    tokens: { access_token: string; refresh_token: string },
+    requiresPhoneVerification: boolean,
+  ) {
     return {
       success: true,
       data: {
@@ -502,7 +583,10 @@ if (new Date() > expiryDate) {
     };
   }
 
-  private async ensureFirebaseAccount(email: string, password?: string): Promise<string> {
+  private async ensureFirebaseAccount(
+    email: string,
+    password?: string,
+  ): Promise<string> {
     const normalizedEmail = email.trim().toLowerCase();
     const existingFarmUser = await this.prisma.users.findUnique({
       where: { email: normalizedEmail },
@@ -530,12 +614,20 @@ if (new Date() > expiryDate) {
     ip: string,
     userAgent: string,
   ) {
-    const pending = await this.prisma.pending_login_verifications.findUnique({
+    const pending = (await this.prisma.pending_login_verifications.findUnique({
       where: { id: pendingLoginId },
-      include: { users: { include: { wallets: { where: { is_active: true }, take: 1 } } } },
-    }) as any;
+      include: {
+        users: {
+          include: { wallets: { where: { is_active: true }, take: 1 } },
+        },
+      },
+    })) as any;
 
-    if (!pending || pending.status !== 'pending' || pending.expires_at <= new Date()) {
+    if (
+      !pending ||
+      pending.status !== 'pending' ||
+      pending.expires_at <= new Date()
+    ) {
       throw new UnauthorizedException('Login verification session expired');
     }
 
@@ -552,15 +644,23 @@ if (new Date() > expiryDate) {
         where: { id: pending.id },
         data: { attempt_count: { increment: 1 } },
       });
-      throw new ForbiddenException('Phone verification does not match this account.');
+      throw new ForbiddenException(
+        'Phone verification does not match this account.',
+      );
     }
 
     const claimed = await this.prisma.pending_login_verifications.updateMany({
-      where: { id: pending.id, status: 'pending', expires_at: { gt: new Date() } },
+      where: {
+        id: pending.id,
+        status: 'pending',
+        expires_at: { gt: new Date() },
+      },
       data: { status: 'verified', verified_at: new Date() },
     });
     if (claimed.count !== 1) {
-      throw new UnauthorizedException('Login verification session has already been used');
+      throw new UnauthorizedException(
+        'Login verification session has already been used',
+      );
     }
 
     const user = pending.users;
@@ -569,7 +669,11 @@ if (new Date() > expiryDate) {
     }
 
     const walletId = user.wallets[0]?.id;
-    const tokens = await this.issueTokens(user.id, pending.role.toString().toLowerCase(), walletId);
+    const tokens = await this.issueTokens(
+      user.id,
+      pending.role.toString().toLowerCase(),
+      walletId,
+    );
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
     await this.prisma.user_sessions.create({
       data: {
@@ -613,7 +717,11 @@ if (new Date() > expiryDate) {
     };
   }
 
-  async sendPasswordResetOtp(email: string, ip: string, turnstileToken?: string) {
+  async sendPasswordResetOtp(
+    email: string,
+    ip: string,
+    turnstileToken?: string,
+  ) {
     // Validate Turnstile token (bot protection)
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
@@ -624,7 +732,8 @@ if (new Date() > expiryDate) {
       select: { id: true, firebase_uid: true, email: true, is_deleted: true },
     });
     if (user && !user.is_deleted && user.email) {
-      const firebaseUid = user.firebase_uid || await this.ensureFirebaseAccount(user.email);
+      const firebaseUid =
+        user.firebase_uid || (await this.ensureFirebaseAccount(user.email));
       if (!user.firebase_uid) {
         await this.prisma.users.update({
           where: { id: user.id },
@@ -632,23 +741,34 @@ if (new Date() > expiryDate) {
         });
       }
     }
-    return { message: 'If an account exists for this email, a password reset link has been sent.' };
+    return {
+      message:
+        'If an account exists for this email, a password reset link has been sent.',
+    };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
-    return { message: 'Password reset flow is not configured in this environment' };
+    return {
+      message: 'Password reset flow is not configured in this environment',
+    };
   }
 
   async resendEmailVerification(email: string) {
-    return { message: 'Email verification flow is not configured in this environment' };
+    return {
+      message: 'Email verification flow is not configured in this environment',
+    };
   }
 
   async verifyEmail(token: string) {
-    return { message: 'Email verification flow is not configured in this environment' };
+    return {
+      message: 'Email verification flow is not configured in this environment',
+    };
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto) {
-    return { message: 'Password change flow is not configured in this environment' };
+    return {
+      message: 'Password change flow is not configured in this environment',
+    };
   }
 
   async deleteAccount(userId: string, dto: DeleteAccountDto) {
@@ -662,17 +782,24 @@ if (new Date() > expiryDate) {
     }
 
     if (!dto?.password || !dto?.acknowledged || !dto?.confirm_delete) {
-      throw new BadRequestException('Password, acknowledgment, and final confirmation are required');
+      throw new BadRequestException(
+        'Password, acknowledgment, and final confirmation are required',
+      );
     }
 
-    const passwordMatches = await bcrypt.compare(dto.password, user.password_hash);
+    const passwordMatches = await bcrypt.compare(
+      dto.password,
+      user.password_hash,
+    );
     if (!passwordMatches) {
       throw new UnauthorizedException('Incorrect password');
     }
 
     const wallet = user.wallets?.[0];
     if (wallet && Number(wallet.balance ?? 0) !== 0) {
-      throw new ForbiddenException('Account cannot be deleted while wallet balance is not zero');
+      throw new ForbiddenException(
+        'Account cannot be deleted while wallet balance is not zero',
+      );
     }
 
     const pendingWithdrawals = await this.prisma.withdrawal.count({
@@ -683,7 +810,9 @@ if (new Date() > expiryDate) {
     });
 
     if (pendingWithdrawals > 0) {
-      throw new ForbiddenException('Please clear pending withdrawals before deleting your account');
+      throw new ForbiddenException(
+        'Please clear pending withdrawals before deleting your account',
+      );
     }
 
     const pendingDeposits = await this.prisma.deposit.count({
@@ -694,7 +823,9 @@ if (new Date() > expiryDate) {
     });
 
     if (pendingDeposits > 0) {
-      throw new ForbiddenException('Please clear pending deposits before deleting your account');
+      throw new ForbiddenException(
+        'Please clear pending deposits before deleting your account',
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -702,6 +833,153 @@ if (new Date() > expiryDate) {
         where: { user_id: userId },
         data: { is_revoked: true, expires_at: new Date() },
       });
+
+      await tx.contacts.deleteMany({
+        where: { OR: [{ owner_id: userId }, { contact_user_id: userId }] },
+      });
+      await tx.cross_border_transfers.deleteMany({
+        where: {
+          OR: [{ sender_user_id: userId }, { receiver_user_id: userId }],
+        },
+      });
+      await tx.escrow_contracts.deleteMany({
+        where: {
+          OR: [
+            { buyer_id: userId },
+            { seller_id: userId },
+            { arbiter_id: userId },
+          ],
+        },
+      });
+      await tx.escrow_messages.deleteMany({ where: { sender_id: userId } });
+      await tx.merchant_payouts.deleteMany({
+        where: {
+          merchant_id: {
+            in: (
+              await tx.merchants.findMany({
+                where: { user_id: userId },
+                select: { id: true },
+              })
+            ).map(({ id }) => id),
+          },
+        },
+      });
+      await tx.qr_payments.deleteMany({
+        where: {
+          merchant_id: {
+            in: (
+              await tx.merchants.findMany({
+                where: { user_id: userId },
+                select: { id: true },
+              })
+            ).map(({ id }) => id),
+          },
+        },
+      });
+      await tx.merchants.deleteMany({ where: { user_id: userId } });
+      await tx.kyc_documents.deleteMany({ where: { user_id: userId } });
+      await tx.support_messages.deleteMany({ where: { sender_id: userId } });
+      await tx.roi_payouts.deleteMany({
+        where: {
+          investment_id: {
+            in: (
+              await tx.user_investments.findMany({
+                where: { user_id: userId },
+                select: { id: true },
+              })
+            ).map(({ id }) => id),
+          },
+        },
+      });
+      await tx.user_investments.updateMany({
+        where: { user_id: userId },
+        data: { transaction_id: null },
+      });
+      await tx.user_investments.deleteMany({ where: { user_id: userId } });
+      await tx.project_investments.deleteMany({ where: { user_id: userId } });
+      await tx.beneficiaries.deleteMany({ where: { user_id: userId } });
+      await tx.support_tickets.deleteMany({ where: { user_id: userId } });
+      await tx.transfer_requests.deleteMany({
+        where: {
+          OR: [{ requester_user_id: userId }, { sender_user_id: userId }],
+        },
+      });
+      await tx.payment_requests.deleteMany({
+        where: {
+          OR: [{ requester_user_id: userId }, { recipient_user_id: userId }],
+        },
+      });
+      await tx.deposit.deleteMany({ where: { userId } });
+      await tx.withdrawal.deleteMany({ where: { userId } });
+      await tx.otp_verifications.deleteMany({ where: { user_id: userId } });
+      await tx.pending_login_verifications.deleteMany({
+        where: { user_id: userId },
+      });
+      await tx.user_settings.deleteMany({ where: { user_id: userId } });
+      await tx.uploads.deleteMany({ where: { user_id: userId } });
+      await tx.security_events.deleteMany({ where: { user_id: userId } });
+      await tx.activity_logs.deleteMany({ where: { user_id: userId } });
+      await tx.audit_logs.deleteMany({ where: { user_id: userId } });
+
+      await tx.kyc_documents.updateMany({
+        where: { reviewed_by: userId },
+        data: { reviewed_by: null },
+      });
+      await tx.merchant_payouts.updateMany({
+        where: { processed_by: userId },
+        data: { processed_by: null },
+      });
+      await tx.investment_projects.updateMany({
+        where: { created_by: userId },
+        data: { created_by: null },
+      });
+      await tx.currency_rates.updateMany({
+        where: { updated_by: userId },
+        data: { updated_by: null },
+      });
+      await tx.system_settings.updateMany({
+        where: { updated_by: userId },
+        data: { updated_by: null },
+      });
+      await tx.users.updateMany({
+        where: { referred_by: userId },
+        data: { referred_by: null },
+      });
+      await tx.qr_payments.updateMany({
+        where: { customer_id: userId },
+        data: { customer_id: null },
+      });
+
+      const userWallets = await tx.wallets.findMany({
+        where: { user_id: userId },
+        select: { id: true },
+      });
+      const walletIds = userWallets.map(({ id }) => id);
+      if (walletIds.length > 0) {
+        await tx.transactions.updateMany({
+          where: {
+            OR: [
+              { sender_wallet_id: { in: walletIds } },
+              { receiver_wallet_id: { in: walletIds } },
+            ],
+          },
+          data: { sender_wallet_id: null, receiver_wallet_id: null },
+        });
+        await tx.ledger_entries.updateMany({
+          where: { wallet_id: { in: walletIds } },
+          data: { wallet_id: null },
+        });
+        await tx.escrow_contracts.updateMany({
+          where: {
+            OR: [
+              { buyer_wallet_id: { in: walletIds } },
+              { seller_wallet_id: { in: walletIds } },
+            ],
+          },
+          data: { buyer_wallet_id: null, seller_wallet_id: null },
+        });
+        await tx.wallets.deleteMany({ where: { id: { in: walletIds } } });
+      }
 
       await tx.users.update({
         where: { id: userId },
@@ -712,7 +990,10 @@ if (new Date() > expiryDate) {
           email: null,
           phone: `deleted_${userId.slice(0, 12)}`,
           username: `deleted_${userId}`,
-          password_hash: await bcrypt.hash(`deleted-${userId}-${Date.now()}`, 12),
+          password_hash: await bcrypt.hash(
+            `deleted-${userId}-${Date.now()}`,
+            12,
+          ),
           profile_image: null,
           bio: null,
           country: null,
@@ -748,7 +1029,11 @@ if (new Date() > expiryDate) {
     if (existing) {
       await this.prisma.device_tokens.update({
         where: { id: existing.id },
-        data: { is_active: true, platform: platform || existing.platform, last_seen: new Date() },
+        data: {
+          is_active: true,
+          platform: platform || existing.platform,
+          last_seen: new Date(),
+        },
       });
       return { message: 'Device token updated' };
     }
@@ -770,22 +1055,19 @@ if (new Date() > expiryDate) {
   async refresh(userId: string, rawRefreshToken: string, ip?: string) {
     // Match the presented token to its own active session. This prevents a
     // refresh on one device from consuming another device's session.
-    const sessions = await this.prisma.user_sessions.findMany({
+    const sessions = (await this.prisma.user_sessions.findMany({
       where: {
         user_id: userId,
         expires_at: { gt: new Date() },
-        OR: [
-          { is_revoked: false },
-          { is_revoked: null },
-        ],
+        OR: [{ is_revoked: false }, { is_revoked: null }],
       },
       orderBy: { created_at: 'desc' },
       include: {
         users: {
-          include: { wallets: { take: 1 } }
-        }
+          include: { wallets: { take: 1 } },
+        },
       },
-    }) as any[];
+    })) as any[];
 
     let session: any = null;
     for (const candidate of sessions) {
@@ -796,7 +1078,13 @@ if (new Date() > expiryDate) {
     }
 
     if (!session) {
-      await this.logSecurityEvent(userId, 'REFRESH_TOKEN_INVALID', 'No valid session found', 'high', ip);
+      await this.logSecurityEvent(
+        userId,
+        'REFRESH_TOKEN_INVALID',
+        'No valid session found',
+        'high',
+        ip,
+      );
       throw new UnauthorizedException('Session not found or expired');
     }
 
@@ -804,7 +1092,9 @@ if (new Date() > expiryDate) {
     if (session.used_at) {
       // Token has been used before - possible theft!
       await this.handleTokenTheft(userId, session, ip);
-      throw new UnauthorizedException('Refresh token has been compromised. All sessions revoked.');
+      throw new UnauthorizedException(
+        'Refresh token has been compromised. All sessions revoked.',
+      );
     }
 
     // Atomically claim the token. A concurrent request that loses this
@@ -822,7 +1112,9 @@ if (new Date() > expiryDate) {
     });
     if (claimed.count !== 1) {
       await this.handleTokenTheft(userId, session, ip);
-      throw new UnauthorizedException('Refresh token has been compromised. All sessions revoked.');
+      throw new UnauthorizedException(
+        'Refresh token has been compromised. All sessions revoked.',
+      );
     }
 
     // Check for suspicious activity (different IP, user agent, etc.)
@@ -832,7 +1124,7 @@ if (new Date() > expiryDate) {
         'SUSPICIOUS_ACTIVITY',
         `Refresh token used from different IP: ${ip} (original: ${session.ip_address})`,
         'medium',
-        ip
+        ip,
       );
     }
 
@@ -856,7 +1148,13 @@ if (new Date() > expiryDate) {
       },
     });
 
-    await this.logSecurityEvent(userId, 'TOKEN_REFRESHED', 'Refresh token rotated successfully', 'low', ip);
+    await this.logSecurityEvent(
+      userId,
+      'TOKEN_REFRESHED',
+      'Refresh token rotated successfully',
+      'low',
+      ip,
+    );
 
     return {
       data: {
@@ -881,10 +1179,7 @@ if (new Date() > expiryDate) {
         where: {
           user_id: userId,
           jwt_id: currentJti,
-          OR: [
-            { is_revoked: false },
-            { is_revoked: null },
-          ],
+          OR: [{ is_revoked: false }, { is_revoked: null }],
         },
         data: { is_revoked: true },
       });
@@ -910,10 +1205,7 @@ if (new Date() > expiryDate) {
       where: {
         user_id: userId,
         jwt_id: { not: currentJti },
-        OR: [
-          { is_revoked: false },
-          { is_revoked: null },
-        ],
+        OR: [{ is_revoked: false }, { is_revoked: null }],
       },
       data: { is_revoked: true },
     });
@@ -990,56 +1282,56 @@ if (new Date() > expiryDate) {
   }
 
   // ── Set PIN ───────────────────────────────────────────────────────────────────
- async setPin(userId: string, dto: SetPinDto) {
-if (dto.pin !== dto.confirm_pin) {
-throw new BadRequestException('PINs do not match');
-}
+  async setPin(userId: string, dto: SetPinDto) {
+    if (dto.pin !== dto.confirm_pin) {
+      throw new BadRequestException('PINs do not match');
+    }
 
-if (!/^\d{4,6}$/.test(dto.pin)) {
-throw new BadRequestException('PIN must be 4-6 digits');
-}
+    if (!/^\d{4,6}$/.test(dto.pin)) {
+      throw new BadRequestException('PIN must be 4-6 digits');
+    }
 
-const user = await this.prisma.users.findUnique({
-where: { id: userId },
-select: { pin_hash: true },
-});
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { pin_hash: true },
+    });
 
-if (!user) {
-throw new NotFoundException('User not found');
-}
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
-// 🚨 Prevent overwriting existing PIN
-if (user.pin_hash) {
-throw new ForbiddenException(
-'PIN already exists. Use Change PIN instead.',
-);
-}
+    // 🚨 Prevent overwriting existing PIN
+    if (user.pin_hash) {
+      throw new ForbiddenException(
+        'PIN already exists. Use Change PIN instead.',
+      );
+    }
 
-const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
 
-// Security fix: Do NOT concatenate userId with PIN
-// bcrypt generates its own salt - userId is public anyway
-const pin_hash = await bcrypt.hash(dto.pin, rounds);
+    // Security fix: Do NOT concatenate userId with PIN
+    // bcrypt generates its own salt - userId is public anyway
+    const pin_hash = await bcrypt.hash(dto.pin, rounds);
 
-await this.prisma.users.update({
-where: { id: userId },
-data: {
-pin_hash,
-failed_pin_attempts: 0,
-},
-});
+    await this.prisma.users.update({
+      where: { id: userId },
+      data: {
+        pin_hash,
+        failed_pin_attempts: 0,
+      },
+    });
 
-await this.prisma.activity_logs.create({
-data: {
-user_id: userId,
-activity: 'SET_PIN',
-},
-});
+    await this.prisma.activity_logs.create({
+      data: {
+        user_id: userId,
+        activity: 'SET_PIN',
+      },
+    });
 
-return {
-message: 'PIN set successfully',
-};
-}
+    return {
+      message: 'PIN set successfully',
+    };
+  }
 
   // ── Verify PIN (used by other services) ──────────────────────────────────────
   async verifyPin(userId: string, pin: string): Promise<void> {
@@ -1047,7 +1339,8 @@ message: 'PIN set successfully',
       where: { id: userId },
       select: { pin_hash: true, failed_pin_attempts: true },
     });
-    if (!user?.pin_hash) throw new BadRequestException('PIN not set. Please set a PIN first.');
+    if (!user?.pin_hash)
+      throw new BadRequestException('PIN not set. Please set a PIN first.');
 
     const failedPinAttempts = user.failed_pin_attempts ?? 0;
 
@@ -1061,202 +1354,199 @@ message: 'PIN set successfully',
     const valid = await bcrypt.compare(pin, user.pin_hash);
     if (!valid) {
       await this.prisma.users.update({
-        where: { id: userId }, data: { failed_pin_attempts: { increment: 1 } },
+        where: { id: userId },
+        data: { failed_pin_attempts: { increment: 1 } },
       });
       const left = MAX_PIN_ATTEMPTS - failedPinAttempts - 1;
-      throw new UnauthorizedException(`Incorrect PIN. ${left} attempt(s) remaining.`);
+      throw new UnauthorizedException(
+        `Incorrect PIN. ${left} attempt(s) remaining.`,
+      );
     }
     await this.prisma.users.update({
-      where: { id: userId }, data: { failed_pin_attempts: 0 },
+      where: { id: userId },
+      data: { failed_pin_attempts: 0 },
     });
   }
 
   async changePin(userId: string, dto: ChangePinDto) {
-if (dto.new_pin !== dto.confirm_pin) {
-throw new BadRequestException('New PINs do not match');
-}
-if (!/^\d{4,6}$/.test(dto.new_pin)) {
-  throw new BadRequestException(
-    'PIN must be 4-6 digits',
-  );
-}
-
-const user = await this.prisma.users.findUnique({
-where: { id: userId },
-select: {
-pin_hash: true,
-},
-});
-
-if (!user?.pin_hash) {
-throw new BadRequestException('No PIN found');
-}
-
-// Security fix: Don't concatenate userId with PIN
-const validOldPin = await bcrypt.compare(dto.old_pin, user.pin_hash);
-
-if (!validOldPin) {
-  throw new UnauthorizedException('Old PIN is incorrect');
-}
-
-const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
-
-const newHash = await bcrypt.hash(dto.new_pin, rounds);
-
-await this.prisma.users.update({
-where: { id: userId },
-data: {
-pin_hash: newHash,
-failed_pin_attempts: 0,
-},
-});
-
-await this.prisma.activity_logs.create({
-data: {
-user_id: userId,
-activity: 'CHANGE_PIN',
-},
-});
-
-return {
-message: 'PIN changed successfully',
-};
-}
-
-async resetForgottenPin(
-  userId: string,
-  dto: ResetPinDto,
-) {
-  if (dto.new_pin !== dto.confirm_pin) {
-    throw new BadRequestException(
-      'PINs do not match',
-    );
-  }
-  if (!/^\d{4,6}$/.test(dto.new_pin)) {
-    throw new BadRequestException(
-      'PIN must be 4-6 digits',
-    );
-  }
-
-  const user = await this.prisma.users.findUnique({
-    where: { id: userId },
-  });
-
-  if (!user) {
-    throw new NotFoundException('User not found');
-  }
-
-  // VERIFY OTP
-  await this.verifyOtp(
-    user.phone,
-    dto.otp,
-    'forgot_pin',
-  );
-
-  // VERIFY PASSWORD
-  const validPassword = await bcrypt.compare(
-    dto.password,
-    user.password_hash,
-  );
-
-  if (!validPassword) {
-    throw new UnauthorizedException(
-      'Incorrect password',
-    );
-  }
-
-  const rounds =
-    Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
-
-  // Security fix: Don't concatenate userId with PIN
-  const pin_hash = await bcrypt.hash(dto.new_pin, rounds);
-
-  await this.prisma.users.update({
-    where: { id: userId },
-    data: {
-      pin_hash,
-      failed_pin_attempts: 0,
-    },
-  });
-
-  await this.prisma.activity_logs.create({
-    data: {
-      user_id: userId,
-      activity: 'RESET_FORGOTTEN_PIN',
-    },
-  });
-
-  return {
-    message: 'PIN reset successfully',
-  };
-}
-
-// ── Send OTP ─────────────────────────────────────────────────────────────────
-async sendOtp(userId: string, phone: string, purpose: string) {
-  const recent = await this.prisma.otp_verifications.findFirst({
-    where: {
-      user_id: userId,
-      purpose,
-      verified: false,
-      created_at: { gte: new Date(Date.now() - 60_000) },
-    },
-  });
-
-  if (recent)
-    throw new BadRequestException('Please wait 60 seconds before requesting a new OTP');
-
-  const code = generateOtp(6);
-
-  const expires_at = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60_000);
-
-  await this.prisma.otp_verifications.create({
-    data: {
-      user_id: userId,
-      otp_code: code,
-      purpose,
-      expires_at,
-    },
-  });
-  // Send OTP via configured SMS provider (do not log OTP contents)
-  try {
-    const message = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
-    // Prefer push if user has push notifications enabled and device tokens registered
-    try {
-      const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
-      if (settings?.push_notifications) {
-        const pushBody = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
-        const pushed = await this.notifications.sendPush(userId, 'Your FARM OTP', pushBody, {
-          otp_code: code,
-          otp_expires: String(OTP_EXPIRY_MINUTES),
-          purpose,
-          auto_fill: 'true',
-        });
-        if (pushed) {
-          return { message: 'OTP sent to your device' };
-        }
-      }
-    } catch (e) {
-      this.logger.debug('Push attempt failed or not configured: ' + e);
+    if (dto.new_pin !== dto.confirm_pin) {
+      throw new BadRequestException('New PINs do not match');
+    }
+    if (!/^\d{4,6}$/.test(dto.new_pin)) {
+      throw new BadRequestException('PIN must be 4-6 digits');
     }
 
-    await this.notifications.sendSms(phone, message);
-  } catch (e) {
-    this.logger.error('OTP SMS send failed: ' + e);
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: {
+        pin_hash: true,
+      },
+    });
+
+    if (!user?.pin_hash) {
+      throw new BadRequestException('No PIN found');
+    }
+
+    // Security fix: Don't concatenate userId with PIN
+    const validOldPin = await bcrypt.compare(dto.old_pin, user.pin_hash);
+
+    if (!validOldPin) {
+      throw new UnauthorizedException('Old PIN is incorrect');
+    }
+
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+
+    const newHash = await bcrypt.hash(dto.new_pin, rounds);
+
+    await this.prisma.users.update({
+      where: { id: userId },
+      data: {
+        pin_hash: newHash,
+        failed_pin_attempts: 0,
+      },
+    });
+
+    await this.prisma.activity_logs.create({
+      data: {
+        user_id: userId,
+        activity: 'CHANGE_PIN',
+      },
+    });
+
+    return {
+      message: 'PIN changed successfully',
+    };
   }
 
-  return { message: 'OTP sent to your phone' };
-}
+  async resetForgottenPin(userId: string, dto: ResetPinDto) {
+    if (dto.new_pin !== dto.confirm_pin) {
+      throw new BadRequestException('PINs do not match');
+    }
+    if (!/^\d{4,6}$/.test(dto.new_pin)) {
+      throw new BadRequestException('PIN must be 4-6 digits');
+    }
+
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // VERIFY OTP
+    await this.verifyOtp(user.phone, dto.otp, 'forgot_pin');
+
+    // VERIFY PASSWORD
+    const validPassword = await bcrypt.compare(
+      dto.password,
+      user.password_hash,
+    );
+
+    if (!validPassword) {
+      throw new UnauthorizedException('Incorrect password');
+    }
+
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+
+    // Security fix: Don't concatenate userId with PIN
+    const pin_hash = await bcrypt.hash(dto.new_pin, rounds);
+
+    await this.prisma.users.update({
+      where: { id: userId },
+      data: {
+        pin_hash,
+        failed_pin_attempts: 0,
+      },
+    });
+
+    await this.prisma.activity_logs.create({
+      data: {
+        user_id: userId,
+        activity: 'RESET_FORGOTTEN_PIN',
+      },
+    });
+
+    return {
+      message: 'PIN reset successfully',
+    };
+  }
+
+  // ── Send OTP ─────────────────────────────────────────────────────────────────
+  async sendOtp(userId: string, phone: string, purpose: string) {
+    const recent = await this.prisma.otp_verifications.findFirst({
+      where: {
+        user_id: userId,
+        purpose,
+        verified: false,
+        created_at: { gte: new Date(Date.now() - 60_000) },
+      },
+    });
+
+    if (recent)
+      throw new BadRequestException(
+        'Please wait 60 seconds before requesting a new OTP',
+      );
+
+    const code = generateOtp(6);
+
+    const expires_at = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60_000);
+
+    await this.prisma.otp_verifications.create({
+      data: {
+        user_id: userId,
+        otp_code: code,
+        purpose,
+        expires_at,
+      },
+    });
+    // Send OTP via configured SMS provider (do not log OTP contents)
+    try {
+      const message = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
+      // Prefer push if user has push notifications enabled and device tokens registered
+      try {
+        const settings = await this.prisma.user_settings.findUnique({
+          where: { user_id: userId },
+        });
+        if (settings?.push_notifications) {
+          const pushBody = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
+          const pushed = await this.notifications.sendPush(
+            userId,
+            'Your FARM OTP',
+            pushBody,
+            {
+              otp_code: code,
+              otp_expires: String(OTP_EXPIRY_MINUTES),
+              purpose,
+              auto_fill: 'true',
+            },
+          );
+          if (pushed) {
+            return { message: 'OTP sent to your device' };
+          }
+        }
+      } catch (e) {
+        this.logger.debug('Push attempt failed or not configured: ' + e);
+      }
+
+      await this.notifications.sendSms(phone, message);
+    } catch (e) {
+      this.logger.error('OTP SMS send failed: ' + e);
+    }
+
+    return { message: 'OTP sent to your phone' };
+  }
 
   // Add this method inside the AuthService class
 
-async resendOtp(userId: string) {
-  const user = await this.prisma.users.findUnique({
-    where: { id: userId },
-    select: { phone: true },
-  });
-  if (!user) throw new NotFoundException('User not found');
-  return this.sendOtp(userId, user.phone, 'phone_verification');
-}
+  async resendOtp(userId: string) {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return this.sendOtp(userId, user.phone, 'phone_verification');
+  }
   // ── Private helpers ───────────────────────────────────────────────────────────
   private normalizePhoneNumber(phone?: string | null) {
     if (!phone) return '';
@@ -1300,10 +1590,13 @@ async resendOtp(userId: string) {
   }
 
   private refreshSessionExpiry(): Date {
-    const configuredDays = Number(this.cfg.get('JWT_REFRESH_SESSION_DAYS', '365'));
-    const days = Number.isFinite(configuredDays) && configuredDays > 0
-      ? configuredDays
-      : 365;
+    const configuredDays = Number(
+      this.cfg.get('JWT_REFRESH_SESSION_DAYS', '365'),
+    );
+    const days =
+      Number.isFinite(configuredDays) && configuredDays > 0
+        ? configuredDays
+        : 365;
     return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 
@@ -1320,12 +1613,14 @@ async resendOtp(userId: string) {
       'TOKEN_THEFT_DETECTED',
       `Refresh token reuse detected. Session ID: ${session.id}. All sessions revoked.`,
       'critical',
-      ip
+      ip,
     );
-    
+
     // Optional: Send alert email/SMS to user
     // TODO: Implement notification service call
-    this.logger.warn(`🚨 TOKEN THEFT DETECTED for user ${userId} from IP ${ip}`);
+    this.logger.warn(
+      `🚨 TOKEN THEFT DETECTED for user ${userId} from IP ${ip}`,
+    );
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
@@ -1350,7 +1645,7 @@ async resendOtp(userId: string) {
     eventType: string,
     description: string,
     severity: 'low' | 'medium' | 'high' | 'critical',
-    ip?: string
+    ip?: string,
   ) {
     try {
       await this.prisma.security_events.create({
@@ -1363,7 +1658,11 @@ async resendOtp(userId: string) {
         },
       });
 
-      if (severity === 'medium' || severity === 'high' || severity === 'critical') {
+      if (
+        severity === 'medium' ||
+        severity === 'high' ||
+        severity === 'critical'
+      ) {
         const logMessage = `[SECURITY EVENT] ${severity.toUpperCase()} ${eventType} user=${userId} ip=${ip ?? 'unknown'} description=${description}`;
         if (severity === 'critical') {
           this.logger.error(logMessage, 'AuthService');
