@@ -17,4 +17,8 @@ export class FirebaseService {
   get messaging() {
     return admin.messaging();
   }
+
+  async verifyIdToken(idToken: string): Promise<admin.auth.DecodedIdToken> {
+    return admin.auth().verifyIdToken(idToken);
+  }
 }

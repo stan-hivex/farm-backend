@@ -239,6 +239,7 @@ export class EscrowService {
     await this.prisma.escrow_messages.create({
       data: { escrow_id: escrowId, sender_id: userId, message: `DISPUTE RAISED: ${dto.reason}` },
     });
+    if (!otherPartyId) throw new BadRequestException('Escrow has no other party');
 
     await Promise.all([
       this.notificationsService.sendNotification(userId, {
@@ -278,6 +279,7 @@ export class EscrowService {
     await this.prisma.escrow_contracts.update({
       where: { id: escrowId }, data: { status: 'cancelled' },
     });
+    if (!escrow.seller_id) throw new BadRequestException('Escrow has no seller');
 
     await this.notificationsService.sendNotification(escrow.seller_id, {
       type: 'escrow_cancelled',

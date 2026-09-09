@@ -303,6 +303,7 @@ export class AuthController {
   ) {
     return this.authService.verifyPhone(
       dto.firebaseIdToken,
+      dto.pendingLoginId,
       req.ip || '',
       req.headers['user-agent'] || '',
     );

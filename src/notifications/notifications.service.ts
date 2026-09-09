@@ -191,6 +191,29 @@ async updateSettings(userId: string, body: any) {
     return { message: 'Notification marked as read' };
   }
 
+  async markAllRead(userId: string) {
+    await this.prisma.notifications.updateMany({
+      where: { user_id: userId, is_read: false },
+      data: { is_read: true },
+    });
+    return { message: 'All notifications marked as read' };
+  }
+
+  async deleteNotification(userId: string, id: string) {
+    const result = await this.prisma.notifications.deleteMany({
+      where: { id, user_id: userId },
+    });
+    if (result.count === 0) throw new Error('Notification not found');
+    return { message: 'Notification deleted' };
+  }
+
+  async deleteAllNotifications(userId: string) {
+    const result = await this.prisma.notifications.deleteMany({
+      where: { user_id: userId },
+    });
+    return { message: 'All notifications deleted', deletedCount: result.count };
+  }
+
   async sendEmail(to: string, subject: string, html: string) {
     try {
       await this.mailer.sendMail({ from: this.cfg.get('SMTP_FROM'), to, subject, html });
