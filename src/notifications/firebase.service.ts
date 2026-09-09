@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as admin from 'firebase-admin';
+import type { Messaging } from 'firebase-admin/messaging';
 import * as path from 'path';
 
 @Injectable()
@@ -14,7 +15,7 @@ export class FirebaseService {
     }
   }
 
-  get messaging() {
+  get messaging(): Messaging {
     return admin.messaging();
   }
 
