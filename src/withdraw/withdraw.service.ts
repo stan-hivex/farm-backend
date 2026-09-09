@@ -427,15 +427,17 @@ export class WithdrawService {
     if (!wallet) return false;
 
     const amount = Number(withdrawal.amount ?? 0);
+    const platformFee = Number(withdrawal.fee ?? 0);
     const previousBalance = Number(wallet.balance ?? 0);
     const previousLocked = Number(wallet.locked_balance ?? 0);
     const unlockAmount = Math.min(previousLocked, amount);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.withdrawal.update({
+      const completed = await tx.withdrawal.updateMany({
         where: { reference },
         data: { status: 'COMPLETED' },
       });
+      if (completed.count === 0) return;
 
       await tx.wallets.update({
         where: { id: wallet.id },
@@ -467,13 +469,35 @@ export class WithdrawService {
           },
         });
 
-        // Platform fee crediting is handled after the main transaction to avoid nested tx expectations in tests
-        // The actual crediting will be performed below outside of this $transaction
+        if (platformFee > 0) {
+          const superadminUser = await tx.users.findFirst({
+            where: { role: 'super_admin', is_deleted: false },
+            include: { wallets: { where: { is_active: true }, take: 1 } },
+          });
+          const superWallet = superadminUser?.wallets?.[0];
+          if (!superWallet) {
+            throw new BadRequestException('Superadmin wallet not found for withdrawal fee credit');
+          }
+
+          const superadminBalance = Number(superWallet.balance ?? 0);
+          await tx.wallets.update({
+            where: { id: superWallet.id },
+            data: { balance: { increment: platformFee } },
+          });
+          await tx.ledger_entries.create({
+            data: {
+              transaction_id: transaction.id,
+              wallet_id: superWallet.id,
+              entry_type: 'credit',
+              amount: platformFee,
+              balance_before: superadminBalance,
+              balance_after: superadminBalance + platformFee,
+              description: `Platform withdrawal fee credited — ref: ${reference}`,
+            },
+          });
+        }
       }
     });
-
-    // Attempt to credit platform fee after completion
-    this.creditPlatformFee(reference).catch((e) => this.logger.error(`creditPlatformFee error: ${e?.message ?? e}`));
 
     await Promise.all([
       this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
@@ -493,41 +517,6 @@ export class WithdrawService {
     });
 
     return true;
-  }
-
-  // Credit the platform (superadmin) wallet with the withdrawal fee. This runs outside the main transaction
-  // to avoid nested transaction expectations in unit tests and to keep the primary flow intact.
-  private async creditPlatformFee(reference: string) {
-    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
-    if (!withdrawal) return;
-    const platformFee = Number(withdrawal.fee ?? 0);
-    if (platformFee <= 0) return;
-
-    try {
-      const superadminUser = await this.prisma.users.findFirst({
-        where: { role: 'super_admin', is_deleted: false },
-        include: { wallets: { where: { is_active: true }, take: 1 } },
-      });
-      if (!superadminUser || !superadminUser.wallets || superadminUser.wallets.length === 0) return;
-      const superWallet = superadminUser.wallets[0];
-
-      await this.prisma.$transaction(async (tx) => {
-        await tx.wallets.update({ where: { id: superWallet.id }, data: { balance: { increment: platformFee } } });
-        await tx.ledger_entries.create({
-          data: {
-            transaction_id: null,
-            wallet_id: superWallet.id,
-            entry_type: 'credit',
-            amount: platformFee,
-            balance_before: Number(superWallet.balance ?? 0),
-            balance_after: Number(superWallet.balance ?? 0) + platformFee,
-            description: `Platform withdrawal fee credited — ref: ${reference}`,
-          },
-        });
-      });
-    } catch (e) {
-      this.logger.error(`Failed to credit platform fee for ${reference}: ${e?.message ?? e}`);
-    }
   }
 
   async rejectWithdrawal(reference: string, reason: string) {

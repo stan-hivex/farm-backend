@@ -76,7 +76,7 @@ export class AdminService {
     const where: any = {};
 
     if (query.status) where.status = query.status;
-    if (query.transaction_type) where.transaction_type = query.transaction_type;
+    if (query.transaction_type || query.type) where.transaction_type = query.transaction_type ?? query.type;
     if (query.search) {
       where.OR = [
         { transaction_reference: { contains: query.search, mode: 'insensitive' } },
@@ -92,10 +92,10 @@ export class AdminService {
         orderBy: { created_at: 'desc' },
         include: {
           wallets_transactions_sender_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true },
+            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
           },
           wallets_transactions_receiver_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true },
+            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
           },
         },
       }),
@@ -117,6 +117,12 @@ export class AdminService {
         processed_at: tx.processed_at,
         sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
         receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
+        user_id: tx.wallets_transactions_sender_wallet_idTowallets?.user_id ?? tx.wallets_transactions_receiver_wallet_idTowallets?.user_id,
+        username: tx.wallets_transactions_sender_wallet_idTowallets?.users?.username ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.username,
+        user_name: [
+          tx.wallets_transactions_sender_wallet_idTowallets?.users?.first_name ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.first_name,
+          tx.wallets_transactions_sender_wallet_idTowallets?.users?.last_name ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.last_name,
+        ].filter(Boolean).join(' '),
       })),
       meta: paginate(total, page, limit),
     };
@@ -808,9 +814,11 @@ export class AdminService {
 
   async listKycQueue(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const status = query.status ?? 'pending';
+    const where = status === 'all' ? {} : { status };
     const [items, total] = await Promise.all([
       this.prisma.kyc_documents.findMany({
-        where: { status: 'pending' },
+        where,
         skip,
         take,
         orderBy: { created_at: 'asc' },
@@ -831,7 +839,7 @@ export class AdminService {
           },
         },
       }),
-      this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
+      this.prisma.kyc_documents.count({ where }),
     ]);
     return {
       data: items.map((d) => ({
@@ -1193,7 +1201,8 @@ export class AdminService {
     return {
       data: {
         total_users: totalUsers,
-        total_revenue: Number(totalRevenue._sum.amount ?? 0),
+        total_revenue: total_platform_fee_earnings,
+        total_transaction_volume: Number(totalRevenue._sum.amount ?? 0),
         active_transactions: activeTransactions,
         flagged_transactions: flaggedTx,
         support_tickets: supportTickets,
@@ -1208,6 +1217,8 @@ export class AdminService {
         // Escrow revenue breakdown (amounts are in FARM)
         escrow_total_earnings,
         withdrawal_total_earnings,
+        withdraw_fee_earnings: withdrawal_total_earnings,
+        withdraw_transaction_count: withdrawalAgg._count.id ?? 0,
         platform_fee_total_earnings: total_platform_fee_earnings,
         escrow_creation_earnings,
         escrow_release_earnings,

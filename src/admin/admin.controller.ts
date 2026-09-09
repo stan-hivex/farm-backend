@@ -119,7 +119,7 @@ export class AdminController {
   @Permissions('admin:write')
   @Put('fees/:id')                updateFee(@Param('id') id: string, @Body() dto: { value: string }, @CurrentUser() u: any) { return this.svc.updateFee(id, dto.value, u.id); }
   @Permissions('admin:write')
-  @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.processPayout(id, u.id, 'completed'); }
+  @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any, @Body() body: { status?: 'completed' | 'failed' }) { return this.svc.processPayout(id, u.id, body.status ?? 'completed'); }
   @Permissions('admin:write')
   @Post('notifications/send')     sendNotification(@CurrentUser() u: any, @Body() dto: SendNotificationDto) { return this.svc.sendNotification(u.id, dto); }
   @Permissions('admin:write')
@@ -172,10 +172,13 @@ export class AdminController {
 
   @Permissions('admin:write')
   @Post('withdrawals/:id/process')
-  async processWithdrawal(@Param('id') id: string, @CurrentUser() u: any) {
+  async processWithdrawal(@Param('id') id: string, @CurrentUser() u: any, @Body() body: { status?: 'completed' | 'failed' }) {
     const w = await this.withdrawService.getWithdrawal(id);
     if (!w) throw new NotFoundException('Withdrawal not found');
-    // For admin-triggered processing we mark as success (webhook will normally confirm)
+    if (body.status === 'failed') {
+      await this.withdrawService.rejectWithdrawal(w.reference, 'Rejected by administrator');
+      return { message: 'Withdrawal rejected' };
+    }
     await this.withdrawService.markAsSuccess(w.reference);
     return { message: 'Withdrawal processed (marked completed)' };
   }

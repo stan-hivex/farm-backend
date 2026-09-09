@@ -17,6 +17,7 @@ describe('WithdrawService', () => {
   beforeEach(async () => {
     const prismaMock = {
       wallets: { findFirst: jest.fn() },
+      users: { findFirst: jest.fn() },
       withdrawal: { create: jest.fn(), findUnique: jest.fn() },
       transactions: { create: jest.fn(), findUnique: jest.fn() },
       $transaction: jest.fn(),
@@ -155,17 +156,20 @@ describe('WithdrawService', () => {
       reference: 'ref-1',
       userId: 'user-1',
       amount: 1000,
+      fee: 15,
       status: 'PENDING',
       method: 'BANK_TRANSFER',
     });
     prisma.transactions.findUnique.mockResolvedValue({ id: 'tx-1', metadata: {} });
     prisma.wallets.findFirst.mockResolvedValue(userWallet);
+    prisma.users.findFirst.mockResolvedValue({ wallets: [adminWallet] });
 
     const txWalletUpdates: any[] = [];
     const txLedgerCreates: any[] = [];
     prisma.$transaction.mockImplementation(async (callback: any) => {
       const tx = {
         withdrawal: { update: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        users: { findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }) },
         wallets: {
           update: jest.fn().mockImplementation(async ({ where, data }: { where: any; data: any }) => {
             txWalletUpdates.push({ where, data });
@@ -192,6 +196,7 @@ describe('WithdrawService', () => {
     expect(txLedgerCreates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ entry_type: 'debit', amount: 1000 }),
+        expect.objectContaining({ entry_type: 'credit', amount: 15 }),
       ]),
     );
   });
