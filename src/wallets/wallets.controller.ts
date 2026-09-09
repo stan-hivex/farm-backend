@@ -20,7 +20,7 @@ class SendFundsDto {
 
 @ApiTags('Wallet')
 @ApiBearerAuth('JWT')
-@UseGuards(JwtGuard)
+@UseGuards(JwtGuard, EmailVerifiedGuard)
 @Controller({ path: 'wallet', version: '1' })
 export class WalletsController {
   constructor(private readonly svc: WalletsService) {}
@@ -32,7 +32,7 @@ export class WalletsController {
 
   @Permissions('wallet:write')
   @Post('send')
-  @UseGuards(JwtGuard, EmailVerifiedGuard, KycGuard)
+  @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Send FARM tokens (PIN required)' })
   send(@CurrentUser() u: any, @Body() dto: SendFundsDto, @Req() req: Request) {
     return this.svc.sendFunds(u.id, dto, req.ip || '');
@@ -40,7 +40,6 @@ export class WalletsController {
 
   @Permissions('wallet:read')
   @Get('transactions')
-  @UseGuards(JwtGuard, EmailVerifiedGuard)
   @ApiOperation({ summary: 'List my transactions' })
   transactions(@CurrentUser() u: any, @Query() q: any) {
     return this.svc.getTransactions(u.id, q);

@@ -150,27 +150,13 @@ async updateSettings(userId: string, body: any) {
   };
 }
 
-  private normalizeNotificationType(type: string | notification_type | undefined): notification_type {
-    const validTypes = new Set<notification_type>([
-      'system', 'admin', 'transaction', 'transfer_received', 'transfer_sent', 'payment_request',
-      'request_completed', 'request_declined', 'deposit_completed', 'withdrawal_completed', 'merchant',
-      'system_announcement', 'kyc_update', 'security', 'escrow', 'investment', 'transfer_request',
-    ]);
-    const normalized = type?.toString().trim().toLowerCase();
-    if (!normalized) return 'system';
-    if (validTypes.has(normalized as notification_type)) return normalized as notification_type;
-    if (normalized.startsWith('merchant_payment')) return 'merchant';
-    return 'system';
-  }
-
   async createInApp(userId: string, dto: {
     type: notification_type | string; title: string; body: string; metadata?: any; entityId?: string;
   }) {
-    const type = this.normalizeNotificationType(dto.type);
     return this.prisma.notifications.create({
       data: {
         user_id: userId,
-        type,
+        type: dto.type as notification_type,
         title: dto.title,
         body: dto.body,
         metadata: {
@@ -203,28 +189,6 @@ async updateSettings(userId: string, body: any) {
       data: { is_read: true },
     });
     return { message: 'Notification marked as read' };
-  }
-
-  async markAllRead(userId: string) {
-    await this.prisma.notifications.updateMany({
-      where: { user_id: userId, is_read: false },
-      data: { is_read: true },
-    });
-    return { message: 'All notifications marked as read' };
-  }
-
-  async deleteNotification(userId: string, id: string) {
-    await this.prisma.notifications.deleteMany({
-      where: { id, user_id: userId },
-    });
-    return { message: 'Notification deleted' };
-  }
-
-  async deleteAllNotifications(userId: string) {
-    await this.prisma.notifications.deleteMany({
-      where: { user_id: userId },
-    });
-    return { message: 'All notifications deleted' };
   }
 
   async sendEmail(to: string, subject: string, html: string) {
@@ -274,16 +238,7 @@ async updateSettings(userId: string, body: any) {
         data: payloadData,
         tokens,
       };
-      if (!this.firebase || !this.firebase.messaging) {
-        this.logger.warn('Firebase messaging not initialized; skipping push send');
-        return false;
-      }
-      const messaging = (this.firebase as any)?.messaging;
-      if (!messaging) {
-        this.logger.warn('Firebase messaging unavailable; skipping push send');
-        return false;
-      }
-      const resp = await messaging.sendEachForMulticast(payload as any);
+      const resp = await this.firebase.messaging.sendEachForMulticast(payload as any);
       const invalidTokens = resp.responses
         .map((result, index) => ({ result, token: tokens[index] }))
         .filter(({ result }) => {
@@ -307,39 +262,25 @@ async updateSettings(userId: string, body: any) {
   }
 
   async notifyTransfer(senderId: string, receiverId: string, amount: number, reference: string) {
-    const [sender, receiver, receiverWallet] = await Promise.all([
-      (this.prisma as any).users.findUnique({ where: { id: senderId }, select: { first_name: true, last_name: true, username: true } }),
-      (this.prisma as any).users.findUnique({ where: { id: receiverId }, select: { first_name: true, last_name: true, username: true } }),
-      (this.prisma as any).wallets.findFirst({ where: { user_id: receiverId }, select: { balance: true } }),
-    ]);
-
-    const senderName = [sender?.first_name, sender?.last_name].filter(Boolean).join(' ').trim() || sender?.username || 'Someone';
-    const receiverName = [receiver?.first_name, receiver?.last_name].filter(Boolean).join(' ').trim() || receiver?.username || 'you';
-    const balance = receiverWallet ? Number(receiverWallet.balance ?? 0) : 0;
-
     await Promise.all([
       this.sendNotification(senderId, {
-        type: 'transfer_sent', entityId: reference, title: '✅ Transfer Sent',
-        body: `You sent ${amount} FARM to ${receiverName}.`,
+        type: 'transfer_sent', entityId: reference, title: 'Transfer Successful',
+        body: `You sent ${amount} FARM.`,
       }),
       this.sendNotification(receiverId, {
-        type: 'transfer_received', entityId: reference, title: '💰 Money Received',
-        body: `${senderName} sent you ${amount} FARM. Your balance is ${balance} FARM. Tap to view.`,
+        type: 'transfer_received', entityId: reference, title: 'Money Received',
+        body: `You received ${amount} FARM.`,
       }),
     ]);
   }
 
-  async sendNotification(userId: string | null, dto: {
+  async sendNotification(userId: string, dto: {
     type: notification_type | string;
     title: string;
     body: string;
     entityId?: string;
     metadata?: Record<string, any>;
   }) {
-    if (!userId) {
-      return null;
-    }
-
     const timestamp = new Date().toISOString();
     const metadata = {
       ...(dto.metadata ?? {}),

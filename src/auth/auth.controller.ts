@@ -289,23 +289,6 @@ export class AuthController {
     );
   }
 
-  @Public()
-  @Post('resolve-login-email')
-  @HttpCode(HttpStatus.OK)
-  @Throttle({
-    default: {
-      limit: 10,
-      ttl: 60,
-      generateKey: authThrottleKey,
-    },
-  })
-  @ApiOperation({ summary: 'Resolve a FARM phone or username to its login email' })
-  resolveLoginEmail(
-    @Body() body: { identifier: string },
-  ) {
-    return this.authService.resolveLoginEmail(body.identifier);
-  }
-
   /**
    * ================= VERIFY PHONE (Firebase) =================
    * Public endpoint: verifies Firebase ID token and issues FARM JWT
@@ -320,7 +303,6 @@ export class AuthController {
   ) {
     return this.authService.verifyPhone(
       dto.firebaseIdToken,
-      dto.pendingLoginId,
       req.ip || '',
       req.headers['user-agent'] || '',
     );

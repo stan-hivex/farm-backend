@@ -8,7 +8,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CurrencyConversionService } from '../currency/currency-conversion.service';
 
 @Injectable()
 export class DepositService {
@@ -21,7 +20,6 @@ export class DepositService {
     private websocket: WebsocketGateway,
     private cache: CacheService,
     private notificationsService: NotificationsService,
-    private currencyConversionService: CurrencyConversionService,
   ) {}
 
   async createDeposit(userId: string, dto: any) {
@@ -46,8 +44,9 @@ export class DepositService {
 
     const reference = uuidv4();
     const provider = 'paystack';
-    const fee = 0;
-    const total = amount;
+    const feeRate = paymentMethod === 'MOBILE_MONEY' ? 0.015 : 0.02;
+    const fee = amount * feeRate;
+    const total = amount + fee;
 
     const depositCurrency = paymentMethod === 'CRYPTO' ? 'FARM' : dto.currency || 'KES';
     const depositAmount = amount;
@@ -99,13 +98,8 @@ export class DepositService {
 
     if (paymentMethod === 'CRYPTO') {
       const farmAmount = depositAmount;
-      const currentRate = await this.currencyConversionService.getCurrentRate();
-      const farmToUsdRate = Number(currentRate.farm_usd_rate);
-      const amountUsd = Number((farmAmount * farmToUsdRate).toFixed(2));
-
-      if (!Number.isFinite(farmToUsdRate) || farmToUsdRate <= 0) {
-        throw new BadRequestException('The FARM/USD conversion rate is unavailable');
-      }
+      const farmToUsdRate = 130;
+      const amountUsd = Number((farmAmount / farmToUsdRate).toFixed(2));
 
       const init = await this.ivorypay.createPayment({
         amount: amountUsd,
@@ -224,42 +218,10 @@ export class DepositService {
     // Return only successfully completed deposits to users.
     // Failed, pending or processing deposits are intentionally hidden
     // so the frontend shows only confirmed funds the webhook has validated.
-    const deposits = await this.prisma.deposit.findMany({
+    return this.prisma.deposit.findMany({
       where: { userId, status: 'SUCCESS' },
       orderBy: { createdAt: 'desc' },
     });
-
-    if (deposits.length === 0) {
-      return { success: true, data: deposits };
-    }
-
-    const references = deposits.map((deposit) => deposit.reference);
-    const transactions = await this.prisma.transactions.findMany({
-      where: { transaction_reference: { in: references } },
-      select: { transaction_reference: true, amount: true, currency: true, metadata: true },
-    });
-    const transactionByReference = new Map(
-      transactions.map((transaction) => [transaction.transaction_reference, transaction]),
-    );
-
-    return {
-      success: true,
-      data: deposits.map((deposit) => {
-        const transaction = transactionByReference.get(deposit.reference);
-        const metadata = (transaction?.metadata as Record<string, unknown> | null) ?? {};
-        return {
-          ...deposit,
-          amount_farm: metadata.amount_farm ?? (transaction?.currency === 'FARM' ? transaction.amount : null),
-          amount_usd: metadata.amount_usd ?? null,
-          farm_to_usd_rate: metadata.farm_to_usd_rate ?? null,
-          metadata: {
-            ...metadata,
-            payment_method: metadata.payment_method ?? deposit.paymentMethod,
-            currency_fiat: metadata.currency_fiat ?? deposit.currency,
-          },
-        };
-      }),
-    };
   }
 
   async getWalletBalance(userId: string) {

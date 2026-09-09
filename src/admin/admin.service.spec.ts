@@ -24,7 +24,6 @@ describe('AdminService.broadcastNotification', () => {
       {} as any,
       notifications as any,
       {} as any,
-      {} as any,
     );
 
     await service.broadcastNotification('admin-1', {
@@ -70,7 +69,6 @@ describe('AdminService.broadcastNotification', () => {
       prisma as any,
       {} as any,
       notifications as any,
-      {} as any,
       {} as any,
     );
 

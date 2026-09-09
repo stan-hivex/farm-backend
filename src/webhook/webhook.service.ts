@@ -119,7 +119,7 @@ export class WebhookService {
     // Amount validation (anti-fraud): verify webhook amount matches transaction amount.
     // Use transaction.metadata.amount_fiat when available (initiator provides fiat + exchange rate),
     // otherwise fall back to the stored transaction.amount conversion.
-    if (['charge.success', 'payment.success', 'transaction.success'].includes(event)) {
+    if (event === 'charge.success') {
       try {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
@@ -172,16 +172,41 @@ export class WebhookService {
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
       queued = true;
     } catch (e) {
-      this.logger.error('Failed to enqueue Paystack webhook to Bull queue', e as any);
-      await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-      await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
+      const client = this.getRedisClient();
+      if (client) {
+        try {
+          await client.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
+          queued = true;
+        } catch (fallbackError) {
+          this.logger.error('Failed to enqueue Paystack webhook via fallback Redis list', fallbackError as any);
+          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+          await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
+        }
+      } else {
+        this.logger.error('Failed to enqueue Paystack webhook to Bull queue', e as any);
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+        await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
+      }
     }
 
     if (!queued) {
-      this.logger.warn('Paystack webhook queue failed; leaving event retryable');
-      return { received: true };
+      this.logger.warn('Paystack webhook queue failed, processing directly to finalize deposit');
+      try {
+        await this.handlePaystackWebhookProcessing(payload);
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
+      } catch (directError) {
+        this.logger.error('Direct processing fallback failed for Paystack webhook', directError as any);
+      }
     } else {
-      this.logger.log('Paystack webhook queued successfully for asynchronous processing');
+      this.logger.log('Paystack webhook queued successfully; processing directly in-process as a worker fallback');
+      setImmediate(async () => {
+        try {
+          await this.handlePaystackWebhookProcessing(payload);
+        } catch (directError) {
+          this.logger.error('In-process fallback processing failed for Paystack webhook', directError as any);
+        }
+      });
     }
 
     if (eventId) await this.markProcessed('paystack', eventId);
@@ -309,16 +334,41 @@ export class WebhookService {
       await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
       queued = true;
     } catch (e) {
-      this.logger.error('Failed to enqueue Ivorypay webhook to Bull queue', e as any);
-      await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
-      await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
+      const client = this.getRedisClient();
+      if (client) {
+        try {
+          await client.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'queued' } });
+          queued = true;
+        } catch (fallbackError) {
+          this.logger.error('Failed to enqueue Ivorypay webhook via fallback Redis list', fallbackError as any);
+          await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+          await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
+        }
+      } else {
+        this.logger.error('Failed to enqueue Ivorypay webhook to Bull queue', e as any);
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'failed', response: 'enqueue_error' } });
+        await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
+      }
     }
 
     if (!queued) {
-      this.logger.warn('Ivorypay webhook queue failed; leaving event retryable');
-      return { received: true };
+      this.logger.warn('Ivorypay webhook queue failed, processing directly to finalize deposit or withdrawal');
+      try {
+        await this.handleIvorypayWebhookProcessing(payload);
+        await this.prisma.webhook_logs.update({ where: { id: log.id }, data: { status: 'processed', response: 'direct_processed' } });
+      } catch (directError) {
+        this.logger.error('Direct processing fallback failed for Ivorypay webhook', directError as any);
+      }
     } else {
-      this.logger.log('Ivorypay webhook queued successfully for asynchronous processing');
+      this.logger.log('Ivorypay webhook queued successfully; processing directly in-process as a worker fallback');
+      setImmediate(async () => {
+        try {
+          await this.handleIvorypayWebhookProcessing(payload);
+        } catch (directError) {
+          this.logger.error('In-process fallback processing failed for Ivorypay webhook', directError as any);
+        }
+      });
     }
 
     if (eventId) await this.markProcessed('ivorypay', eventId);
@@ -1541,8 +1591,7 @@ export class WebhookService {
   }
 
   private async retryVerifyTransaction(reference: string) {
-    // Mobile-money and bank-transfer settlement can take up to 180 seconds.
-    const attempts = 36;
+    const attempts = 6;
     const intervalMs = 5000;
     for (let i = 0; i < attempts; i++) {
       try {
@@ -1621,7 +1670,7 @@ export class WebhookService {
 
     try {
       // Defense-in-depth: validate amount before processing (catches queue corruption/manipulation)
-      if (['charge.success', 'payment.success', 'transaction.success'].includes(event)) {
+      if (event === 'charge.success') {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
           const metadata = transaction.metadata as any ?? {};
@@ -1661,12 +1710,6 @@ export class WebhookService {
 
         await this.depositService.finalizeSuccessfulDeposit(reference);
       } else if (event === 'transfer.success') {
-        const transferCode = payload.data?.transfer_code || payload.data?.id || reference;
-        const verifiedTransfer = await this.paystackService.getTransferStatus(transferCode);
-        if (verifiedTransfer?.status?.toString().toLowerCase() !== 'success') {
-          this.logger.warn(`Paystack transfer ${reference} verification returned status=${verifiedTransfer?.status ?? 'unknown'}; skipping completion`);
-          return;
-        }
         await this.withdrawService.markAsSuccess(reference);
       } else if (['transfer.failed', 'transfer.reversed'].includes(event)) {
         const failureDetail =
@@ -1863,6 +1906,15 @@ export class WebhookService {
         const verifiedTransaction = await this.verifyIvorypayWebhookTransaction(resolvedReference, resolverProviderRef, candidateRefs);
         if (!verifiedTransaction) {
           this.logger.warn(`Ivorypay webhook processing: verification did not confirm success for ${resolvedReference} providerRef=${resolverProviderRef ?? rawReference}`);
+          if (deposit || transaction) {
+            this.logger.warn(`Ivorypay webhook processing: fallback finalize for ${resolvedReference} due to verified transaction unavailable`);
+            try {
+              const credited = await this.finalizeDeposit(resolvedReference);
+              this.logger.log(`Ivorypay webhook processing fallback finalize result for ${resolvedReference}: ${credited}`);
+            } catch (fallbackError) {
+              this.logger.error(`Ivorypay webhook processing fallback finalize failed for ${resolvedReference}: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+            }
+          }
           return;
         }
 

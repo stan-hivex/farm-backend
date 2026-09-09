@@ -81,8 +81,6 @@ export class AdminService {
       where.OR = [
         { transaction_reference: { contains: query.search, mode: 'insensitive' } },
         { description: { contains: query.search, mode: 'insensitive' } },
-        { wallets_transactions_sender_wallet_idTowallets: { users: { username: { contains: query.search, mode: 'insensitive' } } } },
-        { wallets_transactions_receiver_wallet_idTowallets: { users: { username: { contains: query.search, mode: 'insensitive' } } } },
       ];
     }
 
@@ -94,10 +92,10 @@ export class AdminService {
         orderBy: { created_at: 'desc' },
         include: {
           wallets_transactions_sender_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
+            select: { wallet_address: true, user_id: true },
           },
           wallets_transactions_receiver_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
+            select: { wallet_address: true, user_id: true },
           },
         },
       }),
@@ -115,15 +113,10 @@ export class AdminService {
         net_amount: Number(tx.net_amount ?? 0),
         currency: tx.currency,
         description: tx.description,
-        method: (tx.metadata as any)?.payment_method ?? (tx.metadata as any)?.method ?? (tx.metadata as any)?.provider ?? null,
         created_at: tx.created_at,
         processed_at: tx.processed_at,
         sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
         receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
-        sender_user: tx.wallets_transactions_sender_wallet_idTowallets?.users ?? null,
-        receiver_user: tx.wallets_transactions_receiver_wallet_idTowallets?.users ?? null,
-        user_id: tx.wallets_transactions_sender_wallet_idTowallets?.user_id ?? tx.wallets_transactions_receiver_wallet_idTowallets?.user_id ?? null,
-        username: tx.wallets_transactions_sender_wallet_idTowallets?.users?.username ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.username ?? null,
       })),
       meta: paginate(total, page, limit),
     };
@@ -261,44 +254,10 @@ export class AdminService {
     merchantId: string, adminId: string,
     dto: { status: 'approved' | 'rejected'; rejection_reason?: string },
   ) {
-    const existing = await this.prisma.merchants.findUnique({
-      where: { id: merchantId },
-      include: {
-        users_merchants_user_idTousers: {
-          select: { id: true },
-        },
-      },
-    });
-    if (!existing) throw new NotFoundException('Merchant not found');
-
     const merchant = await this.prisma.merchants.update({
       where: { id: merchantId },
       data: { status: dto.status as any, approved_by: adminId, approved_at: new Date() },
     });
-
-    const applicantId = existing.users_merchants_user_idTousers?.id ?? existing.user_id;
-    if (applicantId) {
-      const approved = dto.status === 'approved';
-      const title = approved ? 'Merchant account approved' : 'Merchant account rejected';
-      const body = approved
-        ? `${existing.business_name} has been approved. You can now access the merchant dashboard.`
-        : `${existing.business_name} was rejected.${dto.rejection_reason ? ` Reason: ${dto.rejection_reason}` : ' Please review your details and resubmit.'}`;
-      const metadata = {
-        merchantId,
-        status: dto.status,
-        rejectionReason: dto.rejection_reason ?? null,
-      };
-
-      await this.notifications.createInApp(applicantId, {
-        type: 'merchant',
-        title,
-        body,
-        metadata,
-        entityId: merchantId,
-      });
-      await this.notifications.sendPush(applicantId, title, body, metadata);
-    }
-
     await this.prisma.audit_logs.create({
       data: {
         user_id: adminId, action: `MERCHANT_${dto.status.toUpperCase()}`,
@@ -849,10 +808,9 @@ export class AdminService {
 
   async listKycQueue(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
-    const where = query.status ? { status: query.status } : { status: 'pending' };
     const [items, total] = await Promise.all([
       this.prisma.kyc_documents.findMany({
-        where,
+        where: { status: 'pending' },
         skip,
         take,
         orderBy: { created_at: 'asc' },
@@ -873,7 +831,7 @@ export class AdminService {
           },
         },
       }),
-      this.prisma.kyc_documents.count({ where }),
+      this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
     ]);
     return {
       data: items.map((d) => ({
@@ -1250,7 +1208,6 @@ export class AdminService {
         // Escrow revenue breakdown (amounts are in FARM)
         escrow_total_earnings,
         withdrawal_total_earnings,
-        withdraw_fee_earnings: withdrawal_total_earnings,
         platform_fee_total_earnings: total_platform_fee_earnings,
         escrow_creation_earnings,
         escrow_release_earnings,
@@ -1345,11 +1302,6 @@ export class AdminService {
       _sum: { settlement: true },
     });
 
-    const withdrawalFees = await this.prisma.withdrawal.aggregate({
-      where: { status: 'COMPLETED' },
-      _sum: { fee: true },
-    });
-
     const availableBalance = Math.max(
       0,
       Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0),
@@ -1362,7 +1314,6 @@ export class AdminService {
         locked_balance: Number(wallet.locked_balance ?? 0),
         pending_withdrawals: Number(pendingWithdrawals._sum.amount ?? 0),
         total_withdrawn: Number(totalWithdrawn._sum.settlement ?? 0),
-        withdrawal_fee_earnings: Number(withdrawalFees._sum.fee ?? 0),
         currency: wallet.currency ?? 'FARM',
         wallet_address: wallet.wallet_address,
       },

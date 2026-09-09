@@ -16,21 +16,7 @@ export class MerchantsService {
     country?: string; city?: string;
   }) {
     const existing = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
-    if (existing?.status === 'pending' || existing?.status === 'approved') {
-      throw new BadRequestException('You already have a merchant application');
-    }
-    if (existing?.status === 'rejected') {
-      const merchant = await this.prisma.merchants.update({
-        where: { id: existing.id },
-        data: {
-          ...dto,
-          status: 'pending',
-          approved_by: null,
-          approved_at: null,
-        },
-      });
-      return { data: merchant, message: 'Application resubmitted. Pending review.' };
-    }
+    if (existing) throw new BadRequestException('You already have a merchant application');
     const merchant = await this.prisma.merchants.create({
       data: {
         user_id: userId, ...dto,
@@ -42,10 +28,15 @@ export class MerchantsService {
   }
 
   async getDashboard(userId: string) {
-    const merchant = await this.getMerchantByUser(userId);
-    if (merchant.status !== 'approved') {
-      throw new ForbiddenException('Merchant application is pending approval');
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { kyc_status: true, kyc_level: true },
+    });
+    if (!user || user.kyc_status !== 'verified' || Number(user.kyc_level || 0) < 3) {
+      throw new ForbiddenException('Full KYC verification is required to access the merchant dashboard');
     }
+
+    const merchant = await this.getMerchantByUser(userId);
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const qrData = await this.qrService.getMerchantQr(merchant.id);
@@ -177,7 +168,6 @@ export class MerchantsService {
   }
 
   async getTransactions(userId: string, query: any) {
-    await this.requireApprovedMerchant(userId);
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const [items, total] = await Promise.all([
@@ -215,7 +205,7 @@ export class MerchantsService {
   }
 
   async getPayouts(userId: string, query: any) {
-    const merchant = await this.requireApprovedMerchant(userId);
+    const merchant = await this.getMerchantByUser(userId);
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const [items, total] = await Promise.all([
       this.prisma.merchant_payouts.findMany({
@@ -230,12 +220,12 @@ export class MerchantsService {
   }
 
   async regenerateQr(userId: string) {
-    const merchant = await this.requireApprovedMerchant(userId);
+    const merchant = await this.getMerchantByUser(userId);
     return this.qrService.generateMerchantQr(merchant.id);
   }
 
   async getMerchantQr(userId: string) {
-    const merchant = await this.requireApprovedMerchant(userId);
+    const merchant = await this.getMerchantByUser(userId);
     if (!merchant.qr_code) {
       return this.qrService.generateMerchantQr(merchant.id);
     }
@@ -246,13 +236,5 @@ export class MerchantsService {
     const m = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
     if (!m) throw new BadRequestException('Merchant account not found. Please apply first.');
     return m;
-  }
-
-  private async requireApprovedMerchant(userId: string) {
-    const merchant = await this.getMerchantByUser(userId);
-    if (merchant.status !== 'approved') {
-      throw new ForbiddenException('Merchant application is pending approval');
-    }
-    return merchant;
   }
 }

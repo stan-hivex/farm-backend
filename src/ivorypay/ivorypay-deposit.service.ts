@@ -4,7 +4,6 @@ import { IvorypayService } from './ivorypay.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { v4 as uuidv4 } from 'uuid';
-import { CurrencyConversionService } from '../currency/currency-conversion.service';
 
 @Injectable()
 export class IvorypayDepositService {
@@ -15,7 +14,6 @@ export class IvorypayDepositService {
     private readonly ivorypayService: IvorypayService,
     private readonly notificationsService: NotificationsService,
     private readonly websocket: WebsocketGateway,
-    private readonly currencyConversionService: CurrencyConversionService,
   ) {}
 
   async createDeposit(userId: string, dto: any) {
@@ -40,13 +38,7 @@ export class IvorypayDepositService {
       },
     });
 
-    const currentRate = await this.currencyConversionService.getCurrentRate();
-    const farmToUsdRate = Number(currentRate.farm_usd_rate);
-    if (!Number.isFinite(farmToUsdRate) || farmToUsdRate <= 0) {
-      throw new BadRequestException('The FARM/USD conversion rate is unavailable');
-    }
-    const amountUsd = Number((amount * farmToUsdRate).toFixed(2));
-    const usdToFarmRate = Number((1 / farmToUsdRate).toFixed(8));
+    const amountUsd = Number((amount / 130).toFixed(2));
     const init = await this.ivorypayService.createPayment({
       amount: amountUsd,
       currency: 'USD',
@@ -58,8 +50,6 @@ export class IvorypayDepositService {
         provider: 'ivorypay',
         amount_farm: amount,
         amount_usd: amountUsd,
-        farm_to_usd_rate: farmToUsdRate,
-        usd_to_farm_rate: usdToFarmRate,
         currency_fiat: 'USD',
         user_id: userId,
         payment_method: 'CRYPTO',
@@ -84,8 +74,6 @@ export class IvorypayDepositService {
           provider_ref: providerRef,
           amount_farm: amount,
           amount_usd: amountUsd,
-          farm_to_usd_rate: farmToUsdRate,
-          usd_to_farm_rate: usdToFarmRate,
           currency_fiat: 'USD',
           user_id: userId,
           payment_method: 'CRYPTO',
@@ -176,25 +164,6 @@ export class IvorypayDepositService {
       await this.prisma.transactions.update({ where: { id: transaction.id }, data: { status: 'failed' } });
       this.logger.warn(`IvoryPay deposit marked failed: reference=${reference}`);
       return { processed: true, reference, status: 'failed' };
-    }
-
-    let verifiedTransaction: any;
-    try {
-      const transactionMetadata = (transaction.metadata as Record<string, unknown> | null) ?? {};
-      verifiedTransaction = await this.ivorypayService.verifyTransaction(
-        reference,
-        deposit.providerRef ?? undefined,
-        [transactionMetadata.provider_ref].filter((value): value is string => typeof value === 'string' && value.length > 0),
-      );
-    } catch (error) {
-      this.logger.warn(`IvoryPay deposit verification failed for ${reference}: ${error instanceof Error ? error.message : String(error)}`);
-      return { processed: false, reason: 'provider_verification_failed', reference };
-    }
-
-    const verifiedStatus = verifiedTransaction?.status?.toString().toUpperCase();
-    if (verifiedStatus !== 'SUCCESS' && verifiedStatus !== 'COMPLETED') {
-      this.logger.warn(`IvoryPay deposit verification is not successful for ${reference}: status=${verifiedStatus ?? 'unknown'}`);
-      return { processed: false, reason: 'provider_not_successful', reference, status: verifiedStatus };
     }
 
     const result = await this.prisma.$transaction(async (tx: any) => {

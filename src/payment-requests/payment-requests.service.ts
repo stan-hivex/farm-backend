@@ -11,7 +11,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
-import { PAYMENT_REQUEST_EXPIRY_MS } from './payment-request-expiry';
 
 @Injectable()
 export class PaymentRequestsService {
@@ -65,7 +64,7 @@ export class PaymentRequestsService {
       if (requesterUserId === recipientUserId) throw new BadRequestException('Cannot request from yourself');
 
       const reference = generateTxReference();
-      const expiresAt = new Date(Date.now() + PAYMENT_REQUEST_EXPIRY_MS);
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
       const request = await tx.payment_requests.create({
         data: {
@@ -136,81 +135,11 @@ export class PaymentRequestsService {
     return { data: requests, pagination: { total, page: query.page || 1, limit: query.limit || 10 } };
   }
 
-  async processExpiredRequests() {
-    const now = new Date();
-    const expiredRequests = await this.prisma.payment_requests.findMany({
-      where: { status: 'pending', expires_at: { lte: now } },
-      include: { users_requester: true, users_recipient: true },
-    });
-
-    for (const request of expiredRequests) {
-      await this.prisma.payment_requests.update({
-        where: { id: request.id },
-        data: { status: 'expired' },
-      });
-
-      await Promise.all([
-        this.notificationsService.sendNotification(request.requester_user_id, {
-          type: 'payment_request_expired',
-          entityId: request.id,
-          title: 'Payment Request Expired',
-          body: 'Your payment request has expired.',
-        }),
-        this.notificationsService.sendNotification(request.recipient_user_id, {
-          type: 'payment_request_expired',
-          entityId: request.id,
-          title: 'Payment Request Expired',
-          body: 'A payment request sent to you has expired.',
-        }),
-      ]);
-    }
-
-    return expiredRequests.length;
-  }
-
-  async acceptAndTransfer(senderUserId: string, dto: { request_id: string; pin?: string; biometric_auth?: boolean }, ip: string) {
-    await this.verifyTransactionAuthorization(senderUserId, dto);
+  async acceptAndTransfer(senderUserId: string, dto: { request_id: string; pin: string }, ip: string) {
+    await this.authService.verifyPin(senderUserId, dto.pin);
 
     const result = await this.prisma.$transaction(async (tx) => {
-      return this.transferRequestInTransaction(tx, senderUserId, dto.request_id, ip);
-    });
-
-    await this.notifyCompletedTransfer(senderUserId, result, dto.request_id);
-
-    return { data: result.data, message: result.message };
-  }
-
-  async acceptAndTransferBatch(senderUserId: string, dto: { request_ids: string[]; pin?: string; biometric_auth?: boolean }, ip: string) {
-    const requestIds = [...new Set(dto.request_ids)];
-    if (requestIds.length === 0) throw new BadRequestException('At least one request is required');
-    await this.verifyTransactionAuthorization(senderUserId, dto);
-
-    const results = await this.prisma.$transaction(async (tx) => {
-      const completed: Array<{ requestId: string; data: any; message: string; requesterUserId: string }> = [];
-      for (const requestId of requestIds) {
-        completed.push(await this.transferRequestInTransaction(tx, senderUserId, requestId, ip));
-      }
-      return completed;
-    });
-
-    await Promise.all(results.map((result) => this.notifyCompletedTransfer(senderUserId, result, result.requestId)));
-    return {
-      data: { request_ids: requestIds, transactions: results.map((result) => result.data), status: 'completed' },
-      message: `${results.length} payment request${results.length === 1 ? '' : 's'} completed successfully`,
-    };
-  }
-
-  private async verifyTransactionAuthorization(userId: string, dto: { pin?: string; biometric_auth?: boolean }) {
-    if (dto.pin) {
-      await this.authService.verifyPin(userId, dto.pin);
-      return;
-    }
-    if (dto.biometric_auth === true) return;
-    throw new BadRequestException('PIN or biometric authorization is required');
-  }
-
-  private async transferRequestInTransaction(tx: any, senderUserId: string, requestId: string, ip: string) {
-      const request = await tx.payment_requests.findUnique({ where: { id: requestId }, include: { wallets_recipient: true, wallets_requester: true, users_recipient: true, users_requester: true } });
+      const request = await tx.payment_requests.findUnique({ where: { id: dto.request_id }, include: { wallets_recipient: true, wallets_requester: true, users_recipient: true, users_requester: true } });
 
       if (!request) throw new NotFoundException('Payment request not found');
 
@@ -258,10 +187,9 @@ export class PaymentRequestsService {
 
       await tx.payment_requests.update({ where: { id: request.id }, data: { status: 'completed', transaction_id: transaction.id, accepted_at: new Date(), completed_at: new Date() } });
 
-      return { requestId: request.id, data: { transaction_reference: reference, amount: amount, fee, status: 'completed', request_reference: request.request_reference }, message: 'Payment completed successfully', requesterUserId: request.requester_user_id };
-  }
+      return { data: { transaction_reference: reference, amount: amount, fee, status: 'completed', request_reference: request.request_reference }, message: 'Payment completed successfully', requesterUserId: request.requester_user_id };
+    });
 
-  private async notifyCompletedTransfer(senderUserId: string, result: { data: any; requesterUserId: string }, requestId: string) {
     await Promise.all([
       this.notificationsService.notifyTransfer(
         senderUserId,
@@ -271,11 +199,13 @@ export class PaymentRequestsService {
       ),
       this.notificationsService.sendNotification(result.requesterUserId!, {
         type: 'request_completed',
-        entityId: requestId,
+        entityId: dto.request_id,
         title: 'Request Completed',
         body: 'Your payment request has been paid.',
       }),
     ]);
+
+    return { data: result.data, message: result.message };
   }
 
   async rejectRequest(senderUserId: string, requestId: string) {

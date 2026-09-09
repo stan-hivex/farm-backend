@@ -13,7 +13,6 @@ import { UserRole } from '../common/enums';
 
 class UserStatusDto { @IsOptional() @IsBoolean() is_active?: boolean; @IsOptional() @IsBoolean() is_suspended?: boolean; }
 class ResolveDto { @IsIn(['buyer','seller']) winner!: 'buyer'|'seller'; @IsString() note!: string; }
-class KycReviewDto { @IsIn(['verified','rejected','under_review','additional_info_required']) status!: string; @IsOptional() @IsString() rejection_reason?: string; }
 class MerchantDecisionDto { @IsIn(['approved','rejected']) status!: 'approved'|'rejected'; @IsOptional() @IsString() rejection_reason?: string; }
 class SettingDto { @IsString() value!: string; }
 
@@ -90,7 +89,7 @@ export class AdminController {
   @Permissions('admin:read')
   @Get('dashboard')               stats() { return this.svc.getDashboardStats(); }
   @Permissions('admin:read')
-  @Get('transactions')            transactions(@Query() q: any) { return this.svc.listTransactions({ ...q, transaction_type: q.transaction_type ?? q.type }); }
+  @Get('transactions')            transactions(@Query() q: any) { return this.svc.listTransactions(q); }
   @Permissions('admin:read')
   @Get('users')                   users(@Query() q: any) { return this.svc.listUsers(q); }
   @Permissions('admin:read')
@@ -128,7 +127,7 @@ export class AdminController {
   @Permissions('admin:read')
   @Get('kyc/queue')               kycQueue(@Query() q: any) { return this.svc.listKycQueue(q); }
   @Permissions('admin:write')
-  @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: KycReviewDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
+  @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
   @Permissions('admin:read')
   @Get('analytics')               analytics() { return this.svc.getAdminAnalytics(); }
   @Permissions('admin:read')

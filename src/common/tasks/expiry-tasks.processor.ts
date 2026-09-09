@@ -28,17 +28,14 @@ export class ExpiryTasksProcessor implements OnModuleInit {
           {
             jobId: 'expiry-run',
             repeat: { every: 60_000 },
-            removeOnComplete: { age: 24 * 60 * 60, count: 100 },
-            removeOnFail: { age: 7 * 24 * 60 * 60, count: 100 },
+            removeOnComplete: true,
+            removeOnFail: false,
           },
         );
         this.logger.log('Scheduled repeatable expiry-run job every 60s');
       } else {
         this.logger.log('Expiry-run repeatable job already exists');
       }
-
-      await this.queue.clean(7 * 24 * 60 * 60 * 1000, 'failed', 1000);
-      await this.queue.clean(24 * 60 * 60 * 1000, 'completed', 1000);
     } catch (e) {
       this.logger.error('Failed to ensure repeatable expiry job', e as any);
     }

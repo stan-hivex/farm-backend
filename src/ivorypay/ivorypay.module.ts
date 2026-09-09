@@ -6,10 +6,9 @@ import { CryptoController } from './crypto.controller';
 import { PrismaModule } from '../database/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { WebsocketModule } from '../websocket/websocket.module';
-import { CurrencyModule } from '../currency/currency.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, NotificationsModule, WebsocketModule, CurrencyModule],
+  imports: [ConfigModule, PrismaModule, NotificationsModule, WebsocketModule],
   controllers: [CryptoController],
   providers: [IvorypayService, IvorypayDepositService],
   exports: [IvorypayService, IvorypayDepositService],

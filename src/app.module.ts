@@ -1,11 +1,11 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { Module, Logger } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { PrismaModule } from './database/prisma.module';
-import { RedisModule } from './common/redis/redis.module';
+import { RedisModule } from './common/redis.module';
 import { CacheModule } from './common/cache/cache.module';
 import { CacheInterceptor } from './common/interceptors/cache.interceptor';
 import { EncryptionModule } from './common/encryption/encryption.module';
@@ -38,7 +38,6 @@ import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
-import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 
 
 @Module({
@@ -66,16 +65,22 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (cfg: ConfigService) => {
-        const redisUrl = cfg.get<string>('REDIS_URL')?.trim();
+        const redisUrl = cfg.get<string>('REDIS_URL');
         if (!redisUrl) {
-          throw new Error('REDIS_URL is required for Bull queue processing. Configure an external managed Redis URL.');
+          const logger = new Logger('AppModule');
+          logger.warn(
+            'REDIS_URL not configured. Bull queue processing will attempt local Redis at 127.0.0.1:6379.',
+          );
         }
 
         return {
-          redis: redisUrl,
+          redis: redisUrl ?? {
+            host: '127.0.0.1',
+            port: 6379,
+          },
           defaultJobOptions: {
-            removeOnComplete: { age: 24 * 60 * 60, count: 1000 },
-            removeOnFail: { age: 7 * 24 * 60 * 60, count: 1000 },
+            removeOnComplete: true,
+            removeOnFail: false,
           },
         };
       },
@@ -125,8 +130,4 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     },
   ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer.apply(IdempotencyMiddleware).forRoutes('*');
-  }
-}
+export class AppModule {}

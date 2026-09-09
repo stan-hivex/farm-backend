@@ -12,10 +12,8 @@ export class CacheService {
 
   constructor(private readonly cfg: ConfigService, @Optional() private readonly redis?: RedisService) {
     this.prefix = this.cfg.get<string>('CACHE_PREFIX', 'cache:');
-    const configuredTtl = Number(this.cfg.get<string>('CACHE_TTL_SECONDS', '60'));
-    this.defaultTtl = Number.isFinite(configuredTtl) ? Math.max(0, configuredTtl) : 60;
-    const configuredEnabled = this.cfg.get<string | boolean>('CACHE_ENABLED', 'true');
-    this.enabled = String(configuredEnabled).toLowerCase() !== 'false';
+    this.defaultTtl = Number(this.cfg.get<string>('CACHE_TTL_SECONDS', '60'));
+    this.enabled = this.cfg.get<string>('CACHE_ENABLED', 'true').toLowerCase() !== 'false';
   }
 
   private buildKey(key: string) {
@@ -50,9 +48,8 @@ export class CacheService {
       const client = this.redis?.getClient();
       if (!client) return;
       const raw = typeof value === 'string' ? (value as unknown as string) : JSON.stringify(value);
-      const ttl = ttlSeconds ?? this.defaultTtl;
-      if (ttl > 0) {
-        await client.set(this.buildKey(key), raw, 'EX', Math.ceil(ttl));
+      if (ttlSeconds && ttlSeconds > 0) {
+        await client.set(this.buildKey(key), raw, 'EX', Math.ceil(ttlSeconds));
       } else {
         await client.set(this.buildKey(key), raw);
       }
