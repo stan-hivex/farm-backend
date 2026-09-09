@@ -81,10 +81,6 @@ async function bootstrap() {
   }
 
   const corsOriginMatches = (origin: string) => {
-    if (!corsOrigins?.length) {
-      return false;
-    }
-
     return corsOrigins.some((allowedOrigin) => {
       if (allowedOrigin === '*') {
         return !isProduction;
@@ -104,37 +100,48 @@ async function bootstrap() {
     });
   };
 
+  const isAllowedCorsOrigin = (origin?: string) => {
+    if (!origin) {
+      return true;
+    }
+
+    return corsOriginMatches(origin) || localhostCorsRegex.test(origin);
+  };
+
+  // Respond to browser preflight requests before the CORS package or any
+  // authentication middleware can reject them without CORS headers.
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.method !== 'OPTIONS') {
+      return next();
+    }
+
+    const origin = req.headers.origin;
+    if (origin && !isAllowedCorsOrigin(origin)) {
+      return res.sendStatus(403);
+    }
+
+    if (origin) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Vary', 'Origin');
+      res.header('Access-Control-Allow-Credentials', 'true');
+    }
+    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+    res.header(
+      'Access-Control-Allow-Headers',
+      req.headers['access-control-request-headers'] ||
+        'Content-Type, Authorization, Accept, Origin, X-Requested-With',
+    );
+    res.header('Access-Control-Max-Age', '86400');
+    return res.sendStatus(204);
+  });
+
   app.enableCors({
     origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (corsOriginMatches(origin)) {
-        return callback(null, true);
-      }
-
-      if (localhostCorsRegex.test(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error('Origin not allowed by CORS'), false);
+      return callback(null, isAllowedCorsOrigin(origin));
     },
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
     credentials: true,
-  });
-
-  // Explicitly handle OPTIONS preflight requests so Cloudflare and browsers
-  // receive a quick successful response. CORS headers are provided by the
-  // cors middleware registered via `enableCors` above.
-  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (req.method === 'OPTIONS') {
-      res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-      return res.sendStatus(204);
-    }
-    return next();
   });
 
   app.useGlobalPipes(
