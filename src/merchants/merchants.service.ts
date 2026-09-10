@@ -45,7 +45,10 @@ export class MerchantsService {
     const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
     const previousMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
 
-    const [salesToday, totalRevenue, currentMonthRevenue, previousMonthRevenue, recentTxns] = await Promise.all([
+    const weekStart = new Date(today);
+    weekStart.setDate(weekStart.getDate() - 6);
+
+    const [salesToday, totalRevenue, currentMonthRevenue, previousMonthRevenue, weeklySales, recentTxns] = await Promise.all([
       this.prisma.transactions.aggregate({
         where: {
           receiver_wallet_id: wallet?.id,
@@ -82,6 +85,16 @@ export class MerchantsService {
         _sum: { amount: true },
       }),
       this.prisma.transactions.findMany({
+        where: {
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          created_at: { gte: weekStart },
+        },
+        select: { amount: true, created_at: true },
+        orderBy: { created_at: 'asc' },
+      }),
+      this.prisma.transactions.findMany({
         where: { receiver_wallet_id: wallet?.id, transaction_type: 'merchant_payment' },
         orderBy: { created_at: 'desc' }, take: 10,
       }),
@@ -92,6 +105,25 @@ export class MerchantsService {
     const monthlyGrowth = previousMonthRevenueValue === 0
       ? (currentMonthRevenueValue === 0 ? 0 : 100)
       : Number((((currentMonthRevenueValue - previousMonthRevenueValue) / previousMonthRevenueValue) * 100).toFixed(2));
+
+    const weeklyPerformance = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(weekStart);
+      date.setDate(weekStart.getDate() + index);
+      return {
+        date: date.toISOString().slice(0, 10),
+        amount: 0,
+        count: 0,
+      };
+    });
+    for (const sale of weeklySales) {
+      const saleDate = sale.created_at;
+      if (!saleDate) continue;
+      const dayIndex = Math.floor((new Date(saleDate).getTime() - weekStart.getTime()) / 86400000);
+      if (dayIndex >= 0 && dayIndex < weeklyPerformance.length) {
+        weeklyPerformance[dayIndex].amount += Number(sale.amount ?? 0);
+        weeklyPerformance[dayIndex].count += 1;
+      }
+    }
 
     // Enrich recent transactions with customer username where possible
     const enrichedRecent = await Promise.all(recentTxns.map(async (t: any) => {
@@ -157,6 +189,7 @@ export class MerchantsService {
           current_month_revenue: currentMonthRevenueValue,
           previous_month_revenue: previousMonthRevenueValue,
           monthly_growth_percentage: monthlyGrowth,
+          weekly_performance: weeklyPerformance,
         },
         recent_transactions: enrichedRecent,
       },
