@@ -31,10 +31,6 @@ services:
       - key: REDIS_URL
         sync: false
 
-      # Firebase Admin service-account JSON, stored as a Render secret.
-      - key: FIREBASE_SERVICE_ACCOUNT_JSON
-        sync: false
-
       - key: WEB_CONCURRENCY
         value: "1"
 

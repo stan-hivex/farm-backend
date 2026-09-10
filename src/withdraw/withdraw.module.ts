@@ -7,7 +7,6 @@ import { PaystackModule } from '../paystack/paystack.module';
 import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SecurityModule } from '../security/security.module';
-import { CurrencyModule } from '../currency/currency.module';
 import { KycGuard } from '../common/guards/kyc.guard';
 
 @Module({
@@ -18,7 +17,6 @@ import { KycGuard } from '../common/guards/kyc.guard';
     NotificationsModule,
     IvorypayModule,
     SecurityModule,
-    CurrencyModule,
   ],
   controllers: [WithdrawController],
   providers: [WithdrawService, KycGuard],

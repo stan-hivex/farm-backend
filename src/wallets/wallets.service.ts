@@ -5,6 +5,7 @@ import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class WalletsService {
@@ -15,15 +16,17 @@ export class WalletsService {
     private authService: AuthService,
     private securityService: SecurityService,
     private notificationsService: NotificationsService,
+    private cache: CacheService,
   ) {}
 
   async getMyWallet(userId: string) {
-    const wallet = await this.prisma.wallets.findFirst({
+    return this.cache.wrap(`wallet:${userId}:balance`, 15, async () => {
+      const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
-    });
+      });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const available = Number(wallet.balance) - Number(wallet.locked_balance);
-    return {
+      return {
       data: {
         id: wallet.id,
         wallet_address: wallet.wallet_address,
@@ -35,7 +38,8 @@ export class WalletsService {
         blockchain_address: wallet.blockchain_address,
         is_frozen: wallet.is_frozen,
       },
-    };
+      };
+    });
   }
 
   async sendFunds(
@@ -221,6 +225,15 @@ export class WalletsService {
         .notifyTransfer(senderId, receiverUserId, dto.amount, result.data.transaction_reference)
         .catch((error) => this.logger.error('Transfer notification failed', error));
     }
+
+    await Promise.all([
+      this.cache.cacheDelete(`wallet:${senderId}:balance`),
+      ...(receiverUserId ? [this.cache.cacheDelete(`wallet:${receiverUserId}:balance`)] : []),
+      this.cache.cacheDelete(`dashboard:${senderId}`),
+      ...(receiverUserId ? [this.cache.cacheDelete(`dashboard:${receiverUserId}`)] : []),
+      this.cache.cacheInvalidatePattern(`transactions:${senderId}:*`),
+      ...(receiverUserId ? [this.cache.cacheInvalidatePattern(`transactions:${receiverUserId}:*`)] : []),
+    ]);
 
     return result;
   }
