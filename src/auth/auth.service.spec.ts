@@ -5,6 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TurnstileService } from '../common/services/turnstile.service';
+import { FirebaseService } from '../notifications/firebase.service';
 import * as bcrypt from 'bcrypt';
 
 describe('AuthService', () => {
@@ -20,6 +21,7 @@ describe('AuthService', () => {
         ConfigService,
         { provide: NotificationsService, useValue: {} },
         { provide: TurnstileService, useValue: { verifyToken: jest.fn() } },
+        { provide: FirebaseService, useValue: { verifyIdToken: jest.fn() } },
       ],
     }).compile();
 
