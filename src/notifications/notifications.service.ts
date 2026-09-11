@@ -246,6 +246,11 @@ async updateSettings(userId: string, body: any) {
       this.logger.debug('FirebaseService not available; skipping push send');
       return false;
     }
+    const messaging = this.firebase.messaging;
+    if (!messaging) {
+      this.logger.debug('Firebase messaging not available; skipping push send');
+      return false;
+    }
     try {
       const tokens = await this.getDeviceTokens(userId);
       if (!tokens || tokens.length === 0) return false;
@@ -261,7 +266,7 @@ async updateSettings(userId: string, body: any) {
         data: payloadData,
         tokens,
       };
-      const resp = await this.firebase.messaging.sendEachForMulticast(payload as any);
+      const resp = await messaging.sendEachForMulticast(payload as any);
       const invalidTokens = resp.responses
         .map((result, index) => ({ result, token: tokens[index] }))
         .filter(({ result }) => {
