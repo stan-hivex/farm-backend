@@ -302,7 +302,12 @@ if (new Date() > expiryDate) {
 
     const userRole = (user.role ?? 'user').toString().toLowerCase();
 
-    if (userRole === 'admin' || userRole === 'super_admin') {
+    const requirePhoneVerification =
+      this.cfg.get<string>('REQUIRE_PHONE_VERIFICATION') === 'true';
+
+    // Keep the Firebase OTP flow available, but allow password-authenticated
+    // users to sign in directly until phone verification is re-enabled.
+    if (!requirePhoneVerification || userRole === 'admin' || userRole === 'super_admin') {
       const walletId = user.wallets[0]?.id;
       const tokens = await this.issueTokens(user.id, userRole, walletId);
       const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;

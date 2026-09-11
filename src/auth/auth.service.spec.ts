@@ -43,6 +43,13 @@ describe('AuthService', () => {
     const prisma = module.get(PrismaService);
     const jwt = module.get(JwtService);
     const config = module.get(ConfigService);
+    jest.spyOn(config, 'get').mockImplementation((key: string) => {
+      if (key === 'REQUIRE_PHONE_VERIFICATION') return 'true';
+      if (key === 'BCRYPT_ROUNDS') return '12';
+      if (key === 'JWT_ACCESS_SECRET') return 'access-secret';
+      if (key === 'JWT_REFRESH_SECRET') return 'refresh-secret';
+      return undefined;
+    });
 
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue({
       id: 'user-1',
@@ -67,6 +74,9 @@ describe('AuthService', () => {
     jest.spyOn(prisma.users, 'update').mockResolvedValue({} as any);
     jest.spyOn(prisma.activity_logs, 'create').mockResolvedValue({} as any);
     jest.spyOn(prisma.user_sessions, 'create').mockResolvedValue({} as any);
+    jest.spyOn(prisma.pending_login_verifications, 'create').mockResolvedValue({
+      id: 'pending-1',
+    } as any);
 
     jest.spyOn(jwt, 'signAsync').mockImplementation(async (_payload, options: any) => {
       if (options?.secret === config.get('JWT_ACCESS_SECRET')) {
@@ -83,11 +93,59 @@ describe('AuthService', () => {
       password: 'secret123',
     } as any, '127.0.0.1', 'jest');
 
-    expect(result.data.otp_required).toBe(true);
-    expect(result.data.temporary_login_token).toBeDefined();
+    expect(result.data.requiresPhoneVerification).toBe(true);
+    expect(result.data.pendingLoginId).toBe('pending-1');
     expect(result.data.access_token).toBeUndefined();
     expect(result.data.refresh_token).toBeUndefined();
     expect(prisma.user_sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('issues a session directly when phone verification is disabled', async () => {
+    const prisma = module.get(PrismaService);
+    const jwt = module.get(JwtService);
+    const config = module.get(ConfigService);
+
+    jest.spyOn(prisma.users, 'findFirst').mockResolvedValue({
+      id: 'user-1',
+      phone: '+254700123456',
+      username: 'tester',
+      email: 'tester@example.com',
+      first_name: 'Test',
+      last_name: 'User',
+      role: 'user',
+      kyc_status: 'verified',
+      kyc_level: 0,
+      phone_verified: false,
+      pin_hash: null,
+      profile_image: null,
+      password_hash: await bcrypt.hash('secret123', 10),
+      is_suspended: false,
+      is_active: true,
+      failed_login_attempts: 0,
+      wallets: [],
+    } as any);
+    jest.spyOn(prisma.users, 'update').mockResolvedValue({} as any);
+    jest.spyOn(prisma.user_sessions, 'create').mockResolvedValue({} as any);
+    jest.spyOn(prisma.activity_logs, 'create').mockResolvedValue({} as any);
+    jest.spyOn(prisma.pending_login_verifications, 'create').mockResolvedValue({} as any);
+    jest.spyOn(config, 'get').mockImplementation((key: string) => {
+      if (key === 'BCRYPT_ROUNDS') return '12';
+      if (key === 'JWT_ACCESS_SECRET') return 'access-secret';
+      if (key === 'JWT_REFRESH_SECRET') return 'refresh-secret';
+      return undefined;
+    });
+    jest.spyOn(jwt, 'signAsync').mockResolvedValue('token');
+
+    const result: any = await service.login(
+      { identifier: '+254700123456', password: 'secret123' } as any,
+      '127.0.0.1',
+      'jest',
+    );
+
+    expect(result.data.requiresPhoneVerification).toBe(false);
+    expect(result.data.access_token).toBe('token');
+    expect(prisma.pending_login_verifications.create).not.toHaveBeenCalled();
+    expect(prisma.user_sessions.create).toHaveBeenCalled();
   });
 
   it('issues tokens immediately for admin users', async () => {
@@ -134,7 +192,7 @@ describe('AuthService', () => {
       password: 'secret123',
     } as any, '127.0.0.1', 'jest');
 
-    expect(result.data.otp_required).toBe(false);
+    expect(result.data.requiresPhoneVerification).toBe(false);
     expect(result.data.access_token).toBe('access-token');
     expect(result.data.refresh_token).toBe('refresh-token');
     expect(prisma.user_sessions.create).toHaveBeenCalled();
