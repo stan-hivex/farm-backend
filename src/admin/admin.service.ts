@@ -230,7 +230,15 @@ export class AdminService {
       }),
       this.prisma.merchants.count({ where }),
     ]);
-    return { data: items, meta: paginate(total, page, limit) };
+    return {
+      data: items.map((merchant) => ({
+        ...merchant,
+        email: merchant.users_merchants_user_idTousers?.email ?? merchant.business_email,
+        phone: merchant.users_merchants_user_idTousers?.phone ?? merchant.business_phone,
+        applicant_username: merchant.users_merchants_user_idTousers?.username,
+      })),
+      meta: paginate(total, page, limit),
+    };
   }
 
   async getMerchant(merchantId: string) {
@@ -271,6 +279,28 @@ export class AdminService {
         new_values: dto as any,
       },
     });
+
+    if (merchant.user_id) {
+      const approved = dto.status === 'approved';
+      const title = approved
+        ? 'Merchant application approved'
+        : 'Merchant application not approved';
+      const body = approved
+        ? 'Your merchant application has been approved. You can now access the Merchant Portal.'
+        : `Your merchant application was not approved.${dto.rejection_reason ? ` Reason: ${dto.rejection_reason}` : ''} Please review your details and submit again.`;
+      await this.notifications.sendNotification(merchant.user_id, {
+        type: 'merchant',
+        entityId: merchant.id,
+        title,
+        body,
+        metadata: {
+          merchantId: merchant.id,
+          status: dto.status,
+          rejectionReason: dto.rejection_reason ?? '',
+        },
+      });
+    }
+
     return { data: merchant, message: `Merchant ${dto.status}` };
   }
 

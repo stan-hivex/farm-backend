@@ -16,7 +16,23 @@ export class MerchantsService {
     country?: string; city?: string;
   }) {
     const existing = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
-    if (existing) throw new BadRequestException('You already have a merchant application');
+    if (existing) {
+      if (existing.status !== 'rejected') {
+        throw new BadRequestException('You already have a merchant application');
+      }
+
+      const merchant = await this.prisma.merchants.update({
+        where: { id: existing.id },
+        data: {
+          ...dto,
+          status: 'pending',
+          approved_by: null,
+          approved_at: null,
+        },
+      });
+      return { data: merchant, message: 'Application resubmitted. Pending review.' };
+    }
+
     const merchant = await this.prisma.merchants.create({
       data: {
         user_id: userId, ...dto,
@@ -28,6 +44,28 @@ export class MerchantsService {
   }
 
   async getDashboard(userId: string) {
+    const merchant = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
+    if (!merchant) {
+      return {
+        data: {
+          application_status: 'not_submitted',
+          message: 'Welcome to the Merchant Portal. Submit your business details to get started.',
+        },
+      };
+    }
+
+    if (merchant.status !== 'approved') {
+      return {
+        data: {
+          application_status: merchant.status ?? 'pending',
+          merchant,
+          message: merchant.status === 'rejected'
+            ? 'Your merchant application was not approved. Please review your details and submit again.'
+            : 'Your merchant details are being reviewed. Please wait for an admin decision.',
+        },
+      };
+    }
+
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
       select: { kyc_status: true, kyc_level: true },
@@ -36,7 +74,6 @@ export class MerchantsService {
       throw new ForbiddenException('Full KYC verification is required to access the merchant dashboard');
     }
 
-    const merchant = await this.getMerchantByUser(userId);
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const qrData = await this.qrService.getMerchantQr(merchant.id);
@@ -254,11 +291,17 @@ export class MerchantsService {
 
   async regenerateQr(userId: string) {
     const merchant = await this.getMerchantByUser(userId);
+    if (merchant.status !== 'approved') {
+      throw new ForbiddenException('Merchant application is pending approval');
+    }
     return this.qrService.generateMerchantQr(merchant.id);
   }
 
   async getMerchantQr(userId: string) {
     const merchant = await this.getMerchantByUser(userId);
+    if (merchant.status !== 'approved') {
+      throw new ForbiddenException('Merchant application is pending approval');
+    }
     if (!merchant.qr_code) {
       return this.qrService.generateMerchantQr(merchant.id);
     }
