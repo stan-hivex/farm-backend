@@ -6,7 +6,25 @@ import { ConfigService } from '@nestjs/config';
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean),
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      const allowedOrigins = (process.env.CORS_ORIGINS ?? '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const isAllowed = allowedOrigins.some((allowedOrigin) => {
+        if (allowedOrigin === origin) return true;
+        if (!allowedOrigin.includes('*')) return false;
+
+        const escaped = allowedOrigin.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`).test(origin);
+      });
+
+      return callback(null, isAllowed);
+    },
   },
   namespace: '/ws',
 })
