@@ -71,13 +71,7 @@ export class MerchantsService {
       select: { kyc_status: true, kyc_level: true },
     });
     if (!user || user.kyc_status !== 'verified' || Number(user.kyc_level || 0) < 3) {
-      return {
-        data: {
-          application_status: 'kyc_required',
-          merchant,
-          message: 'Complete full identity verification before accessing the Merchant Portal.',
-        },
-      };
+      throw new ForbiddenException('Full KYC verification is required to access the merchant dashboard');
     }
 
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });

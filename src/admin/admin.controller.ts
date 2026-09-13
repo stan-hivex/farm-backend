@@ -13,6 +13,7 @@ import { UserRole } from '../common/enums';
 
 class UserStatusDto { @IsOptional() @IsBoolean() is_active?: boolean; @IsOptional() @IsBoolean() is_suspended?: boolean; }
 class ResolveDto { @IsIn(['buyer','seller']) winner!: 'buyer'|'seller'; @IsString() note!: string; }
+class KycReviewDto { @IsIn(['verified','rejected','under_review','additional_info_required']) status!: string; @IsOptional() @IsString() rejection_reason?: string; }
 class MerchantDecisionDto { @IsIn(['approved','rejected']) status!: 'approved'|'rejected'; @IsOptional() @IsString() rejection_reason?: string; }
 class SettingDto { @IsString() value!: string; }
 
@@ -89,7 +90,7 @@ export class AdminController {
   @Permissions('admin:read')
   @Get('dashboard')               stats() { return this.svc.getDashboardStats(); }
   @Permissions('admin:read')
-  @Get('transactions')            transactions(@Query() q: any) { return this.svc.listTransactions(q); }
+  @Get('transactions')            transactions(@Query() q: any) { return this.svc.listTransactions({ ...q, transaction_type: q.transaction_type ?? q.type }); }
   @Permissions('admin:read')
   @Get('users')                   users(@Query() q: any) { return this.svc.listUsers(q); }
   @Permissions('admin:read')
@@ -119,7 +120,7 @@ export class AdminController {
   @Permissions('admin:write')
   @Put('fees/:id')                updateFee(@Param('id') id: string, @Body() dto: { value: string }, @CurrentUser() u: any) { return this.svc.updateFee(id, dto.value, u.id); }
   @Permissions('admin:write')
-  @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any, @Body() body: { status?: 'completed' | 'failed' }) { return this.svc.processPayout(id, u.id, body.status ?? 'completed'); }
+  @Post('payouts/:id/process')    processPayout(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.processPayout(id, u.id, 'completed'); }
   @Permissions('admin:write')
   @Post('notifications/send')     sendNotification(@CurrentUser() u: any, @Body() dto: SendNotificationDto) { return this.svc.sendNotification(u.id, dto); }
   @Permissions('admin:write')
@@ -127,7 +128,7 @@ export class AdminController {
   @Permissions('admin:read')
   @Get('kyc/queue')               kycQueue(@Query() q: any) { return this.svc.listKycQueue(q); }
   @Permissions('admin:write')
-  @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: ResolveDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
+  @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: KycReviewDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
   @Permissions('admin:read')
   @Get('analytics')               analytics() { return this.svc.getAdminAnalytics(); }
   @Permissions('admin:read')
@@ -172,13 +173,10 @@ export class AdminController {
 
   @Permissions('admin:write')
   @Post('withdrawals/:id/process')
-  async processWithdrawal(@Param('id') id: string, @CurrentUser() u: any, @Body() body: { status?: 'completed' | 'failed' }) {
+  async processWithdrawal(@Param('id') id: string, @CurrentUser() u: any) {
     const w = await this.withdrawService.getWithdrawal(id);
     if (!w) throw new NotFoundException('Withdrawal not found');
-    if (body.status === 'failed') {
-      await this.withdrawService.rejectWithdrawal(w.reference, 'Rejected by administrator');
-      return { message: 'Withdrawal rejected' };
-    }
+    // For admin-triggered processing we mark as success (webhook will normally confirm)
     await this.withdrawService.markAsSuccess(w.reference);
     return { message: 'Withdrawal processed (marked completed)' };
   }
