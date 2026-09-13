@@ -100,7 +100,7 @@ describe('AuthService', () => {
     expect(prisma.user_sessions.create).not.toHaveBeenCalled();
   });
 
-  it('issues a session directly when phone verification is disabled', async () => {
+  it('issues a session directly when phone verification is explicitly disabled', async () => {
     const prisma = module.get(PrismaService);
     const jwt = module.get(JwtService);
     const config = module.get(ConfigService);
@@ -129,6 +129,7 @@ describe('AuthService', () => {
     jest.spyOn(prisma.activity_logs, 'create').mockResolvedValue({} as any);
     jest.spyOn(prisma.pending_login_verifications, 'create').mockResolvedValue({} as any);
     jest.spyOn(config, 'get').mockImplementation((key: string) => {
+      if (key === 'REQUIRE_PHONE_VERIFICATION') return 'false';
       if (key === 'BCRYPT_ROUNDS') return '12';
       if (key === 'JWT_ACCESS_SECRET') return 'access-secret';
       if (key === 'JWT_REFRESH_SECRET') return 'refresh-secret';

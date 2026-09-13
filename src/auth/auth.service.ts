@@ -303,10 +303,10 @@ if (new Date() > expiryDate) {
     const userRole = (user.role ?? 'user').toString().toLowerCase();
 
     const requirePhoneVerification =
-      this.cfg.get<string>('REQUIRE_PHONE_VERIFICATION') === 'true';
+      this.cfg.get<string>('REQUIRE_PHONE_VERIFICATION') !== 'false';
 
-    // Keep the Firebase OTP flow available, but allow password-authenticated
-    // users to sign in directly until phone verification is re-enabled.
+    // Regular users require Firebase phone verification by default. Admin and
+    // superadmin accounts are trusted after password authentication.
     if (!requirePhoneVerification || userRole === 'admin' || userRole === 'super_admin') {
       const walletId = user.wallets[0]?.id;
       const tokens = await this.issueTokens(user.id, userRole, walletId);
