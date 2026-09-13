@@ -109,4 +109,40 @@ describe('DepositService', () => {
     expect(result.deposit.fee).toBe(0);
     expect(result.deposit.total).toBe(10);
   });
+
+  it('charges mobile money deposits only the amount entered by the user', async () => {
+    paystack.initializePayment = jest.fn().mockResolvedValue({
+      authorization_url: 'https://checkout.example.test/payment',
+    });
+    prisma.deposit.create.mockResolvedValue({
+      id: 'deposit-2',
+      amount: 100,
+      fee: 0,
+      total: 100,
+      currency: 'KES',
+      paymentMethod: 'MOBILE_MONEY',
+      provider: 'paystack',
+      reference: 'reference-2',
+      status: 'PENDING',
+    });
+
+    const result = await service.createDeposit('user-1', {
+      amount_fiat: 100,
+      currency: 'KES',
+      paymentMethod: 'MOBILE_MONEY',
+      phone: '+254700000000',
+      email: 'user@example.com',
+    });
+
+    expect(paystack.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 100 }),
+    );
+    expect(prisma.deposit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amount: 100, fee: 0, total: 100 }),
+      }),
+    );
+    expect(result.deposit.fee).toBe(0);
+    expect(result.deposit.total).toBe(100);
+  });
 });
