@@ -242,15 +242,22 @@ export class AdminService {
   }
 
   async getMerchant(merchantId: string) {
-    const merchant = await this.prisma.merchants.findUnique({
-      where: { id: merchantId },
-      include: {
-        users_merchants_user_idTousers: {
-          select: { id: true, username: true, email: true, phone: true, first_name: true, last_name: true },
+    const [merchant, decisions] = await Promise.all([
+      this.prisma.merchants.findUnique({
+        where: { id: merchantId },
+        include: {
+          users_merchants_user_idTousers: {
+            select: { id: true, username: true, email: true, phone: true, first_name: true, last_name: true },
+          },
+          merchant_payouts: { orderBy: { created_at: 'desc' }, take: 5 },
         },
-        merchant_payouts: { orderBy: { created_at: 'desc' }, take: 5 },
-      },
-    });
+      }),
+      this.prisma.audit_logs.findMany({
+        where: { entity_type: 'merchants', entity_id: merchantId },
+        orderBy: { created_at: 'desc' },
+        select: { action: true, new_values: true, created_at: true, user_id: true },
+      }),
+    ]);
 
     if (!merchant) throw new NotFoundException('Merchant not found');
 
@@ -260,6 +267,7 @@ export class AdminService {
         total_sales: Number(merchant.total_sales ?? 0),
         daily_limit: Number(merchant.daily_limit ?? 0),
         transaction_fee_percent: Number(merchant.transaction_fee_percent ?? 0),
+        decision_history: decisions,
       },
     };
   }
@@ -527,6 +535,10 @@ export class AdminService {
   }
 
   async getAdminAnalytics() {
+    const periodStart = new Date();
+    periodStart.setHours(0, 0, 0, 0);
+    periodStart.setDate(periodStart.getDate() - 6);
+
     const [totalUsers, totalEscrows, totalTransactions, pendingKyc, pendingPayouts, totalSecurityEvents] =
       await Promise.all([
         this.prisma.users.count({ where: { is_deleted: false } }),
@@ -536,6 +548,40 @@ export class AdminService {
         this.prisma.merchant_payouts.count({ where: { status: 'pending' } }),
         this.prisma.security_events.count(),
       ]);
+
+    const recentRevenueTransactions = await this.prisma.transactions.findMany({
+      where: {
+        status: 'completed',
+        created_at: { gte: periodStart },
+      },
+      select: {
+        amount: true,
+        fee: true,
+        created_at: true,
+      },
+    });
+
+    const revenueByDay = new Map<string, number>();
+    for (let offset = 0; offset < 7; offset++) {
+      const day = new Date(periodStart);
+      day.setDate(periodStart.getDate() + offset);
+      revenueByDay.set(day.toISOString().slice(0, 10), 0);
+    }
+    for (const transaction of recentRevenueTransactions) {
+      const key = (transaction.created_at ?? new Date()).toISOString().slice(0, 10);
+      revenueByDay.set(
+        key,
+        (revenueByDay.get(key) ?? 0) + Number(transaction.fee ?? 0),
+      );
+    }
+
+    const revenue_series = Array.from(revenueByDay.entries()).map(
+      ([date, value]) => ({
+        date,
+        label: date.slice(5),
+        value: Number(value.toFixed(2)),
+      }),
+    );
 
     const recentTransactions = await this.prisma.transactions.findMany({
       orderBy: { created_at: 'desc' },
@@ -559,6 +605,7 @@ export class AdminService {
         pending_kyc: pendingKyc,
         pending_payouts: pendingPayouts,
         security_events: totalSecurityEvents,
+        revenue_series,
         recent_transactions: recentTransactions.map((tx) => ({
           ...tx,
           amount: Number(tx.amount),
