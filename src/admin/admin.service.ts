@@ -1343,6 +1343,42 @@ export class AdminService {
       _sum: { settlement: true },
     });
 
+    const [creationFees, releaseFees, withdrawalFees] = await Promise.all([
+      this.prisma.transactions.aggregate({
+        where: {
+          transaction_type: 'escrow_lock',
+          status: 'completed',
+          fee: { gt: 0 },
+        },
+        _sum: { fee: true },
+        _count: { id: true },
+      }),
+      this.prisma.transactions.aggregate({
+        where: {
+          transaction_type: 'escrow_release',
+          status: 'completed',
+          fee: { gt: 0 },
+        },
+        _sum: { fee: true },
+        _count: { id: true },
+      }),
+      this.prisma.transactions.aggregate({
+        where: {
+          transaction_type: 'withdrawal',
+          status: 'completed',
+          fee: { gt: 0 },
+        },
+        _sum: { fee: true },
+        _count: { id: true },
+      }),
+    ]);
+
+    const escrowCreationRevenue = Number(creationFees._sum.fee ?? 0);
+    const escrowReleaseRevenue = Number(releaseFees._sum.fee ?? 0);
+    const withdrawalRevenue = Number(withdrawalFees._sum.fee ?? 0);
+    const totalPlatformRevenue =
+      escrowCreationRevenue + escrowReleaseRevenue + withdrawalRevenue;
+
     const availableBalance = Math.max(
       0,
       Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0),
@@ -1355,6 +1391,13 @@ export class AdminService {
         locked_balance: Number(wallet.locked_balance ?? 0),
         pending_withdrawals: Number(pendingWithdrawals._sum.amount ?? 0),
         total_withdrawn: Number(totalWithdrawn._sum.settlement ?? 0),
+        escrow_creation_revenue: escrowCreationRevenue,
+        escrow_release_revenue: escrowReleaseRevenue,
+        withdrawal_revenue: withdrawalRevenue,
+        total_platform_revenue: totalPlatformRevenue,
+        escrow_creation_count: creationFees._count.id ?? 0,
+        escrow_release_count: releaseFees._count.id ?? 0,
+        withdrawal_fee_count: withdrawalFees._count.id ?? 0,
         currency: wallet.currency ?? 'FARM',
         wallet_address: wallet.wallet_address,
       },

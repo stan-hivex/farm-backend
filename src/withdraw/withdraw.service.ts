@@ -467,12 +467,13 @@ export class WithdrawService {
           },
         });
 
-        await this.creditPlatformFeeInTx(
-          tx,
-          Number(withdrawal.fee ?? 0),
-          `Platform withdrawal fee credited — ref: ${reference}`,
-        );
       }
+
+      await this.creditPlatformFeeInTx(
+        tx,
+        Number(withdrawal.fee ?? 0),
+        `Platform withdrawal fee credited — ref: ${reference}`,
+      );
     });
 
     await Promise.all([
