@@ -1298,14 +1298,14 @@ async resendOtp(userId: string) {
       }),
       this.jwt.signAsync(payload, {
         secret: refreshSecret,
-        expiresIn: this.cfg.get('JWT_REFRESH_EXPIRES', '30d'),
+        expiresIn: this.cfg.get('JWT_REFRESH_EXPIRES', '3650d'),
       }),
     ]);
     return { access_token, refresh_token, jti };
   }
 
   private refreshSessionExpiry(): Date {
-    const configuredDays = Number(this.cfg.get('JWT_REFRESH_SESSION_DAYS', '365'));
+    const configuredDays = Number(this.cfg.get('JWT_REFRESH_SESSION_DAYS', '3650'));
     const days = Number.isFinite(configuredDays) && configuredDays > 0
       ? configuredDays
       : 365;
