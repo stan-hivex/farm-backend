@@ -8,6 +8,7 @@ import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CacheService } from '../common/cache/cache.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 describe('WithdrawService', () => {
   let service: WithdrawService;
@@ -34,6 +35,7 @@ describe('WithdrawService', () => {
         { provide: CacheService, useValue: { cacheInvalidatePattern: jest.fn().mockResolvedValue(true), cacheDelete: jest.fn().mockResolvedValue(true), cacheGet: jest.fn().mockResolvedValue(null), cacheSet: jest.fn().mockResolvedValue(true) } },
         { provide: NotificationsService, useValue: { sendNotification: jest.fn().mockResolvedValue(true) } },
         { provide: CurrencyConversionService, useValue: { getCurrentRate: jest.fn().mockResolvedValue({ usd_kes_rate: 150, farm_kes_rate: 1, farm_usd_rate: 0.00666667 }) } },
+        { provide: WebsocketGateway, useValue: { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn() } },
       ],
     }).compile();
 

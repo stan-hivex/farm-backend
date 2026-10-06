@@ -6,6 +6,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { RequireOwnership } from '../common/decorators/ownership.decorator';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Transactions')
 @ApiBearerAuth('JWT')
@@ -14,6 +15,7 @@ import { RequireOwnership } from '../common/decorators/ownership.decorator';
 export class TransactionsController {
   constructor(private readonly svc: TransactionsService) {}
   @Permissions('transactions:read')
+  @Throttle({ default: { limit: 60, ttl: 60 } })
   @Get()      findAll(@CurrentUser() u: any, @Query() q: any) { return this.svc.findAll(u.id, q); }
 
   @Permissions('transactions:read')

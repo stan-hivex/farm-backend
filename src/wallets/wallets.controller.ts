@@ -1,13 +1,29 @@
-import { Controller, Get, Post, Body, Query, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional, Length } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsNumber,
+  IsPositive,
+  IsOptional,
+  Length,
+} from 'class-validator';
 import { WalletsService } from './wallets.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { EmailVerifiedGuard } from '../common/guards/email-verified.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { Throttle } from '@nestjs/throttler';
 
 class SendFundsDto {
   @IsNotEmpty() @IsString() recipient_identifier!: string;
@@ -28,7 +44,9 @@ export class WalletsController {
   @Permissions('wallet:read')
   @Get()
   @ApiOperation({ summary: 'Get my wallet balance' })
-  getWallet(@CurrentUser() u: any) { return this.svc.getMyWallet(u.id); }
+  getWallet(@CurrentUser() u: any) {
+    return this.svc.getMyWallet(u.id);
+  }
 
   @Permissions('wallet:write')
   @Post('send')
@@ -39,6 +57,7 @@ export class WalletsController {
   }
 
   @Permissions('wallet:read')
+  @Throttle({ default: { limit: 60, ttl: 60 } })
   @Get('transactions')
   @ApiOperation({ summary: 'List my transactions' })
   transactions(@CurrentUser() u: any, @Query() q: any) {

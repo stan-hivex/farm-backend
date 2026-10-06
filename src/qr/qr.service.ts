@@ -7,6 +7,7 @@ import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class QrService {
@@ -18,6 +19,7 @@ export class QrService {
     private securityService: SecurityService,
     private cfg: ConfigService,
     private notificationsService: NotificationsService,
+    private websocket: WebsocketGateway,
   ) {}
 
   async generateMerchantQr(merchantId: string) {
@@ -197,10 +199,10 @@ export class QrService {
           processed_at: new Date(),
         },
       });
-      await tx.wallets.update({
+      const updatedCustomerWallet = await tx.wallets.update({
         where: { id: customerWallet.id }, data: { balance: { decrement: totalOut } },
       });
-      await tx.wallets.update({
+      const updatedMerchantWallet = await tx.wallets.update({
         where: { id: merchantWallet.id }, data: { balance: { increment: dto.amount } },
       });
       // Also credit the platform/main wallet so the application's
@@ -252,8 +254,29 @@ export class QrService {
           }] : []),
         ],
       });
-      return txn;
+      return {
+        transaction: txn,
+        customerBalance: Number(updatedCustomerWallet.balance),
+        merchantBalance: Number(updatedMerchantWallet.balance),
+      };
     });
+
+    try {
+      this.websocket.emitBalanceUpdate(customerId, result.customerBalance);
+      this.websocket.emitTransactionUpdate(customerId, {
+        reference: result.transaction.transaction_reference,
+        status: 'SUCCESS',
+      });
+      if (merchant.user_id) {
+        this.websocket.emitBalanceUpdate(merchant.user_id, result.merchantBalance);
+        this.websocket.emitTransactionUpdate(merchant.user_id, {
+          reference: result.transaction.transaction_reference,
+          status: 'SUCCESS',
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`Merchant payment realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     const customer = await this.prisma.users.findUnique({
       where: { id: customerId },
@@ -264,7 +287,7 @@ export class QrService {
     await Promise.all([
       this.notificationsService.sendNotification(customerId, {
         type: 'merchant',
-        entityId: result.transaction_reference,
+        entityId: result.transaction.transaction_reference,
         title: 'Merchant payment sent',
         body: `You sent ${dto.amount} FARM to ${merchant.business_name}.`,
         metadata: {
@@ -277,7 +300,7 @@ export class QrService {
       merchant.user_id
         ? this.notificationsService.sendNotification(merchant.user_id, {
             type: 'merchant',
-            entityId: result.transaction_reference,
+            entityId: result.transaction.transaction_reference,
             title: 'Merchant payment received',
             body: `You received ${dto.amount} FARM from ${payerName}.`,
             metadata: {
@@ -292,7 +315,7 @@ export class QrService {
     ]).catch((error) => this.logger.error('Merchant payment notification failed', error));
 
     return {
-      data: { reference: result.transaction_reference, amount: dto.amount, fee, status: 'completed' },
+      data: { reference: result.transaction.transaction_reference, amount: dto.amount, fee, status: 'completed' },
       message: `Payment to ${merchant.business_name} successful`,
     };
   }

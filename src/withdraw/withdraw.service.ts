@@ -11,6 +11,7 @@ import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class WithdrawService {
@@ -25,6 +26,7 @@ export class WithdrawService {
     private cache: CacheService,
     private notificationsService: NotificationsService,
     private readonly currencyConversionService: CurrencyConversionService,
+    private readonly websocket: WebsocketGateway,
   ) {}
 
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
@@ -189,6 +191,16 @@ export class WithdrawService {
 
       return created;
     });
+
+    try {
+      this.websocket.emitBalanceUpdate(userId, Number(wallet.balance ?? 0));
+      this.websocket.emitTransactionUpdate(userId, {
+        reference,
+        status: 'PENDING',
+      });
+    } catch (error) {
+      this.logger.warn(`Withdrawal realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     setImmediate(() => this.processWithdrawal(reference).catch((error) => this.logger.error(error?.message ?? error)));
 
@@ -431,13 +443,13 @@ export class WithdrawService {
     const previousLocked = Number(wallet.locked_balance ?? 0);
     const unlockAmount = Math.min(previousLocked, amount);
 
-    await this.prisma.$transaction(async (tx) => {
+    const updatedWallet = await this.prisma.$transaction(async (tx) => {
       await tx.withdrawal.update({
         where: { reference },
         data: { status: 'COMPLETED' },
       });
 
-      await tx.wallets.update({
+      const walletAfterUpdate = await tx.wallets.update({
         where: { id: wallet.id },
         data: {
           balance: { decrement: amount },
@@ -474,7 +486,18 @@ export class WithdrawService {
         Number(withdrawal.fee ?? 0),
         `Platform withdrawal fee credited — ref: ${reference}`,
       );
+      return walletAfterUpdate;
     });
+
+    try {
+      this.websocket.emitBalanceUpdate(withdrawal.userId, Number(updatedWallet.balance));
+      this.websocket.emitTransactionUpdate(withdrawal.userId, {
+        reference,
+        status: 'SUCCESS',
+      });
+    } catch (error) {
+      this.logger.warn(`Withdrawal completion realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     await Promise.all([
       this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
@@ -539,13 +562,13 @@ export class WithdrawService {
     const previousLocked = Number(wallet.locked_balance ?? 0);
     const unlockAmount = Math.min(previousLocked, amount);
 
-    await this.prisma.$transaction(async (tx) => {
+    const updatedWallet = await this.prisma.$transaction(async (tx) => {
       await tx.withdrawal.update({
         where: { reference },
         data: { status: 'FAILED', rejectionReason: reason },
       });
 
-      await tx.wallets.update({
+      const walletAfterUpdate = await tx.wallets.update({
         where: { id: wallet.id },
         data: { locked_balance: { decrement: unlockAmount } },
       });
@@ -574,7 +597,18 @@ export class WithdrawService {
           },
         });
       }
+      return walletAfterUpdate;
     });
+
+    try {
+      this.websocket.emitBalanceUpdate(withdrawal.userId, Number(updatedWallet.balance));
+      this.websocket.emitTransactionUpdate(withdrawal.userId, {
+        reference,
+        status: 'FAILED',
+      });
+    } catch (error) {
+      this.logger.warn(`Withdrawal failure realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     await Promise.all([
       this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),

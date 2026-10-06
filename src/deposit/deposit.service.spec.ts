@@ -145,4 +145,58 @@ describe('DepositService', () => {
     expect(result.deposit.fee).toBe(0);
     expect(result.deposit.total).toBe(100);
   });
+
+  it('emits wallet and transaction updates after a successful deposit is committed', async () => {
+    const deposit = {
+      id: 'deposit-3',
+      userId: 'user-1',
+      amount: 25,
+      currency: 'FARM',
+      status: 'PENDING',
+    };
+    const transaction = {
+      id: 'transaction-3',
+      transaction_reference: 'reference-3',
+      transaction_type: 'deposit',
+      status: 'pending',
+      receiver_wallet_id: 'wallet-1',
+      amount: 25,
+    };
+    const wallet = { id: 'wallet-1', user_id: 'user-1', balance: 100 };
+    const tx = {
+      wallets: {
+        findFirst: jest.fn().mockResolvedValue(wallet),
+        update: jest.fn().mockResolvedValue({ ...wallet, balance: 125 }),
+      },
+      deposit: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      transactions: {
+        update: jest.fn().mockResolvedValue({ ...transaction, status: 'completed' }),
+      },
+      ledger_entries: {
+        create: jest.fn().mockResolvedValue({ id: 'ledger-3' }),
+      },
+    };
+
+    prisma.deposit.findFirst = jest.fn().mockResolvedValue(deposit);
+    prisma.transactions.findUnique = jest.fn().mockResolvedValue(transaction);
+    prisma.$transaction = jest.fn(
+      async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
+    cache.cacheInvalidatePattern = jest.fn().mockResolvedValue(undefined);
+    cache.cacheDelete = jest.fn().mockResolvedValue(undefined);
+    websocket.emitBalanceUpdate = jest.fn();
+    websocket.emitTransactionUpdate = jest.fn();
+
+    await expect(
+      service.finalizeSuccessfulDeposit('reference-3'),
+    ).resolves.toBe(true);
+
+    expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('user-1', 125);
+    expect(websocket.emitTransactionUpdate).toHaveBeenCalledWith('user-1', {
+      reference: 'reference-3',
+      status: 'SUCCESS',
+    });
+  });
 });

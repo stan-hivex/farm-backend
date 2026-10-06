@@ -3,6 +3,7 @@ import { PaymentRequestsService } from './payment-requests.service';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 describe('PaymentRequestsService - expiry processing', () => {
   let service: PaymentRequestsService;
@@ -30,6 +31,7 @@ describe('PaymentRequestsService - expiry processing', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AuthService, useValue: {} },
         { provide: NotificationsService, useValue: notifications },
+        { provide: WebsocketGateway, useValue: { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn() } },
       ],
     }).compile();
 

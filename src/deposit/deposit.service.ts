@@ -421,7 +421,7 @@ export class DepositService {
       const amount = this.normalizeAmount(Number(deposit.amount));
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
 
-      await tx.wallets.update({
+      const updatedWallet = await tx.wallets.update({
         where: { id: wallet.id },
         data: { balance: { increment: amount } },
       });
@@ -449,10 +449,17 @@ export class DepositService {
         });
       }
 
-      return { ok: true };
+      return {
+        ok: true,
+        userId: deposit.userId,
+        balance: Number(updatedWallet.balance ?? previousBalance + amount),
+      };
     });
 
     if (result.ok) {
+      if (result.userId && result.balance !== undefined) {
+        this.emitDepositUpdate(result.userId, reference, result.balance);
+      }
       await this.invalidateFinancialCaches(deposit?.userId);
     }
 
@@ -552,7 +559,7 @@ export class DepositService {
       });
       if (updated.count === 0) return { ok: false };
 
-      await tx.wallets.update({
+      const updatedWallet = await tx.wallets.update({
         where: { id: wallet.id },
         data: { balance: { increment: amount } },
       });
@@ -569,11 +576,18 @@ export class DepositService {
         },
       });
 
-      return { ok: true };
+      return {
+        ok: true,
+        userId: wallet.user_id ?? userId,
+        balance: Number(updatedWallet.balance ?? previousBalance + amount),
+      };
     });
 
     if (result.ok) {
       const metadata = (transaction?.metadata as any) ?? {};
+      if (result.userId && result.balance !== undefined) {
+        this.emitDepositUpdate(result.userId, reference, result.balance);
+      }
       await this.invalidateFinancialCaches(metadata?.user_id ?? undefined);
       if (metadata?.user_id) {
         await this.notificationsService.sendNotification(metadata.user_id, {
@@ -630,7 +644,7 @@ export class DepositService {
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
       const amount = this.normalizeAmount(Number(deposit.amount));
 
-      await tx.wallets.update({
+      const updatedWallet = await tx.wallets.update({
         where: { id: wallet.id },
         data: { balance: { increment: amount } },
       });
@@ -658,10 +672,17 @@ export class DepositService {
         });
       }
 
-      return { ok: true };
+      return {
+        ok: true,
+        userId: deposit.userId,
+        balance: Number(updatedWallet.balance ?? previousBalance + amount),
+      };
     });
 
     if (result.ok) {
+      if (result.userId && result.balance !== undefined) {
+        this.emitDepositUpdate(result.userId, reference, result.balance);
+      }
       await this.invalidateFinancialCaches(deposit?.userId);
       if (deposit?.userId) {
         await this.notificationsService.sendNotification(deposit.userId, {
@@ -688,6 +709,22 @@ export class DepositService {
       this.cache.cacheDelete('admin:analytics'),
       this.cache.cacheDelete('admin:superadmin-dashboard'),
     ]);
+  }
+
+  private emitDepositUpdate(userId: string, reference: string, balance: number) {
+    try {
+      this.websocket.emitBalanceUpdate(userId, balance);
+      this.websocket.emitTransactionUpdate(userId, {
+        reference,
+        status: 'SUCCESS',
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to emit realtime deposit update for ${reference}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   private normalizeAmount(amount: any): number {

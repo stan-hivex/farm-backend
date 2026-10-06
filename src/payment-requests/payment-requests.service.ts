@@ -11,6 +11,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class PaymentRequestsService {
@@ -20,6 +21,7 @@ export class PaymentRequestsService {
     private prisma: PrismaService,
     private authService: AuthService,
     private notificationsService: NotificationsService,
+    private websocket: WebsocketGateway,
   ) {}
 
   async createRequest(requesterUserId: string, dto: { recipient_identifier: string; amount: number; description?: string }, ip: string) {
@@ -177,8 +179,8 @@ export class PaymentRequestsService {
       const reference = generateTxReference();
       const transaction = await tx.transactions.create({ data: { transaction_reference: reference, sender_wallet_id: payerWallet.id, receiver_wallet_id: requesterWallet!.id, transaction_type: 'transfer', status: 'processing', amount: amount, fee, net_amount: amount.minus(fee), currency: 'FARM', description: request.description || `Payment request from ${request.users_recipient?.username}`, ip_address: ip, metadata: { request_id: request.id } } });
 
-      await tx.wallets.update({ where: { id: payerWallet.id }, data: { balance: { decrement: totalOut } } });
-      await tx.wallets.update({ where: { id: requesterWallet!.id }, data: { balance: { increment: amount } } });
+      const updatedPayerWallet = await tx.wallets.update({ where: { id: payerWallet.id }, data: { balance: { decrement: totalOut } } });
+      const updatedRequesterWallet = await tx.wallets.update({ where: { id: requesterWallet!.id }, data: { balance: { increment: amount } } });
 
       const requesterBalance = requesterWallet!.balance ?? new Prisma.Decimal(0);
       await tx.ledger_entries.createMany({ data: [ { transaction_id: transaction.id, wallet_id: payerWallet.id, entry_type: 'debit', amount: totalOut, balance_before: payerBalance, balance_after: payerBalance.minus(totalOut), description: `Payment via request from ${request.users_requester?.username}` }, { transaction_id: transaction.id, wallet_id: requesterWallet!.id, entry_type: 'credit', amount: amount, balance_before: requesterBalance, balance_after: requesterBalance.plus(amount), description: 'Payment received from request' }, ] });
@@ -187,8 +189,31 @@ export class PaymentRequestsService {
 
       await tx.payment_requests.update({ where: { id: request.id }, data: { status: 'completed', transaction_id: transaction.id, accepted_at: new Date(), completed_at: new Date() } });
 
-      return { data: { transaction_reference: reference, amount: amount, fee, status: 'completed', request_reference: request.request_reference }, message: 'Payment completed successfully', requesterUserId: request.requester_user_id };
+      return {
+        data: { transaction_reference: reference, amount: amount, fee, status: 'completed', request_reference: request.request_reference },
+        message: 'Payment completed successfully',
+        requesterUserId: request.requester_user_id,
+        payerBalance: Number(updatedPayerWallet.balance),
+        requesterBalance: Number(updatedRequesterWallet.balance),
+      };
     });
+
+    try {
+      this.websocket.emitBalanceUpdate(senderUserId, result.payerBalance);
+      this.websocket.emitTransactionUpdate(senderUserId, {
+        reference: result.data.transaction_reference,
+        status: 'SUCCESS',
+      });
+      if (result.requesterUserId) {
+        this.websocket.emitBalanceUpdate(result.requesterUserId, result.requesterBalance);
+        this.websocket.emitTransactionUpdate(result.requesterUserId, {
+          reference: result.data.transaction_reference,
+          status: 'SUCCESS',
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`Payment request realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     await Promise.all([
       this.notificationsService.notifyTransfer(

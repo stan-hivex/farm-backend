@@ -10,6 +10,7 @@ import { SecurityModule } from '../security/security.module';
 import { TransferRequestsModule } from '../transfer-requests/transfer-requests.module';
 
 import { ExpiryTasksProcessor } from '../common/tasks/expiry-tasks.processor';
+import { WebsocketModule } from '../websocket/websocket.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ExpiryTasksProcessor } from '../common/tasks/expiry-tasks.processor';
     NotificationsModule,
     SecurityModule,
     TransferRequestsModule,
+    WebsocketModule,
     BullModule.registerQueue({ name: 'expiry-tasks' }),
   ],
   controllers: [EscrowController],

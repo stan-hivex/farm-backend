@@ -8,6 +8,7 @@ import { PaystackService } from '../paystack/paystack.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateEscrowReference, generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class EscrowService {
@@ -19,6 +20,7 @@ export class EscrowService {
     private paystack: PaystackService,
     private notificationsService: NotificationsService,
     private securityService: SecurityService,
+    private websocket: WebsocketGateway,
   ) {}
 
   private async getSuperadminWallet() {
@@ -118,7 +120,7 @@ export class EscrowService {
       Date.now() + (dto.auto_release_days || 7) * 86400_000,
     );
 
-    const contract = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const c = await tx.escrow_contracts.create({
         data: {
           reference_code: generateEscrowReference(),
@@ -134,7 +136,7 @@ export class EscrowService {
           status: 'pending',
         },
       });
-      await tx.wallets.update({
+      const updatedBuyerWallet = await tx.wallets.update({
         where: { id: buyer.wallets[0].id },
         data: {
           balance: { decrement: fee },
@@ -145,7 +147,7 @@ export class EscrowService {
         where: { id: c.id },
         data: { status: 'active', funded_at: new Date() },
       });
-      await tx.transactions.create({
+      const transaction = await tx.transactions.create({
         data: {
           transaction_reference: generateTxReference(),
           sender_wallet_id: buyer.wallets[0].id,
@@ -167,8 +169,23 @@ export class EscrowService {
           `Escrow creation fee from ${buyer.username}: ${dto.title}`,
         );
       }
-      return c;
+      return {
+        contract: c,
+        balance: Number(updatedBuyerWallet.balance),
+        transactionReference: transaction.transaction_reference,
+      };
     });
+    const contract = result.contract;
+
+    try {
+      this.websocket.emitBalanceUpdate(buyerId, result.balance);
+      this.websocket.emitTransactionUpdate(buyerId, {
+        reference: result.transactionReference,
+        status: 'SUCCESS',
+      });
+    } catch (error) {
+      this.logger.warn(`Escrow creation realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     await Promise.all([
       this.notificationsService.sendNotification(buyerId, {
@@ -364,14 +381,14 @@ export class EscrowService {
     const amountToSeller = Number(escrow.amount) - releaseFee;
     const amountLocked = Number(escrow.amount);
 
-    await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // Deduct only the locked escrow amount from buyer's wallet. The creation fee was already charged at escrow creation.
-      await tx.wallets.update({
+      const updatedBuyerWallet = await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
         data: { locked_balance: { decrement: amountLocked }, balance: { decrement: amountLocked } },
       });
       // Credit seller's wallet with amount minus release fee
-      await tx.wallets.update({
+      const updatedSellerWallet = await tx.wallets.update({
         where: { id: escrow.seller_wallet_id },
         data: { balance: { increment: amountToSeller } },
       });
@@ -415,7 +432,27 @@ export class EscrowService {
           `Escrow release fee: ${escrow.title}`,
         );
       }
+      return {
+        buyerBalance: Number(updatedBuyerWallet.balance),
+        sellerBalance: Number(updatedSellerWallet.balance),
+        transactionReference: txn.transaction_reference,
+      };
     });
+
+    try {
+      this.websocket.emitBalanceUpdate(escrow.buyer_id, result.buyerBalance);
+      this.websocket.emitTransactionUpdate(escrow.buyer_id, {
+        reference: result.transactionReference,
+        status: 'SUCCESS',
+      });
+      this.websocket.emitBalanceUpdate(escrow.seller_id, result.sellerBalance);
+      this.websocket.emitTransactionUpdate(escrow.seller_id, {
+        reference: result.transactionReference,
+        status: 'SUCCESS',
+      });
+    } catch (error) {
+      this.logger.warn(`Escrow release realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     await Promise.all([
       this.notificationsService.sendNotification(escrow.buyer_id, {
@@ -447,12 +484,12 @@ export class EscrowService {
 
   async executeRefund(escrow: any) {
     const amount = Number(escrow.amount);
-    await this.prisma.$transaction(async (tx) => {
-      await tx.wallets.update({
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updatedWallet = await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
         data: { locked_balance: { decrement: amount } },
       });
-      await tx.transactions.create({
+      const transaction = await tx.transactions.create({
         data: {
           transaction_reference: generateTxReference(),
           receiver_wallet_id: escrow.buyer_wallet_id,
@@ -469,7 +506,21 @@ export class EscrowService {
       await tx.escrow_contracts.update({
         where: { id: escrow.id }, data: { status: 'refunded', resolved_at: new Date() },
       });
+      return {
+        balance: Number(updatedWallet.balance),
+        transactionReference: transaction.transaction_reference,
+      };
     });
+
+    try {
+      this.websocket.emitBalanceUpdate(escrow.buyer_id, result.balance);
+      this.websocket.emitTransactionUpdate(escrow.buyer_id, {
+        reference: result.transactionReference,
+        status: 'SUCCESS',
+      });
+    } catch (error) {
+      this.logger.warn(`Escrow refund realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     await this.notificationsService.sendNotification(escrow.buyer_id, {
       type: 'escrow_refunded',
