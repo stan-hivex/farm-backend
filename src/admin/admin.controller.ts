@@ -200,34 +200,36 @@ export class AdminController {
 
   // ── Superadmin Management ────────────────────────────────────────────────────
   @Permissions('admin:write')
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.SUPER_ADMIN)
   @Post('superadmin/create')
   createSuperadmin(@Body() dto: CreateSuperadminDto, @CurrentUser() u: any) {
     return this.svc.createSuperadmin(dto, u.id);
   }
 
   @Permissions('admin:read')
+  @Roles(UserRole.SUPER_ADMIN)
   @Get('superadmin/list')
   listSuperadmins(@Query() q: any) {
     return this.svc.listSuperadmins(q);
   }
 
   @Permissions('admin:read')
+  @Roles(UserRole.SUPER_ADMIN)
   @Get('superadmin/:id')
   getSuperadmin(@Param('id') id: string) {
     return this.svc.getSuperadmin(id);
   }
 
   @Permissions('admin:write')
+  @Roles(UserRole.SUPER_ADMIN)
   @Patch('superadmin/:id')
-  @Roles(UserRole.ADMIN)
   updateSuperadmin(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) {
     return this.svc.updateSuperadmin(id, dto, u.id);
   }
 
   @Permissions('admin:write')
+  @Roles(UserRole.SUPER_ADMIN)
   @Post('superadmin/:id/deactivate')
-  @Roles(UserRole.ADMIN)
   deactivateSuperadmin(@Param('id') id: string, @CurrentUser() u: any) {
     return this.svc.deactivateSuperadmin(id, u.id);
   }

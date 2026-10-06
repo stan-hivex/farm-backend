@@ -204,9 +204,15 @@ describe('AuthService', () => {
 
     jest.spyOn(prisma.users, 'findUnique').mockResolvedValue({ id: 'super-admin-1', role: 'super_admin' } as any);
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
+    let createdUserRole: string | undefined;
     jest.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) => {
       const tx = {
-        users: { create: jest.fn().mockResolvedValue({ id: 'admin-2', phone: '+254700123456', first_name: 'Ada' }) },
+        users: {
+          create: jest.fn().mockImplementation(({ data }: { data: { role: string } }) => {
+            createdUserRole = data.role;
+            return { id: 'admin-2', phone: '+254700123456', first_name: 'Ada' };
+          }),
+        },
         wallets: { create: jest.fn().mockResolvedValue({}) },
         activity_logs: { create: jest.fn().mockResolvedValue({}) },
       };
@@ -230,5 +236,25 @@ describe('AuthService', () => {
     } as any);
 
     expect(result.message).toContain('Admin account created');
+    expect(createdUserRole).toBe('admin');
+  });
+
+  it('does not allow an admin to create another admin account', async () => {
+    const prisma = module.get(PrismaService);
+    jest
+      .spyOn(prisma.users, 'findUnique')
+      .mockResolvedValue({ id: 'admin-1', role: 'admin' } as any);
+
+    await expect(
+      service.createAdmin('admin-1', {
+        first_name: 'Ada',
+        last_name: 'Lovelace',
+        username: 'ada',
+        phone: '+254700123456',
+        email: 'ada@example.com',
+        password: 'Abc123!@#qwe123',
+        country: 'Kenya',
+      } as any),
+    ).rejects.toThrow('Only superadmins can create admin accounts');
   });
 });

@@ -1509,6 +1509,13 @@ export class WebhookService {
         where: { id: transaction.id, status: { not: 'completed' } },
         data: { status: 'completed', processed_at: new Date() },
       });
+
+      await this.withdrawService.creditPlatformFeeInTx(
+        tx,
+        Number(transaction.fee ?? 0),
+        transaction.transaction_reference,
+        transaction.id,
+      );
     });
 
     this.websocket.emitBalanceUpdate(wallet.user_id ?? '', previousBalance - withdrawAmount);

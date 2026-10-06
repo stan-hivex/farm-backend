@@ -484,7 +484,8 @@ export class WithdrawService {
       await this.creditPlatformFeeInTx(
         tx,
         Number(withdrawal.fee ?? 0),
-        `Platform withdrawal fee credited — ref: ${reference}`,
+        reference,
+        transaction?.id,
       );
       return walletAfterUpdate;
     });
@@ -519,17 +520,69 @@ export class WithdrawService {
     return true;
   }
 
-  private async creditPlatformFeeInTx(tx: any, platformFee: number, description: string) {
+  async reconcileCompletedPlatformFees() {
+    await this.prisma.$transaction(async (tx) => {
+      const superadminUser = await tx.users.findFirst({
+        where: { role: 'super_admin', is_deleted: false },
+        include: { wallets: { where: { is_active: true }, take: 1 } },
+      });
+      const superWallet = superadminUser?.wallets?.[0];
+      if (!superWallet) {
+        throw new BadRequestException('Superadmin wallet not found');
+      }
+
+      const completedWithdrawals = await tx.transactions.findMany({
+        where: {
+          transaction_type: 'withdrawal',
+          status: 'completed',
+          fee: { gt: 0 },
+        },
+        select: { id: true, transaction_reference: true, fee: true },
+      });
+
+      for (const transaction of completedWithdrawals) {
+        await this.creditPlatformFeeInTx(
+          tx,
+          Number(transaction.fee ?? 0),
+          transaction.transaction_reference,
+          transaction.id,
+          superWallet.id,
+        );
+      }
+    });
+  }
+
+  async creditPlatformFeeInTx(
+    tx: any,
+    platformFee: number,
+    reference: string,
+    transactionId?: string,
+    superWalletId?: string,
+  ) {
     if (platformFee <= 0) return;
 
-    const superadminUser = await tx.users.findFirst({
-      where: { role: 'super_admin', is_deleted: false },
-      include: { wallets: { where: { is_active: true }, take: 1 } },
-    });
-    const superWallet = superadminUser?.wallets?.[0];
+    const description = `Platform withdrawal fee credited — ref: ${reference}`;
+    const superWallet = superWalletId
+      ? await tx.wallets.findUnique({ where: { id: superWalletId } })
+      : (
+          await tx.users.findFirst({
+            where: { role: 'super_admin', is_deleted: false },
+            include: { wallets: { where: { is_active: true }, take: 1 } },
+          })
+        )?.wallets?.[0];
     if (!superWallet) {
       throw new BadRequestException('Superadmin wallet not found');
     }
+
+    const existingCredit = await tx.ledger_entries.findFirst({
+      where: {
+        wallet_id: superWallet.id,
+        entry_type: 'credit',
+        description,
+      },
+      select: { id: true },
+    });
+    if (existingCredit) return;
 
     const previousBalance = Number(superWallet.balance ?? 0);
     await tx.wallets.update({
@@ -538,7 +591,7 @@ export class WithdrawService {
     });
     await tx.ledger_entries.create({
       data: {
-        transaction_id: null,
+        transaction_id: transactionId ?? null,
         wallet_id: superWallet.id,
         entry_type: 'credit',
         amount: platformFee,

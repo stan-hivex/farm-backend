@@ -124,7 +124,7 @@ export class AuthService {
       select: { id: true, role: true },
     });
 
-    if (!actor || !['super_admin', 'admin'].includes(String(actor.role || '').toLowerCase())) {
+    if (!actor || String(actor.role || '').toLowerCase() !== 'super_admin') {
       throw new ForbiddenException('Only superadmins can create admin accounts');
     }
 

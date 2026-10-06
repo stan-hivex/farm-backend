@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
+import { enrichAdminListItem } from './admin-response-utils';
 
 @Injectable()
 export class AdminService {
@@ -92,38 +93,69 @@ export class AdminService {
         orderBy: { created_at: 'desc' },
         include: {
           wallets_transactions_sender_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
+            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true, email: true, phone: true } } },
           },
           wallets_transactions_receiver_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
+            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true, email: true, phone: true } } },
           },
         },
       }),
       this.prisma.transactions.count({ where }),
     ]);
 
+    const metadataUserIds = items
+      .map((tx) => {
+        const metadata = tx.metadata as Record<string, any> | null;
+        return metadata?.user_id ?? metadata?.userId;
+      })
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    const userIdsToResolve = [...new Set(metadataUserIds)].filter((id) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id,
+      ),
+    );
+    const metadataUsers = userIdsToResolve.length
+      ? await this.prisma.users.findMany({
+          where: { id: { in: userIdsToResolve } },
+          select: { id: true, username: true, first_name: true, last_name: true, email: true, phone: true },
+        })
+      : [];
+    const usersById = new Map(metadataUsers.map((user) => [user.id, user]));
+
     return {
-      data: items.map((tx) => ({
-        id: tx.id,
-        transaction_reference: tx.transaction_reference,
-        transaction_type: tx.transaction_type,
-        status: tx.status,
-        amount: Number(tx.amount),
-        fee: Number(tx.fee ?? 0),
-        net_amount: Number(tx.net_amount ?? 0),
-        currency: tx.currency,
-        description: tx.description,
-        created_at: tx.created_at,
-        processed_at: tx.processed_at,
-        sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
-        receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
-        user_id: tx.wallets_transactions_sender_wallet_idTowallets?.user_id ?? tx.wallets_transactions_receiver_wallet_idTowallets?.user_id,
-        username: tx.wallets_transactions_sender_wallet_idTowallets?.users?.username ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.username,
-        user_name: [
-          tx.wallets_transactions_sender_wallet_idTowallets?.users?.first_name ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.first_name,
-          tx.wallets_transactions_sender_wallet_idTowallets?.users?.last_name ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.last_name,
-        ].filter(Boolean).join(' '),
-      })),
+      data: items.map((tx) => {
+        const metadata = tx.metadata as Record<string, any> | null;
+        const metadataUserId = metadata?.user_id ?? metadata?.userId;
+        const senderWallet = tx.wallets_transactions_sender_wallet_idTowallets;
+        const receiverWallet = tx.wallets_transactions_receiver_wallet_idTowallets;
+        const user = metadataUserId
+          ? usersById.get(metadataUserId) ?? null
+          : senderWallet?.users ?? receiverWallet?.users ?? null;
+        return enrichAdminListItem(
+          {
+            id: tx.id,
+            transaction_reference: tx.transaction_reference,
+            transaction_type: tx.transaction_type,
+            status: tx.status,
+            amount: tx.amount,
+            fee: Number(tx.fee ?? 0),
+            net_amount: Number(tx.net_amount ?? 0),
+            currency: tx.currency,
+            description: tx.description,
+            metadata: tx.metadata as Record<string, any> | null,
+            created_at: tx.created_at,
+            processed_at: tx.processed_at,
+            sender_wallet: senderWallet?.wallet_address,
+            receiver_wallet: receiverWallet?.wallet_address,
+            user_id:
+              metadataUserId ??
+              senderWallet?.user_id ??
+              receiverWallet?.user_id ??
+              null,
+          },
+          user,
+        );
+      }),
       meta: paginate(total, page, limit),
     };
   }
@@ -392,13 +424,40 @@ export class AdminService {
   async listAllWithdrawals(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const where: any = {};
-    if (query.status) where.status = query.status;
+    if (query.status) where.status = { equals: query.status, mode: 'insensitive' };
     const [items, total] = await Promise.all([
-      this.prisma.withdrawal.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
+      this.prisma.withdrawal.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              first_name: true,
+              last_name: true,
+              email: true,
+              phone: true,
+            },
+          },
+        },
+      }),
       this.prisma.withdrawal.count({ where }),
     ]);
     return {
-      data: items.map((w) => ({ ...w, amount: Number(w.amount) })),
+      data: items.map((w) =>
+        enrichAdminListItem(
+          {
+            ...w,
+            user_id: w.userId,
+            transaction_reference: w.reference,
+            currency: w.currency,
+          },
+          w.user,
+        ),
+      ),
       meta: paginate(total, page, limit),
     };
   }
@@ -985,6 +1044,14 @@ export class AdminService {
 
   // ── Superadmin Management ────────────────────────────────────────────────────
   async createSuperadmin(dto: any, adminId: string) {
+    const actor = await this.prisma.users.findUnique({
+      where: { id: adminId },
+      select: { id: true, role: true },
+    });
+    if (!actor || actor.role !== 'super_admin') {
+      throw new ForbiddenException('Only superadmins can create superadmin accounts');
+    }
+
     const existing = await this.prisma.users.findFirst({
       where: {
         OR: [
@@ -1015,7 +1082,7 @@ export class AdminService {
           email: dto.email,
           password_hash,
           country: dto.country,
-          role: 'admin',
+          role: 'super_admin',
           phone_verified: true,
           email_verified: true,
           referral_code: generateReferralCode(),
@@ -1035,10 +1102,10 @@ export class AdminService {
       await tx.audit_logs.create({
         data: {
           user_id: adminId,
-          action: 'CREATE_ADMIN',
+          action: 'CREATE_SUPERADMIN',
           entity_type: 'users',
           entity_id: u.id,
-          new_values: { first_name: u.first_name, last_name: u.last_name, username: u.username, role: 'admin' } as any,
+          new_values: { first_name: u.first_name, last_name: u.last_name, username: u.username, role: 'super_admin' } as any,
         },
       });
 
@@ -1055,7 +1122,7 @@ export class AdminService {
         email: user.email,
         role: user.role,
       },
-      message: 'Admin created successfully',
+      message: 'Superadmin created successfully',
     };
   }
 
@@ -1287,7 +1354,7 @@ export class AdminService {
         pending_kyc: pendingKyc,
         system_health: 99,
         recent_activities: recentTx.map((tx: any) => ({
-          description: `${tx.transaction_type} transaction of $${tx.amount}`,
+          description: `${tx.transaction_type} transaction of FARM ${tx.amount}`,
           type: tx.transaction_type,
           timestamp: tx.created_at,
         })),
@@ -1299,6 +1366,8 @@ export class AdminService {
         platform_fee_total_earnings: total_platform_fee_earnings,
         escrow_creation_earnings,
         escrow_release_earnings,
+        escrow_creation_count: escrowCreationAgg._count.id ?? 0,
+        escrow_release_count: escrowReleaseAgg._count.id ?? 0,
         total_escrow_count: (escrowCreationAgg._count.id ?? 0) + (escrowReleaseAgg._count.id ?? 0),
       },
     };
@@ -1378,6 +1447,12 @@ export class AdminService {
     const wallet = user.wallets[0];
     if (!wallet) throw new NotFoundException('Superadmin wallet not found');
 
+    await this.withdrawService.reconcileCompletedPlatformFees();
+    const currentWallet = await this.prisma.wallets.findUnique({
+      where: { id: wallet.id },
+    });
+    if (!currentWallet) throw new NotFoundException('Superadmin wallet not found');
+
     // Get pending withdrawals
     const pendingWithdrawals = await this.prisma.withdrawal.aggregate({
       where: { userId, status: 'PENDING' },
@@ -1428,14 +1503,15 @@ export class AdminService {
 
     const availableBalance = Math.max(
       0,
-      Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0),
+      Number(currentWallet.balance ?? 0) -
+        Number(currentWallet.locked_balance ?? 0),
     );
 
     return {
       data: {
-        balance: Number(wallet.balance ?? 0),
+        balance: Number(currentWallet.balance ?? 0),
         available_balance: availableBalance,
-        locked_balance: Number(wallet.locked_balance ?? 0),
+        locked_balance: Number(currentWallet.locked_balance ?? 0),
         pending_withdrawals: Number(pendingWithdrawals._sum.amount ?? 0),
         total_withdrawn: Number(totalWithdrawn._sum.settlement ?? 0),
         escrow_creation_revenue: escrowCreationRevenue,
@@ -1445,8 +1521,8 @@ export class AdminService {
         escrow_creation_count: creationFees._count.id ?? 0,
         escrow_release_count: releaseFees._count.id ?? 0,
         withdrawal_fee_count: withdrawalFees._count.id ?? 0,
-        currency: wallet.currency ?? 'FARM',
-        wallet_address: wallet.wallet_address,
+        currency: currentWallet.currency ?? 'FARM',
+        wallet_address: currentWallet.wallet_address,
       },
     };
   }

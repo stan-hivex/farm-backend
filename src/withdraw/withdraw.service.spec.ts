@@ -179,10 +179,13 @@ describe('WithdrawService', () => {
           }),
         },
         transactions: { update: jest.fn().mockResolvedValue({}) },
-        ledger_entries: { create: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
-          txLedgerCreates.push(data);
-          return {};
-        }) },
+        ledger_entries: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
+            txLedgerCreates.push(data);
+            return {};
+          }),
+        },
       };
 
       return callback(tx);
@@ -198,8 +201,65 @@ describe('WithdrawService', () => {
     expect(txLedgerCreates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ entry_type: 'debit', amount: 1000 }),
-        expect.objectContaining({ entry_type: 'credit', amount: 15 }),
+        expect.objectContaining({
+          transaction_id: 'tx-1',
+          entry_type: 'credit',
+          amount: 15,
+          description: 'Platform withdrawal fee credited — ref: ref-1',
+        }),
       ]),
     );
+  });
+
+  it('credits completed withdrawal fees that are missing from the superadmin ledger', async () => {
+    const adminWallet = { id: 'wallet-admin', balance: 500, locked_balance: 0 };
+    const walletUpdates: any[] = [];
+    const ledgerCreates: any[] = [];
+    prisma.$transaction.mockImplementation(async (callback: any) => {
+      const tx = {
+        users: {
+          findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }),
+        },
+        transactions: {
+          findMany: jest.fn().mockResolvedValue([
+            { id: 'tx-withdrawal', transaction_reference: 'ref-2', fee: 4.35 },
+          ]),
+        },
+        wallets: {
+          findUnique: jest.fn().mockResolvedValue(adminWallet),
+          update: jest.fn().mockImplementation(async (args: any) => {
+            walletUpdates.push(args);
+            return adminWallet;
+          }),
+        },
+        ledger_entries: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
+            ledgerCreates.push(data);
+            return {};
+          }),
+        },
+      };
+
+      return callback(tx);
+    });
+
+    await service.reconcileCompletedPlatformFees();
+
+    expect(walletUpdates).toEqual([
+      {
+        where: { id: 'wallet-admin' },
+        data: { balance: { increment: 4.35 } },
+      },
+    ]);
+    expect(ledgerCreates).toEqual([
+      expect.objectContaining({
+        transaction_id: 'tx-withdrawal',
+        wallet_id: 'wallet-admin',
+        entry_type: 'credit',
+        amount: 4.35,
+        description: 'Platform withdrawal fee credited — ref: ref-2',
+      }),
+    ]);
   });
 });
