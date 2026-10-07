@@ -281,6 +281,7 @@ export class IvorypayService {
         mode: 'CHECKOUT',
         baseFiat: options.baseFiat || 'KES',
         crypto: options.crypto || 'USDT',
+        ...(options.redirect_url && { redirect_url: options.redirect_url }),
         metadata: options.metadata ? (typeof options.metadata === 'string' ? options.metadata : JSON.stringify(options.metadata)) : null,
       };
 

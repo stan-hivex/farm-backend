@@ -100,6 +100,7 @@ export class PaymentsService {
         currency: dto.currency,
         reference,
         channels: ['mobile_money'],
+        callback_url: 'https://farmapp.africa/payment-callback',
         phone,
         metadata: {
           user_id: userId,
@@ -187,7 +188,9 @@ export class PaymentsService {
         reference,
         email: user.email || `${user.phone}@farm.app`,
         description: `Farm deposit - ${farmAmount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
+        crypto: 'USDT',
         baseFiat: 'USD',
+        redirect_url: 'https://farmapp.africa/payment-callback',
         metadata: {
           provider: 'ivorypay',
           amount_farm: farmAmount,
@@ -281,7 +284,9 @@ export class PaymentsService {
         amount: dto.amount_fiat,
         currency: dto.currency,
         reference,
-        channels: ['card'],
+        channels: ['card', 'mobile_money'],
+        callback_url: 'https://farmapp.africa/payment-callback',
+        phone: dto.phone || user.phone || undefined,
         metadata: {
           provider: 'paystack',
           amount_fiat: dto.amount_fiat,

@@ -82,6 +82,7 @@ export class PaystackService {
         ...(options.channels && { channels: options.channels }),
         ...(options.phone && { phone: options.phone }),
         ...(options.metadata && { metadata: options.metadata }),
+        ...(options.callback_url && { callback_url: options.callback_url }),
       };
 
       if (options.currency) {
