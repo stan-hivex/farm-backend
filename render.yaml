@@ -39,6 +39,18 @@ services:
 
       - key: CACHE_TTL_SECONDS
         value: "60"
+
+      # Resend SMTP settings for branded password-reset emails.
+      - key: SMTP_HOST
+        value: smtp.resend.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        value: resend
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        value: 'FARM <no-reply@farmapp.africa>'
       
       # CORS configuration
       - key: CORS_ORIGINS

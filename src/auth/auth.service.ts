@@ -647,7 +647,7 @@ if (new Date() > expiryDate) {
     return { message: 'Password reset flow is not configured in this environment' };
   }
 
-  async preparePasswordReset(email: string) {
+  async sendPasswordResetLink(email: string) {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await this.prisma.users.findFirst({
       where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
@@ -668,7 +668,9 @@ if (new Date() > expiryDate) {
       !user.is_active ||
       !['user', 'admin', 'super_admin'].includes(role)
     ) {
-      return { eligible: false };
+      return {
+        message: 'If an active account exists for this email, a reset link has been sent.',
+      };
     }
 
     const firebaseUid =
@@ -679,7 +681,33 @@ if (new Date() > expiryDate) {
         data: { firebase_uid: firebaseUid },
       });
     }
-    return { eligible: true };
+    const resetLink = await this.firebase.auth.generatePasswordResetLink(
+      user.email,
+      {
+        url: 'https://farmapp-e2145.firebaseapp.com/admin-reset-password',
+        handleCodeInApp: true,
+        android: { packageName: 'farmapp.africa', installApp: true },
+        iOS: { bundleId: 'com.mycompany.farm' },
+      },
+    );
+    const safeResetLink = resetLink
+      .replaceAll('&', '&amp;')
+      .replaceAll('"', '&quot;');
+    await this.notifications.sendEmailOrThrow(
+      user.email,
+      'Reset your FARM password',
+      `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#161616">
+        <h2>Reset your FARM password</h2>
+        <p>We received a request to reset the password for your FARM account.</p>
+        <p><a href="${safeResetLink}" style="display:inline-block;padding:12px 20px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Reset password</a></p>
+        <p>If you did not request this, you can ignore this email.</p>
+        <p style="font-size:12px;color:#666">This is a one-time link. Do not share it with anyone.</p>
+      </div>`,
+      `We received a request to reset your FARM password. Open this one-time link to choose a new password:\n${resetLink}\n\nIf you did not request this, ignore this email.`,
+    );
+    return {
+      message: 'If an active account exists for this email, a reset link has been sent.',
+    };
   }
 
   async completePasswordReset(dto: AdminPasswordResetCompleteDto) {

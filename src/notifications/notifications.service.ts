@@ -14,9 +14,11 @@ export class NotificationsService {
   private twilioClient: any;
 
   constructor(private prisma: PrismaService, private cfg: ConfigService, private firebase: FirebaseService) {
+    const smtpPort = Number(cfg.get('SMTP_PORT')) || 587;
     this.mailer = nodemailer.createTransport({
       host: cfg.get('SMTP_HOST'),
-      port: cfg.get<number>('SMTP_PORT', 587),
+      port: smtpPort,
+      secure: smtpPort === 465,
       auth: { user: cfg.get('SMTP_USER'), pass: cfg.get('SMTP_PASS') },
     });
 
@@ -219,6 +221,25 @@ async updateSettings(userId: string, body: any) {
       await this.mailer.sendMail({ from: this.cfg.get('SMTP_FROM'), to, subject, html });
     } catch (e) {
       this.logger.error(`Email failed to ${to}: ${e}`);
+    }
+  }
+
+  async sendEmailOrThrow(to: string, subject: string, html: string, text: string) {
+    const host = this.cfg.get<string>('SMTP_HOST');
+    const user = this.cfg.get<string>('SMTP_USER');
+    const pass = this.cfg.get<string>('SMTP_PASS');
+    const from = this.cfg.get<string>('SMTP_FROM');
+    if (!host || !user || !pass || !from) {
+      throw new Error('Transactional email delivery is not configured');
+    }
+
+    try {
+      await this.mailer.sendMail({ from, to, subject, html, text });
+    } catch (error) {
+      this.logger.error(
+        `Transactional email delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw error;
     }
   }
 

@@ -192,9 +192,9 @@ export class AuthController {
   @Post('password-reset/prepare')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 300 } })
-  @ApiOperation({ summary: 'Prepare Firebase password reset for an account' })
-  preparePasswordReset(@Body() dto: ForgotPasswordDto) {
-    return this.authService.preparePasswordReset(dto.email);
+  @ApiOperation({ summary: 'Send branded Firebase password reset email' })
+  sendPasswordResetLink(@Body() dto: ForgotPasswordDto) {
+    return this.authService.sendPasswordResetLink(dto.email);
   }
 
   @Public()
