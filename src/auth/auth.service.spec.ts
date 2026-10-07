@@ -21,14 +21,22 @@ describe('AuthService', () => {
         ConfigService,
         {
           provide: NotificationsService,
-          useValue: { sendEmailOrThrow: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            sendEmailOrThrow: jest.fn().mockResolvedValue(undefined),
+            sendPush: jest.fn().mockResolvedValue(false),
+            sendSms: jest.fn().mockResolvedValue(false),
+          },
         },
         { provide: TurnstileService, useValue: { verifyToken: jest.fn() } },
         {
           provide: FirebaseService,
           useValue: {
             verifyIdToken: jest.fn(),
-            auth: { generatePasswordResetLink: jest.fn() },
+            auth: {
+              getUserByEmail: jest.fn(),
+              createUser: jest.fn(),
+              generatePasswordResetLink: jest.fn(),
+            },
           },
         },
       ],
@@ -41,7 +49,65 @@ describe('AuthService', () => {
     expect(service).toBeDefined();
   });
 
-  it('sends a branded password reset email for an active regular user', async () => {
+  it('returns from registration without waiting for Firebase account linking', async () => {
+    const prisma = module.get(PrismaService);
+    const config = module.get(ConfigService);
+    jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
+    jest.spyOn(config, 'get').mockImplementation((key: string) =>
+      key === 'QR_HMAC_SECRET' ? 'test-secret' : undefined,
+    );
+    jest.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) =>
+      callback({
+        users: {
+          create: jest.fn().mockResolvedValue({
+            id: 'new-user',
+            first_name: 'Test',
+            phone: '+254700123456',
+          }),
+        },
+        wallets: { create: jest.fn().mockResolvedValue({}) },
+        activity_logs: { create: jest.fn().mockResolvedValue({}) },
+      }),
+    );
+    jest.spyOn(service, 'sendOtp').mockResolvedValue({ message: 'OTP delivery started' });
+    jest.spyOn(service as any, 'ensureFirebaseAccount').mockReturnValue(
+      new Promise(() => {}),
+    );
+
+    await expect(service.register({
+      first_name: 'Test',
+      last_name: 'User',
+      username: 'test_user',
+      phone: '+254700123456',
+      email: 'test@example.com',
+      password: 'NewSecure1!Password',
+    } as any, '203.0.113.1')).resolves.toEqual({
+      message: 'Registration successful. OTP sent to your phone number.',
+    });
+    expect(service.sendOtp).toHaveBeenCalledWith(
+      'new-user',
+      '+254700123456',
+      'phone_verification',
+      true,
+    );
+  });
+
+  it('does not wait for SMS or push delivery when registering', async () => {
+    const prisma = module.get(PrismaService);
+    const notifications = module.get(NotificationsService);
+    jest.spyOn(prisma.otp_verifications, 'findFirst').mockResolvedValue(null);
+    jest.spyOn(prisma.otp_verifications, 'create').mockResolvedValue({} as any);
+    jest.spyOn(prisma.user_settings, 'findUnique').mockResolvedValue({
+      push_notifications: true,
+    } as any);
+    jest.spyOn(notifications, 'sendPush').mockReturnValue(new Promise(() => {}) as any);
+
+    await expect(
+      service.sendOtp('user-1', '+254700123456', 'phone_verification', true),
+    ).resolves.toEqual({ message: 'OTP delivery started' });
+  });
+
+  it('prepares an active regular user for Firebase password reset delivery', async () => {
     const prisma = module.get(PrismaService);
     const firebase = module.get(FirebaseService);
     const notifications = module.get(NotificationsService);
@@ -53,32 +119,50 @@ describe('AuthService', () => {
       is_deleted: false,
       role: 'user',
     } as any);
-    (firebase.auth.generatePasswordResetLink as jest.Mock).mockResolvedValue(
-      'https://farmapp-e2145.firebaseapp.com/__/auth/action?oobCode=abc&mode=resetPassword',
-    );
 
     await expect(service.sendPasswordResetLink('PERSON@example.com')).resolves.toEqual({
       message: 'If an active account exists for this email, a reset link has been sent.',
     });
-    expect(notifications.sendEmailOrThrow).toHaveBeenCalledWith(
-      'person@example.com',
-      'Reset your FARM password',
-      expect.stringContaining('Reset password'),
-      expect.stringContaining('oobCode=abc'),
-    );
+    expect(firebase.auth.generatePasswordResetLink).not.toHaveBeenCalled();
+    expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
   });
 
   it('does not reveal or send email for an unknown reset address', async () => {
     const prisma = module.get(PrismaService);
-    const firebase = module.get(FirebaseService);
     const notifications = module.get(NotificationsService);
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
 
     await expect(service.sendPasswordResetLink('missing@example.com')).resolves.toEqual({
       message: 'If an active account exists for this email, a reset link has been sent.',
     });
-    expect(firebase.auth.generatePasswordResetLink).not.toHaveBeenCalled();
     expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('links an existing FARM account to Firebase before reset email delivery', async () => {
+    const prisma = module.get(PrismaService);
+    const firebase = module.get(FirebaseService);
+    const findUser = jest.spyOn(prisma.users, 'findFirst')
+      .mockResolvedValueOnce({
+        id: 'user-2',
+        email: 'person@example.com',
+        firebase_uid: null,
+        is_active: true,
+        is_deleted: false,
+        role: 'user',
+      } as any)
+      .mockResolvedValueOnce({ firebase_uid: null } as any);
+    const updateUser = jest.spyOn(prisma.users, 'update').mockResolvedValue({} as any);
+    (firebase.auth.getUserByEmail as jest.Mock).mockResolvedValue({
+      uid: 'firebase-user-2',
+    });
+
+    await service.sendPasswordResetLink('person@example.com');
+
+    expect(findUser).toHaveBeenCalledTimes(2);
+    expect(updateUser).toHaveBeenCalledWith({
+      where: { id: 'user-2' },
+      data: { firebase_uid: 'firebase-user-2' },
+    });
   });
 
   it('synchronizes a reset regular-user password and revokes existing sessions', async () => {

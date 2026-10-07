@@ -82,10 +82,6 @@ export class AuthService {
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
     const password_hash = await bcrypt.hash(dto.password, rounds);
 
-    const firebaseUid = dto.email
-      ? await this.ensureFirebaseAccount(dto.email, dto.password)
-      : null;
-
     let referred_by: string | undefined;
     if (dto.referral_code) {
       const referrer = await this.prisma.users.findFirst({
@@ -108,7 +104,7 @@ export class AuthService {
           username: dto.username.toLowerCase(),
           phone: dto.phone,
           email: dto.email,
-          firebase_uid: firebaseUid,
+          firebase_uid: null,
           password_hash,
           country: dto.country,
           referred_by,
@@ -130,7 +126,24 @@ export class AuthService {
       return u;
     });
 
-    await this.sendOtp(user.id, user.phone, 'phone_verification');
+    if (dto.email) {
+      void this.ensureFirebaseAccount(dto.email, dto.password)
+        .then((firebaseUid) =>
+          this.prisma.users.updateMany({
+            where: { id: user.id, firebase_uid: null },
+            data: { firebase_uid: firebaseUid },
+          }),
+        )
+        .catch((error) => {
+          this.logger.warn(
+            `Firebase account linking deferred for new user ${user.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
+    }
+
+    await this.sendOtp(user.id, user.phone, 'phone_verification', true);
     return { message: 'Registration successful. OTP sent to your phone number.' };
   }
 
@@ -696,30 +709,6 @@ if (new Date() > expiryDate) {
         data: { firebase_uid: firebaseUid },
       });
     }
-    const resetLink = await this.firebase.auth.generatePasswordResetLink(
-      user.email,
-      {
-        url: 'https://farmapp-e2145.firebaseapp.com/admin-reset-password',
-        handleCodeInApp: true,
-        android: { packageName: 'farmapp.africa', installApp: true },
-        iOS: { bundleId: 'com.mycompany.farm' },
-      },
-    );
-    const safeResetLink = resetLink
-      .replaceAll('&', '&amp;')
-      .replaceAll('"', '&quot;');
-    await this.notifications.sendEmailOrThrow(
-      user.email,
-      'Reset your FARM password',
-      `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#161616">
-        <h2>Reset your FARM password</h2>
-        <p>We received a request to reset the password for your FARM account.</p>
-        <p><a href="${safeResetLink}" style="display:inline-block;padding:12px 20px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Reset password</a></p>
-        <p>If you did not request this, you can ignore this email.</p>
-        <p style="font-size:12px;color:#666">This is a one-time link. Do not share it with anyone.</p>
-      </div>`,
-      `We received a request to reset your FARM password. Open this one-time link to choose a new password:\n${resetLink}\n\nIf you did not request this, ignore this email.`,
-    );
     return {
       message: 'If an active account exists for this email, a reset link has been sent.',
     };
@@ -1321,7 +1310,12 @@ async resetForgottenPin(
 }
 
 // ── Send OTP ─────────────────────────────────────────────────────────────────
-async sendOtp(userId: string, phone: string, purpose: string) {
+async sendOtp(
+  userId: string,
+  phone: string,
+  purpose: string,
+  deferDelivery = false,
+) {
   const recent = await this.prisma.otp_verifications.findFirst({
     where: {
       user_id: userId,
@@ -1346,6 +1340,28 @@ async sendOtp(userId: string, phone: string, purpose: string) {
       expires_at,
     },
   });
+  const delivery = this.deliverOtp(userId, phone, purpose, code);
+  if (deferDelivery) {
+    void delivery.catch((error) => {
+      this.logger.error(
+        `OTP delivery failed for user ${userId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    return { message: 'OTP delivery started' };
+  }
+
+  await delivery;
+  return { message: 'OTP sent to your phone' };
+}
+
+private async deliverOtp(
+  userId: string,
+  phone: string,
+  purpose: string,
+  code: string,
+) {
   // Send OTP via configured SMS provider (do not log OTP contents)
   try {
     const message = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
@@ -1372,8 +1388,6 @@ async sendOtp(userId: string, phone: string, purpose: string) {
   } catch (e) {
     this.logger.error('OTP SMS send failed: ' + e);
   }
-
-  return { message: 'OTP sent to your phone' };
 }
 
   // Add this method inside the AuthService class
