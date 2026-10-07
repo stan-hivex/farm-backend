@@ -21,6 +21,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
+import { AdminPasswordResetCompleteDto } from './dto/admin-password-reset-complete.dto';
 import {
   generateWalletAddress, generateOtp, generateReferralCode,
 } from '../common/utils/reference.util';
@@ -509,8 +510,8 @@ if (new Date() > expiryDate) {
 
   private async ensureFirebaseAccount(email: string, password?: string): Promise<string> {
     const normalizedEmail = email.trim().toLowerCase();
-    const existingFarmUser = await this.prisma.users.findUnique({
-      where: { email: normalizedEmail },
+    const existingFarmUser = await this.prisma.users.findFirst({
+      where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
       select: { firebase_uid: true },
     });
     if (existingFarmUser?.firebase_uid) return existingFarmUser.firebase_uid;
@@ -624,8 +625,10 @@ if (new Date() > expiryDate) {
       await this.turnstile.verifyToken(turnstileToken, ip);
     }
     const normalizedEmail = email.trim().toLowerCase();
-    const user = await this.prisma.users.findUnique({
-      where: { email: normalizedEmail },
+    const user = await this.prisma.users.findFirst({
+      where: {
+        email: { equals: normalizedEmail, mode: 'insensitive' },
+      },
       select: { id: true, firebase_uid: true, email: true, is_deleted: true },
     });
     if (user && !user.is_deleted && user.email) {
@@ -642,6 +645,84 @@ if (new Date() > expiryDate) {
 
   async resetPassword(dto: ResetPasswordDto) {
     return { message: 'Password reset flow is not configured in this environment' };
+  }
+
+  async preparePasswordReset(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.prisma.users.findFirst({
+      where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+      select: {
+        id: true,
+        email: true,
+        firebase_uid: true,
+        role: true,
+        is_active: true,
+        is_deleted: true,
+      },
+    });
+    const role = String(user?.role ?? '').toLowerCase();
+    if (
+      !user ||
+      !user.email ||
+      user.is_deleted ||
+      !user.is_active ||
+      !['user', 'admin', 'super_admin'].includes(role)
+    ) {
+      return { eligible: false };
+    }
+
+    const firebaseUid =
+      user.firebase_uid || await this.ensureFirebaseAccount(user.email);
+    if (!user.firebase_uid) {
+      await this.prisma.users.update({
+        where: { id: user.id },
+        data: { firebase_uid: firebaseUid },
+      });
+    }
+    return { eligible: true };
+  }
+
+  async completePasswordReset(dto: AdminPasswordResetCompleteDto) {
+    if (dto.password !== dto.confirm_password) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    let decoded: admin.auth.DecodedIdToken;
+    try {
+      decoded = await this.firebase.verifyIdToken(dto.firebase_id_token);
+    } catch {
+      throw new UnauthorizedException('Invalid Firebase authentication token');
+    }
+
+    const user = await this.prisma.users.findUnique({
+      where: { firebase_uid: decoded.uid },
+      select: { id: true, email: true, role: true, is_active: true, is_deleted: true },
+    });
+    const role = String(user?.role ?? '').toLowerCase();
+    if (
+      !user ||
+      user.is_deleted ||
+      !user.is_active ||
+      !['user', 'admin', 'super_admin'].includes(role) ||
+      !user.email ||
+      user.email.toLowerCase() !== decoded.email?.toLowerCase()
+    ) {
+      throw new UnauthorizedException('Firebase account is not linked to an active user');
+    }
+
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    const passwordHash = await bcrypt.hash(dto.password, rounds);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.users.update({
+        where: { id: user.id },
+        data: { password_hash: passwordHash, failed_login_attempts: 0 },
+      });
+      await tx.user_sessions.updateMany({
+        where: { user_id: user.id, is_revoked: false },
+        data: { is_revoked: true, expires_at: new Date() },
+      });
+    });
+    return { message: 'Password reset successfully' };
   }
 
   async resendEmailVerification(email: string) {

@@ -683,8 +683,10 @@ export class WebhookService {
     const successEvents = [
       'payment.success',
       'transaction.completed',
-      'cryptoCollection.success',
-      'fiatCollection.success',
+      'cryptocollection.success',
+      'fiatcollection.success',
+      'cryptopayout.success',
+      'fiatpayout.success',
       'payment.completed',
       'transaction.success',
       'withdrawal.success',
@@ -706,13 +708,17 @@ export class WebhookService {
     const failureEvents = [
       'payment.failed',
       'transaction.failed',
-      'cryptoCollection.failed',
-      'fiatCollection.failed',
+      'cryptocollection.failed',
+      'fiatcollection.failed',
+      'cryptopayout.failed',
+      'fiatpayout.failed',
       'payment.cancelled',
       'transaction.cancelled',
       'cancelled',
       'failed',
       'withdrawal.failed',
+      'transfer.failed',
+      'payout.failed',
     ];
     const failureStatuses = ['failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'];
     return failureEvents.includes(normalizedEvent) || failureStatuses.includes(normalizedStatus);
@@ -2048,11 +2054,31 @@ export class WebhookService {
         }
       }
 
-      if (transaction?.transaction_type === 'withdrawal' || ['withdrawal.success', 'transfer.success', 'payout.success', 'withdrawal.completed', 'transfer.completed', 'payout.completed'].includes(event)) {
-        await this.finalizeWithdrawal(reference, true);
-      } else if (['withdrawal.failed'].includes(event)) {
+      const isWithdrawalEvent = [
+        'cryptopayout.success',
+        'cryptopayout.failed',
+        'fiatpayout.success',
+        'fiatpayout.failed',
+        'withdrawal.success',
+        'withdrawal.failed',
+        'withdrawal.completed',
+        'transfer.success',
+        'transfer.failed',
+        'transfer.completed',
+        'payout.success',
+        'payout.failed',
+        'payout.completed',
+      ].includes(event?.toString()?.toLowerCase() ?? '');
+
+      if ((transaction?.transaction_type === 'withdrawal' || isWithdrawalEvent) && isFailureEvent) {
         this.logger.warn(`Ivorypay webhook withdrawal failure event: event=${event} reference=${reference} status=${status}`);
-        await this.finalizeWithdrawal(reference, false, payload.data?.reason || payload.message);
+        await this.finalizeWithdrawal(
+          resolvedReference,
+          false,
+          payload.data?.reason || payload.data?.failureReason || payload.message,
+        );
+      } else if ((transaction?.transaction_type === 'withdrawal' || isWithdrawalEvent) && isSuccessEvent) {
+        await this.finalizeWithdrawal(resolvedReference, true);
       } else if (isSuccessEvent) {
         const credited = await this.finalizeDeposit(resolvedReference);
         this.logger.log(`Ivorypay webhook processing completed for ${resolvedReference}: success=${credited} event=${event} status=${status}`);

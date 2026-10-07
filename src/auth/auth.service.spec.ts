@@ -32,6 +32,64 @@ describe('AuthService', () => {
     expect(service).toBeDefined();
   });
 
+  it('prepares password reset for an active regular user', async () => {
+    const prisma = module.get(PrismaService);
+    jest.spyOn(prisma.users, 'findFirst').mockResolvedValue({
+      id: 'user-1',
+      email: 'person@example.com',
+      firebase_uid: 'firebase-user-1',
+      is_active: true,
+      is_deleted: false,
+      role: 'user',
+    } as any);
+
+    await expect(service.preparePasswordReset('PERSON@example.com')).resolves.toEqual({
+      eligible: true,
+    });
+  });
+
+  it('synchronizes a reset regular-user password and revokes existing sessions', async () => {
+    const prisma = module.get(PrismaService);
+    const config = module.get(ConfigService);
+    const firebase = module.get(FirebaseService);
+    jest.spyOn(firebase, 'verifyIdToken').mockResolvedValue({
+      uid: 'firebase-user-1',
+      email: 'person@example.com',
+    } as any);
+    jest.spyOn(prisma.users, 'findUnique').mockResolvedValue({
+      id: 'user-1',
+      email: 'person@example.com',
+      role: 'user',
+      is_active: true,
+      is_deleted: false,
+    } as any);
+    jest.spyOn(config, 'get').mockImplementation((key: string) =>
+      key === 'BCRYPT_ROUNDS' ? '4' : undefined,
+    );
+    const updateUser = jest.fn().mockResolvedValue({});
+    const revokeSessions = jest.fn().mockResolvedValue({});
+    jest.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) =>
+      callback({
+        users: { update: updateUser },
+        user_sessions: { updateMany: revokeSessions },
+      }),
+    );
+
+    await expect(service.completePasswordReset({
+      firebase_id_token: 'firebase-token',
+      password: 'NewSecure1!Password',
+      confirm_password: 'NewSecure1!Password',
+    })).resolves.toEqual({ message: 'Password reset successfully' });
+    expect(updateUser).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'user-1' },
+      data: expect.objectContaining({ failed_login_attempts: 0 }),
+    }));
+    expect(revokeSessions).toHaveBeenCalledWith({
+      where: { user_id: 'user-1', is_revoked: false },
+      data: expect.objectContaining({ is_revoked: true }),
+    });
+  });
+
   it('normalizes phone numbers consistently for firebase verification', () => {
     expect((service as any).normalizePhoneNumber('+254700123456')).toBe('+254700123456');
     expect((service as any).normalizePhoneNumber('254700123456')).toBe('+254700123456');

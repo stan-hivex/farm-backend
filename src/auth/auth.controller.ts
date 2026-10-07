@@ -43,6 +43,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
+import { AdminPasswordResetCompleteDto } from './dto/admin-password-reset-complete.dto';
 
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -185,6 +186,24 @@ export class AuthController {
     @Req() req: Request,
   ) {
     return this.authService.sendPasswordResetOtp(dto.email, req.ip || '');
+  }
+
+  @Public()
+  @Post('password-reset/prepare')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 300 } })
+  @ApiOperation({ summary: 'Prepare Firebase password reset for an account' })
+  preparePasswordReset(@Body() dto: ForgotPasswordDto) {
+    return this.authService.preparePasswordReset(dto.email);
+  }
+
+  @Public()
+  @Post('password-reset/complete')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 300 } })
+  @ApiOperation({ summary: 'Synchronize a completed Firebase password reset' })
+  completePasswordReset(@Body() dto: AdminPasswordResetCompleteDto) {
+    return this.authService.completePasswordReset(dto);
   }
 
   @Public()
