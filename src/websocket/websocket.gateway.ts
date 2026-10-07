@@ -11,6 +11,8 @@ import { ConfigService } from '@nestjs/config';
         return callback(null, true);
       }
 
+      // Flutter web's development server selects an available port at startup.
+      const localhostCorsRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
       const allowedOrigins = (process.env.CORS_ORIGINS ?? '')
         .split(',')
         .map((value) => value.trim())
@@ -23,7 +25,7 @@ import { ConfigService } from '@nestjs/config';
         return new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`).test(origin);
       });
 
-      return callback(null, isAllowed);
+      return callback(null, isAllowed || localhostCorsRegex.test(origin));
     },
   },
   namespace: '/ws',
