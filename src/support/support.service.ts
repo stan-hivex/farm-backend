@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class SupportService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async createTicket(userId: string, subject: string, message: string) {
     const ticket = await this.prisma.support_tickets.create({
@@ -28,7 +32,12 @@ export class SupportService {
           orderBy: { created_at: 'asc' },
           include: {
             users: {
-              select: { id: true, first_name: true, role: true },
+              select: {
+                id: true,
+                first_name: true,
+                last_name: true,
+                role: true,
+              },
             },
           },
         },
@@ -57,7 +66,12 @@ export class SupportService {
           orderBy: { created_at: 'asc' },
           include: {
             users: {
-              select: { id: true, first_name: true, role: true },
+              select: {
+                id: true,
+                first_name: true,
+                last_name: true,
+                role: true,
+              },
             },
           },
         },
@@ -89,6 +103,16 @@ export class SupportService {
           sender_id: senderId,
           message: message.trim(),
         },
+        include: {
+          users: {
+            select: {
+              id: true,
+              first_name: true,
+              last_name: true,
+              role: true,
+            },
+          },
+        },
       });
 
       await tx.support_tickets.update({
@@ -102,6 +126,19 @@ export class SupportService {
 
       return createdMessage;
     });
+
+    if (isAdmin && ticket.user_id) {
+      await this.notificationsService.sendNotification(ticket.user_id, {
+        type: 'admin',
+        title: 'Support replied',
+        body: `An admin has replied to your support enquiry: ${ticket.subject ?? 'Support enquiry'}.`,
+        entityId: ticketId,
+        metadata: {
+          category: 'support_reply',
+          ticketId,
+        },
+      });
+    }
 
     return { data: reply, message: 'Reply sent.' };
   }
