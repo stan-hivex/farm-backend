@@ -12,6 +12,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class TransferRequestsService {
@@ -22,6 +23,7 @@ export class TransferRequestsService {
     private authService: AuthService,
     private notificationsService: NotificationsService,
     private securityService: SecurityService,
+    private websocket: WebsocketGateway,
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────
@@ -343,11 +345,11 @@ export class TransferRequestsService {
       });
 
       // Update balances
-      await tx.wallets.update({
+      const updatedSenderWallet = await tx.wallets.update({
         where: { id: senderWallet.id },
         data: { balance: { decrement: totalOut } },
       });
-      await tx.wallets.update({
+      const updatedRequesterWallet = await tx.wallets.update({
         where: { id: requesterWallet!.id },
         data: { balance: { increment: amount } },
       });
@@ -402,8 +404,35 @@ export class TransferRequestsService {
         },
         message: 'Transfer completed successfully',
         requesterUserId: request.requester_user_id,
+        senderBalance: Number(updatedSenderWallet.balance),
+        requesterBalance: Number(updatedRequesterWallet.balance),
+        transactionReference: transaction.transaction_reference,
       };
     });
+
+    try {
+      this.websocket.emitBalanceUpdate(senderUserId, result.senderBalance);
+      this.websocket.emitTransactionUpdate(senderUserId, {
+        reference: result.transactionReference,
+        status: 'SUCCESS',
+      });
+      if (result.requesterUserId) {
+        this.websocket.emitBalanceUpdate(
+          result.requesterUserId,
+          result.requesterBalance,
+        );
+        this.websocket.emitTransactionUpdate(result.requesterUserId, {
+          reference: result.transactionReference,
+          status: 'SUCCESS',
+        });
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Transfer request realtime update failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     await this.notificationsService.notifyTransfer(
       senderUserId,

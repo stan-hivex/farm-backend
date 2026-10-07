@@ -1,5 +1,11 @@
 // src/withdraw/withdraw.service.ts
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ConflictException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -232,6 +238,256 @@ export class WithdrawService {
     return withdrawal;
   }
 
+  async adminApproveWithdrawal(id: string) {
+    const withdrawal = await this.prisma.withdrawal.findUnique({
+      where: { id },
+    });
+    if (!withdrawal) throw new NotFoundException('Withdrawal not found');
+    if (withdrawal.status === 'COMPLETED') {
+      throw new ConflictException('This withdrawal has already completed');
+    }
+    if (withdrawal.status === 'PROCESSING') {
+      throw new ConflictException(
+        'This withdrawal is already being processed. Wait for the provider confirmation.',
+      );
+    }
+
+    let reference = withdrawal.reference;
+    let retriedFailedWithdrawal = false;
+    if (withdrawal.status === 'FAILED') {
+      const amount = Number(withdrawal.amount ?? 0);
+      reference = uuidv4();
+      await this.prisma.$transaction(async (tx) => {
+        const wallet = await tx.wallets.findFirst({
+          where: { user_id: withdrawal.userId, is_active: true },
+        });
+        if (!wallet) throw new BadRequestException('Active wallet not found');
+
+        const availableBalance =
+          Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0);
+        if (availableBalance < amount) {
+          throw new BadRequestException(
+            'The user no longer has enough available balance to retry this withdrawal',
+          );
+        }
+
+        const retried = await tx.withdrawal.updateMany({
+          where: { id, status: 'FAILED' },
+          data: {
+            reference,
+            status: 'PENDING',
+            rejectionReason: null,
+          },
+        });
+        if (retried.count !== 1) {
+          throw new ConflictException(
+            'This withdrawal has changed; refresh and try again',
+          );
+        }
+
+        await tx.wallets.update({
+          where: { id: wallet.id },
+          data: { locked_balance: { increment: amount } },
+        });
+
+        const transaction = await tx.transactions.findUnique({
+          where: { transaction_reference: withdrawal.reference },
+        });
+        if (!transaction) {
+          throw new BadRequestException(
+            'The withdrawal transaction record could not be found',
+          );
+        }
+
+        const metadata = (transaction.metadata as Record<string, any>) ?? {};
+        await tx.transactions.update({
+          where: { id: transaction.id },
+          data: {
+            transaction_reference: reference,
+            status: 'pending',
+            processed_at: null,
+            description: 'Withdrawal retry pending',
+            metadata: {
+              ...metadata,
+              reference,
+              retry_of: withdrawal.reference,
+              paystack_transfer_code: null,
+              paystack_transfer_status: null,
+              paystack_failure_reason: null,
+              ivorypay_withdrawal_id: null,
+              ivorypay_withdrawal_status: null,
+              ivorypay_failure_reason: null,
+            },
+          },
+        });
+      });
+      retriedFailedWithdrawal = true;
+    } else if (withdrawal.status !== 'PENDING') {
+      throw new ConflictException(
+        `Cannot approve a withdrawal with status ${withdrawal.status}`,
+      );
+    } else {
+      const wallet = await this.prisma.wallets.findFirst({
+        where: { user_id: withdrawal.userId, is_active: true },
+      });
+      const amount = Number(withdrawal.amount ?? 0);
+      if (
+        !wallet ||
+        Number(wallet.balance ?? 0) < amount ||
+        Number(wallet.locked_balance ?? 0) < amount
+      ) {
+        throw new BadRequestException(
+          'The user no longer has enough reserved wallet balance for this withdrawal',
+        );
+      }
+    }
+
+    await this.processWithdrawal(reference);
+    const updated = await this.prisma.withdrawal.findUnique({
+      where: { reference },
+    });
+    if (!updated) throw new NotFoundException('Withdrawal not found after processing');
+
+    if (retriedFailedWithdrawal) {
+      const wallet = await this.prisma.wallets.findFirst({
+        where: { user_id: withdrawal.userId, is_active: true },
+      });
+      try {
+        this.websocket.emitBalanceUpdate(
+          withdrawal.userId,
+          Number(wallet?.balance ?? 0),
+        );
+        this.websocket.emitTransactionUpdate(withdrawal.userId, {
+          reference,
+          status: updated.status,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Withdrawal retry realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      await Promise.all([
+        this.cache.cacheInvalidatePattern(
+          `wallet:${withdrawal.userId}:balance`,
+        ),
+        this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
+        this.cache.cacheInvalidatePattern(
+          `transactions:${withdrawal.userId}:*`,
+        ),
+      ]);
+    }
+
+    return {
+      data: updated,
+      message:
+        updated.status === 'FAILED'
+          ? updated.rejectionReason || 'The provider could not process the withdrawal'
+          : 'Withdrawal sent to the payout provider; completion will be confirmed by the provider',
+    };
+  }
+
+  async adminRejectWithdrawal(id: string, reason: string) {
+    const withdrawal = await this.prisma.withdrawal.findUnique({
+      where: { id },
+    });
+    if (!withdrawal) throw new NotFoundException('Withdrawal not found');
+    if (withdrawal.status !== 'PENDING') {
+      throw new ConflictException(
+        'Only a pending withdrawal that has not been submitted to a provider can be rejected',
+      );
+    }
+
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: withdrawal.reference },
+    });
+    if (!transaction) {
+      throw new BadRequestException(
+        'The withdrawal transaction record could not be found',
+      );
+    }
+
+    const rejectionReason = reason.trim() || 'Rejected by support';
+    const result = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.withdrawal.updateMany({
+        where: { id, status: 'PENDING' },
+        data: { status: 'FAILED', rejectionReason },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException(
+          'This withdrawal has already been submitted or updated',
+        );
+      }
+
+      const wallet = await tx.wallets.findFirst({
+        where: { user_id: withdrawal.userId, is_active: true },
+      });
+      const amount = Number(withdrawal.amount ?? 0);
+      if (!wallet || Number(wallet.locked_balance ?? 0) < amount) {
+        throw new BadRequestException(
+          'The withdrawal funds are no longer reserved in the user wallet',
+        );
+      }
+
+      const updatedWallet = await tx.wallets.update({
+        where: { id: wallet.id },
+        data: { locked_balance: { decrement: amount } },
+      });
+      const metadata = (transaction.metadata as Record<string, any>) ?? {};
+      await tx.transactions.update({
+        where: { id: transaction.id },
+        data: {
+          status: 'failed',
+          processed_at: new Date(),
+          description: 'Withdrawal rejected by support',
+          metadata: {
+            ...metadata,
+            rejection_reason: rejectionReason,
+          },
+        },
+      });
+
+      return updatedWallet;
+    });
+
+    try {
+      this.websocket.emitBalanceUpdate(
+        withdrawal.userId,
+        Number(result.balance ?? 0),
+      );
+      this.websocket.emitTransactionUpdate(withdrawal.userId, {
+        reference: withdrawal.reference,
+        status: 'FAILED',
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Admin withdrawal rejection realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    await Promise.all([
+      this.cache.cacheInvalidatePattern(
+        `wallet:${withdrawal.userId}:balance`,
+      ),
+      this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
+      this.cache.cacheInvalidatePattern(
+        `transactions:${withdrawal.userId}:*`,
+      ),
+      this.cache.cacheDelete('admin:dashboard:stats'),
+    ]);
+    await this.notificationsService.sendNotification(withdrawal.userId, {
+      type: 'transaction',
+      title: 'Withdrawal rejected',
+      body: `Your withdrawal request was rejected: ${rejectionReason}. The reserved funds are available in your wallet again.`,
+      entityId: withdrawal.id,
+      metadata: { reference: withdrawal.reference, reason: rejectionReason },
+    });
+
+    return {
+      data: { id: withdrawal.id, status: 'FAILED' },
+      message: 'Withdrawal rejected and reserved funds released to the wallet',
+    };
+  }
+
   async getWithdrawalStatus(reference: string, userId: string) {
     const withdrawal = await this.prisma.withdrawal.findFirst({
       where: { reference, userId },
@@ -275,10 +531,16 @@ export class WithdrawService {
   }
 
   private async processWithdrawal(reference: string) {
-    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
-    if (!withdrawal || withdrawal.status !== 'PENDING') return;
+    const claimed = await this.prisma.withdrawal.updateMany({
+      where: { reference, status: 'PENDING' },
+      data: { status: 'PROCESSING' },
+    });
+    if (claimed.count !== 1) return;
 
-    await this.prisma.withdrawal.update({ where: { reference }, data: { status: 'PROCESSING' } });
+    const withdrawal = await this.prisma.withdrawal.findUnique({
+      where: { reference },
+    });
+    if (!withdrawal) return;
 
     try {
       let recipient: any;
@@ -444,10 +706,11 @@ export class WithdrawService {
     const unlockAmount = Math.min(previousLocked, amount);
 
     const updatedWallet = await this.prisma.$transaction(async (tx) => {
-      await tx.withdrawal.update({
-        where: { reference },
+      const completed = await tx.withdrawal.updateMany({
+        where: { reference, status: { in: ['PENDING', 'PROCESSING'] } },
         data: { status: 'COMPLETED' },
       });
+      if (completed.count !== 1) return null;
 
       const walletAfterUpdate = await tx.wallets.update({
         where: { id: wallet.id },
@@ -489,6 +752,12 @@ export class WithdrawService {
       );
       return walletAfterUpdate;
     });
+    if (!updatedWallet) {
+      const current = await this.prisma.withdrawal.findUnique({
+        where: { reference },
+      });
+      return current?.status === 'COMPLETED';
+    }
 
     try {
       this.websocket.emitBalanceUpdate(withdrawal.userId, Number(updatedWallet.balance));
@@ -606,6 +875,7 @@ export class WithdrawService {
     const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
     if (!withdrawal) return false;
     if (withdrawal.status === 'FAILED') return true;
+    if (withdrawal.status === 'COMPLETED') return false;
 
     const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: withdrawal.userId, is_active: true } });
@@ -616,10 +886,14 @@ export class WithdrawService {
     const unlockAmount = Math.min(previousLocked, amount);
 
     const updatedWallet = await this.prisma.$transaction(async (tx) => {
-      await tx.withdrawal.update({
-        where: { reference },
+      const failed = await tx.withdrawal.updateMany({
+        where: {
+          reference,
+          status: { in: ['PENDING', 'PROCESSING'] },
+        },
         data: { status: 'FAILED', rejectionReason: reason },
       });
+      if (failed.count !== 1) return null;
 
       const walletAfterUpdate = await tx.wallets.update({
         where: { id: wallet.id },
@@ -652,6 +926,12 @@ export class WithdrawService {
       }
       return walletAfterUpdate;
     });
+    if (!updatedWallet) {
+      const current = await this.prisma.withdrawal.findUnique({
+        where: { reference },
+      });
+      return current?.status === 'FAILED';
+    }
 
     try {
       this.websocket.emitBalanceUpdate(withdrawal.userId, Number(updatedWallet.balance));

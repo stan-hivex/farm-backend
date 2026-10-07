@@ -47,6 +47,82 @@ describe('AdminService.broadcastNotification', () => {
     );
   });
 
+  describe('AdminService.resolveDispute', () => {
+    const makeService = (escrow: any) => {
+      const prisma = {
+        escrow_contracts: { findUnique: jest.fn().mockResolvedValue(escrow) },
+        audit_logs: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const escrowService = {
+        executeRelease: jest.fn().mockResolvedValue(undefined),
+        executeRefund: jest.fn().mockResolvedValue(undefined),
+      };
+      const service = new AdminService(
+        prisma as any,
+        escrowService as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+      return { service, prisma, escrowService };
+    };
+
+    it('refunds the buyer when an admin resolves a dispute in their favor', async () => {
+      const { service, escrowService, prisma } = makeService({
+        id: 'escrow-1',
+        status: 'disputed',
+      });
+
+      await service.resolveDispute('escrow-1', 'admin-1', {
+        winner: 'buyer',
+        note: 'Seller did not deliver',
+      });
+
+      expect(escrowService.executeRefund).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'escrow-1' }),
+        { adminId: 'admin-1', note: 'Seller did not deliver' },
+      );
+      expect(escrowService.executeRelease).not.toHaveBeenCalled();
+      expect(prisma.audit_logs.create).toHaveBeenCalled();
+    });
+
+    it('releases funds to the seller when an admin resolves in their favor', async () => {
+      const { service, escrowService } = makeService({
+        id: 'escrow-1',
+        status: 'disputed',
+      });
+
+      await service.resolveDispute('escrow-1', 'admin-1', {
+        winner: 'seller',
+        note: 'Delivery confirmed',
+      });
+
+      expect(escrowService.executeRelease).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'escrow-1' }),
+        { adminId: 'admin-1', note: 'Delivery confirmed' },
+      );
+      expect(escrowService.executeRefund).not.toHaveBeenCalled();
+    });
+
+    it('does not resolve an escrow unless it is disputed', async () => {
+      const { service, escrowService, prisma } = makeService({
+        id: 'escrow-1',
+        status: 'active',
+      });
+
+      await expect(
+        service.resolveDispute('escrow-1', 'admin-1', {
+          winner: 'seller',
+          note: 'Not a dispute',
+        }),
+      ).rejects.toThrow('Only disputed escrows can be resolved');
+
+      expect(escrowService.executeRelease).not.toHaveBeenCalled();
+      expect(escrowService.executeRefund).not.toHaveBeenCalled();
+      expect(prisma.audit_logs.create).not.toHaveBeenCalled();
+    });
+  });
+
   it('sends to explicitly supplied recipients when recipient IDs are provided', async () => {
     const prisma = {
       users: {

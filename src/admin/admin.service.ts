@@ -18,7 +18,15 @@ export class AdminService {
   ) {}
 
   async getDashboardStats() {
-    const [totalUsers, totalMerchants, activeEscrows, txVolume, pendingKyc, pendingPayouts] =
+    const [
+      totalUsers,
+      totalMerchants,
+      activeEscrows,
+      txVolume,
+      pendingKyc,
+      pendingPayouts,
+      pendingDisputes,
+    ] =
       await Promise.all([
         this.prisma.users.count({ where: { is_deleted: false } }),
         this.prisma.merchants.count({ where: { status: 'approved' } }),
@@ -28,6 +36,7 @@ export class AdminService {
         }),
         this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
         this.prisma.merchant_payouts.count({ where: { status: 'pending' } }),
+        this.prisma.escrow_contracts.count({ where: { status: 'disputed' } }),
       ]);
     return {
       data: {
@@ -38,6 +47,7 @@ export class AdminService {
         total_transactions: txVolume._count,
         pending_kyc: pendingKyc,
         pending_payouts: pendingPayouts,
+        pending_disputes: pendingDisputes,
       },
     };
   }
@@ -200,8 +210,12 @@ export class AdminService {
       this.prisma.escrow_contracts.findMany({
         where, skip, take, orderBy: { created_at: 'desc' },
         include: {
-          users_escrow_contracts_buyer_idTousers: { select: { username: true } },
-          users_escrow_contracts_seller_idTousers: { select: { username: true } },
+          users_escrow_contracts_buyer_idTousers: {
+            select: { id: true, username: true, first_name: true, last_name: true },
+          },
+          users_escrow_contracts_seller_idTousers: {
+            select: { id: true, username: true, first_name: true, last_name: true },
+          },
         },
       }),
       this.prisma.escrow_contracts.count({ where }),
@@ -218,12 +232,15 @@ export class AdminService {
   ) {
     const escrow = await this.prisma.escrow_contracts.findUnique({ where: { id: escrowId } });
     if (!escrow) throw new NotFoundException('Escrow not found');
-    if (dto.winner === 'seller') await this.escrowService.executeRelease(escrow);
-    else await this.escrowService.executeRefund(escrow);
-    await this.prisma.escrow_contracts.update({
-      where: { id: escrowId },
-      data: { arbiter_id: adminId, resolution_note: dto.note, resolved_at: new Date() },
-    });
+    if (escrow.status !== 'disputed') {
+      throw new BadRequestException('Only disputed escrows can be resolved');
+    }
+    const resolution = { adminId, note: dto.note };
+    if (dto.winner === 'seller') {
+      await this.escrowService.executeRelease(escrow, resolution);
+    } else {
+      await this.escrowService.executeRefund(escrow, resolution);
+    }
     await this.prisma.audit_logs.create({
       data: {
         user_id: adminId, action: 'RESOLVE_DISPUTE',

@@ -43,6 +43,21 @@ export class AuthService {
   ) {}
 
   // ── Register ────────────────────────────────────────────────────────────────
+  async checkUsernameAvailability(username: string) {
+    const normalizedUsername = username.trim().toLowerCase();
+    const existing = await this.prisma.users.findFirst({
+      where: { username: normalizedUsername },
+      select: { id: true },
+    });
+
+    return {
+      data: {
+        username: normalizedUsername,
+        available: !existing,
+      },
+    };
+  }
+
   async register(dto: RegisterDto, ip: string, turnstileToken?: string) {
     // Validate Turnstile token (bot protection)
     if (turnstileToken) {

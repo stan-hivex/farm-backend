@@ -121,6 +121,18 @@ export class EscrowService {
     );
 
     const result = await this.prisma.$transaction(async (tx) => {
+      const lockedWallets = await tx.$queryRaw<
+        Array<{ balance: unknown; locked_balance: unknown }>
+      >`SELECT balance, locked_balance FROM wallets WHERE id = ${buyer.wallets[0].id} FOR UPDATE`;
+      const lockedWallet = lockedWallets[0];
+      if (!lockedWallet) throw new NotFoundException('Buyer wallet not found');
+
+      const currentAvailable =
+        Number(lockedWallet.balance ?? 0) - Number(lockedWallet.locked_balance ?? 0);
+      if (currentAvailable < totalRequired) {
+        throw new BadRequestException(`Insufficient balance. Need ${totalRequired} FARM`);
+      }
+
       const c = await tx.escrow_contracts.create({
         data: {
           reference_code: generateEscrowReference(),
@@ -376,12 +388,38 @@ export class EscrowService {
     return released;
   }
 
-  async executeRelease(escrow: any) {
+  async executeRelease(
+    escrow: any,
+    resolution?: { adminId: string; note: string },
+  ) {
     const releaseFee = Number((Number(escrow.amount) * 0.015).toFixed(2)); // 1.5% release fee
     const amountToSeller = Number(escrow.amount) - releaseFee;
     const amountLocked = Number(escrow.amount);
 
     const result = await this.prisma.$transaction(async (tx) => {
+      const resolvedAt = new Date();
+      const transitioned = await tx.escrow_contracts.updateMany({
+        where: {
+          id: escrow.id,
+          status: { in: [resolution ? 'disputed' : 'active'] },
+        },
+        data: {
+          status: 'completed',
+          released_at: resolvedAt,
+          ...(resolution
+            ? {
+                arbiter_id: resolution.adminId,
+                resolution_note: resolution.note,
+                resolved_at: resolvedAt,
+              }
+            : {}),
+        },
+      });
+      if (transitioned.count !== 1) {
+        throw new BadRequestException(
+          resolution ? 'Escrow is no longer disputed' : 'Escrow is no longer active',
+        );
+      }
       // Deduct only the locked escrow amount from buyer's wallet. The creation fee was already charged at escrow creation.
       const updatedBuyerWallet = await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
@@ -421,9 +459,6 @@ export class EscrowService {
           },
         ],
       });
-      await tx.escrow_contracts.update({
-        where: { id: escrow.id }, data: { status: 'completed', released_at: new Date() },
-      });
       // Credit release fee to superadmin wallet
       if (releaseFee > 0) {
         await this.creditSuperadminWalletInTx(
@@ -454,37 +489,72 @@ export class EscrowService {
       this.logger.warn(`Escrow release realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 
+    const buyerResolutionMessage = resolution
+      ? `An admin resolved the dispute in the seller's favor.${resolution.note ? ` Note: ${resolution.note}` : ''}`
+      : null;
+    const sellerResolutionMessage = resolution
+      ? `An admin resolved the dispute in your favor.${resolution.note ? ` Note: ${resolution.note}` : ''}`
+      : null;
     await Promise.all([
       this.notificationsService.sendNotification(escrow.buyer_id, {
         type: 'escrow_released',
         title: 'Escrow released',
-        body: `Your escrow for ${escrow.title} was released and ${amountToSeller} FARM was paid to ${escrow.seller_id === escrow.buyer_id ? 'the seller' : 'the seller'}.`,
+        body: buyerResolutionMessage ??
+          `Your escrow for ${escrow.title} was released and ${amountToSeller} FARM was paid to the seller.`,
         entityId: escrow.id,
         metadata: {
           escrow_id: escrow.id,
           amount: Number(escrow.amount),
           released_amount: amountToSeller,
           seller_id: escrow.seller_id,
+          ...(resolution ? { resolution_note: resolution.note } : {}),
         },
       }),
       this.notificationsService.sendNotification(escrow.seller_id, {
         type: 'escrow_received',
         title: 'Escrow payment released',
-        body: `Escrow for ${escrow.title} was released and ${amountToSeller} FARM credited to your wallet.`,
+        body: sellerResolutionMessage ??
+          `Escrow for ${escrow.title} was released and ${amountToSeller} FARM credited to your wallet.`,
         entityId: escrow.id,
         metadata: {
           escrow_id: escrow.id,
           amount: Number(escrow.amount),
           net_amount: amountToSeller,
           buyer_id: escrow.buyer_id,
+          ...(resolution ? { resolution_note: resolution.note } : {}),
         },
       }),
     ]).catch((error) => this.logger.error('Escrow release notification failed', error));
   }
 
-  async executeRefund(escrow: any) {
+  async executeRefund(
+    escrow: any,
+    resolution?: { adminId: string; note: string },
+  ) {
     const amount = Number(escrow.amount);
     const result = await this.prisma.$transaction(async (tx) => {
+      const resolvedAt = new Date();
+      const transitioned = await tx.escrow_contracts.updateMany({
+        where: {
+          id: escrow.id,
+          status: { in: [resolution ? 'disputed' : 'active'] },
+        },
+        data: {
+          status: 'refunded',
+          resolved_at: resolvedAt,
+          ...(resolution
+            ? {
+                arbiter_id: resolution.adminId,
+                resolution_note: resolution.note,
+              }
+            : {}),
+        },
+      });
+      if (transitioned.count !== 1) {
+        throw new BadRequestException(
+          resolution ? 'Escrow is no longer disputed' : 'Escrow is no longer active',
+        );
+      }
       const updatedWallet = await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
         data: { locked_balance: { decrement: amount } },
@@ -503,9 +573,6 @@ export class EscrowService {
           processed_at: new Date(),
         },
       });
-      await tx.escrow_contracts.update({
-        where: { id: escrow.id }, data: { status: 'refunded', resolved_at: new Date() },
-      });
       return {
         balance: Number(updatedWallet.balance),
         transactionReference: transaction.transaction_reference,
@@ -522,16 +589,44 @@ export class EscrowService {
       this.logger.warn(`Escrow refund realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    await this.notificationsService.sendNotification(escrow.buyer_id, {
-      type: 'escrow_refunded',
-      title: 'Escrow refunded',
-      body: `Your escrow for ${escrow.title} has been refunded. ${amount} FARM is now unlocked.`,
-      entityId: escrow.id,
-      metadata: {
-        escrow_id: escrow.id,
-        amount,
-      },
-    }).catch((error) => this.logger.error('Escrow refund notification failed', error));
+    const resolutionText = resolution
+      ? `An admin resolved the dispute in your favor. ${amount} FARM was returned. The 1.5% escrow creation fee is non-refundable.${resolution.note ? ` Note: ${resolution.note}` : ''}`
+      : `Your escrow for ${escrow.title} has been refunded. ${amount} FARM was returned. The 1.5% escrow creation fee is non-refundable.`;
+    const refundNotifications = [
+      this.notificationsService.sendNotification(escrow.buyer_id, {
+        type: 'escrow_refunded',
+        title: 'Escrow refunded',
+        body: resolutionText,
+        entityId: escrow.id,
+        metadata: {
+          escrow_id: escrow.id,
+          amount,
+          refunded_amount: amount,
+          creation_fee_refunded: 0,
+          ...(resolution ? { resolution_note: resolution.note } : {}),
+        },
+      }),
+    ];
+    if (resolution && escrow.seller_id) {
+      refundNotifications.push(
+        this.notificationsService.sendNotification(escrow.seller_id, {
+          type: 'escrow_refunded',
+          title: "Dispute resolved in buyer's favor",
+          body: `The disputed escrow for ${escrow.title} was refunded to the buyer. ${amount} FARM was returned; the 1.5% escrow creation fee is non-refundable.${resolution.note ? ` Note: ${resolution.note}` : ''}`,
+          entityId: escrow.id,
+          metadata: {
+            escrow_id: escrow.id,
+            amount,
+            refunded_amount: amount,
+            creation_fee_refunded: 0,
+            resolution_note: resolution.note,
+          },
+        }),
+      );
+    }
+    await Promise.all(refundNotifications).catch((error) =>
+      this.logger.error('Escrow refund notification failed', error),
+    );
   }
 
   private async getEscrowOrFail(id: string) {

@@ -188,6 +188,32 @@ export class TransactionsService {
     const normalizedStatus = this.normalizeTransactionStatus(txn.status, txn.transaction_type);
     const senderUser = this.buildUserSummary((txn as any).wallets_transactions_sender_wallet_idTowallets?.users);
     const recipientUser = this.buildUserSummary((txn as any).wallets_transactions_receiver_wallet_idTowallets?.users);
+    const metadata = txn.metadata && typeof txn.metadata === 'object'
+      ? txn.metadata as Record<string, any>
+      : {};
+    const deposit = txn.transaction_type === 'deposit'
+      ? await this.prisma.deposit.findFirst({
+          where: { reference: txn.transaction_reference },
+        })
+      : null;
+    const withdrawal = txn.transaction_type === 'withdrawal'
+      ? await this.prisma.withdrawal.findUnique({
+          where: { reference: txn.transaction_reference },
+          select: {
+            method: true,
+            cryptoAsset: true,
+            network: true,
+            settlement: true,
+            status: true,
+            rejectionReason: true,
+          },
+        })
+      : null;
+    const fiatAmount = metadata.amount_fiat ?? metadata.amount_usd ??
+      (deposit && deposit.currency !== txn.currency ? deposit.amount : null);
+    const fiatCurrency = metadata.currency_fiat ??
+      (metadata.amount_usd != null ? 'USD' :
+        deposit && deposit.currency !== txn.currency ? deposit.currency : null);
 
     let merchantBusinessName = '';
     if (txn.metadata && typeof txn.metadata === 'object') {
@@ -206,9 +232,32 @@ export class TransactionsService {
         ...txn,
         status: normalizedStatus,
         description: this.normalizeTransactionDescription(txn.transaction_type, normalizedStatus, txn.description),
+        original_description: txn.description,
         amount: Number(txn.amount),
         fee: Number(txn.fee),
         net_amount: Number(txn.net_amount),
+        amount_farm: metadata.amount_farm ?? (txn.currency === 'FARM' ? Number(txn.amount) : null),
+        fiat_amount: fiatAmount == null ? null : Number(fiatAmount),
+        fiat_currency: fiatCurrency,
+        payment_method: metadata.payment_method ?? metadata.method ?? deposit?.paymentMethod ?? null,
+        payment_provider: metadata.provider ?? deposit?.provider ?? null,
+        provider_reference: metadata.provider_ref ?? deposit?.providerRef ?? deposit?.providerReference ?? null,
+        provider_transaction_id: deposit?.providerTransactionId ?? null,
+        payment_reference: deposit?.paymentReference ?? null,
+        merchant_reference: deposit?.merchantReference ?? null,
+        checkout_id: deposit?.checkoutId ?? null,
+        blockchain_tx_hash: txn.blockchain_tx_hash ?? deposit?.blockchainTransactionHash ?? null,
+        deposit_status: deposit?.status ?? null,
+        deposit_verified_at: deposit?.verifiedAt ?? null,
+        deposit_credited_at: deposit?.creditedAt ?? null,
+        deposit_webhook_received_at: deposit?.webhookReceived ?? null,
+        deposit_verification_attempts: deposit?.verificationAttempts ?? null,
+        withdrawal_status: withdrawal?.status ?? null,
+        withdrawal_method: withdrawal?.method ?? null,
+        withdrawal_network: withdrawal?.network ?? null,
+        crypto_asset: withdrawal?.cryptoAsset ?? null,
+        settlement_amount: withdrawal?.settlement ?? null,
+        failure_reason: withdrawal?.rejectionReason ?? null,
         is_outgoing: txn.sender_wallet_id === wallet?.id,
         sender_username: senderUser?.username ?? '',
         recipient_username: recipientUser?.username ?? '',

@@ -22,13 +22,12 @@ export class WalletsService {
   ) {}
 
   async getMyWallet(userId: string) {
-    return this.cache.wrap(`wallet:${userId}:balance`, 15, async () => {
-      const wallet = await this.prisma.wallets.findFirst({
+    const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
-      });
+    });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const available = Number(wallet.balance) - Number(wallet.locked_balance);
-      return {
+    return {
       data: {
         id: wallet.id,
         wallet_address: wallet.wallet_address,
@@ -40,8 +39,7 @@ export class WalletsService {
         blockchain_address: wallet.blockchain_address,
         is_frozen: wallet.is_frozen,
       },
-      };
-    });
+    };
   }
 
   async sendFunds(

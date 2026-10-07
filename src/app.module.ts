@@ -37,6 +37,7 @@ import { WebsocketModule } from './websocket/websocket.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
+import { SupportModule } from './support/support.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 
@@ -112,6 +113,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     EscrowModule,
     TransferRequestsModule,
     PaymentRequestsModule,
+    SupportModule,
   ],
   providers: [
     ExpiryTasksService,

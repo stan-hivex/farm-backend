@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 import { WebhookService } from '../webhook/webhook.service';
+import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
 
 @Controller({ path: 'payments/webhooks', version: '1' })
 export class PaymentsWebhookController {
@@ -17,39 +18,11 @@ export class PaymentsWebhookController {
     return { success: true, message: 'Ivorypay webhook endpoint is alive' };
   }
 
-  // Intentionally not guarded so providers can POST anonymously.
+  @UseGuards(WebhookSignatureGuard)
   @Post('ivorypay')
-  async ivorypay(@Req() req: any, @Body() body: any) {
-    try {
-      this.logger.log('Ivorypay webhook reached');
-      try {
-        this.logger.log(`Ivorypay webhook headers: ${JSON.stringify(req.headers || {}, null, 2)}`);
-      } catch (e) {
-        this.logger.warn('Failed to stringify headers for logging');
-      }
-
-      // Log raw body (saved by rawBody middleware)
-      try {
-        this.logger.log(`Ivorypay webhook rawBody: ${typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(req.rawBody)}`);
-      } catch (e) {
-        this.logger.warn('Failed to log rawBody');
-      }
-
-      // Log parsed body
-      try {
-        this.logger.log(`Ivorypay webhook parsed body: ${JSON.stringify(body, null, 2)}`);
-      } catch (e) {
-        this.logger.warn('Failed to stringify parsed body for logging');
-      }
-
-      const result = await this.webhookService.handleIvorypayWebhook(body, false);
-      this.logger.log(`Ivorypay webhook handler result: ${JSON.stringify(result)}`);
-      return result ?? { received: true };
-    } catch (err) {
-      this.logger.error('Ivorypay webhook handler exception', err as any);
-      // Ensure any exception is logged and returned with minimal info
-      return { received: false, error: err instanceof Error ? err.message : String(err) };
-    }
+  async ivorypay(@Body() body: any) {
+    this.logger.log('Ivorypay webhook reached');
+    return this.webhookService.handleIvorypayWebhook(body, true);
   }
 
   // Temporary admin endpoint to trigger the Cron job manually for testing.

@@ -19,7 +19,11 @@ describe('WithdrawService', () => {
     const prismaMock = {
       wallets: { findFirst: jest.fn() },
       users: { findFirst: jest.fn() },
-      withdrawal: { create: jest.fn(), findUnique: jest.fn() },
+      withdrawal: {
+        create: jest.fn(),
+        findUnique: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       transactions: { create: jest.fn(), findUnique: jest.fn() },
       $transaction: jest.fn(),
     };

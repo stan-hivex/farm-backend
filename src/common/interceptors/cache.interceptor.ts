@@ -23,6 +23,10 @@ export class CacheInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest<Request>();
     const res = context.switchToHttp().getResponse<Response>();
 
+    if (req.originalUrl.includes('/support/tickets')) {
+      return next.handle();
+    }
+
     if (!['GET', 'HEAD'].includes(req.method)) {
       return next.handle();
     }

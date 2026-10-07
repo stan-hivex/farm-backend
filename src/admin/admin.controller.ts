@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, IsBoolean, IsNumber, IsNotEmpty } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsBoolean, IsNumber, IsNotEmpty, MaxLength } from 'class-validator';
 import { AdminService } from './admin.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { NotFoundException } from '@nestjs/common';
@@ -29,6 +29,24 @@ class ExchangeRatesDto {
 
 class CurrencyRateDto {
   @IsNumber() usd_kes_rate!: number;
+}
+
+class RejectWithdrawalDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+class ProcessWithdrawalDto {
+  @IsOptional()
+  @IsIn(['completed', 'failed'])
+  status?: 'completed' | 'failed';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 class CreateSuperadminDto {
@@ -172,13 +190,35 @@ export class AdminController {
   @Get('withdrawals')             allWithdrawals(@Query() q: any) { return this.svc.listAllWithdrawals(q); }
 
   @Permissions('admin:write')
+  @Post('withdrawals/:id/approve')
+  approveWithdrawal(@Param('id') id: string) {
+    return this.withdrawService.adminApproveWithdrawal(id);
+  }
+
+  @Permissions('admin:write')
+  @Post('withdrawals/:id/reject')
+  rejectWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: RejectWithdrawalDto,
+  ) {
+    return this.withdrawService.adminRejectWithdrawal(
+      id,
+      dto.reason ?? 'Rejected by support',
+    );
+  }
+
+  @Permissions('admin:write')
   @Post('withdrawals/:id/process')
-  async processWithdrawal(@Param('id') id: string, @CurrentUser() u: any) {
-    const w = await this.withdrawService.getWithdrawal(id);
-    if (!w) throw new NotFoundException('Withdrawal not found');
-    // For admin-triggered processing we mark as success (webhook will normally confirm)
-    await this.withdrawService.markAsSuccess(w.reference);
-    return { message: 'Withdrawal processed (marked completed)' };
+  processWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: ProcessWithdrawalDto,
+  ) {
+    return dto.status === 'failed'
+      ? this.withdrawService.adminRejectWithdrawal(
+          id,
+          dto.reason ?? 'Rejected by support',
+        )
+      : this.withdrawService.adminApproveWithdrawal(id);
   }
 
   // ── Superadmin Wallet ────────────────────────────────────────────────────────

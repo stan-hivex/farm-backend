@@ -10,6 +10,7 @@ import { WithdrawModule } from '../withdraw/withdraw.module';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { AuthModule } from '../auth/auth.module';
 import { CurrencyModule } from '../currency/currency.module';
+import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
 
 @Module({
 	imports: [
@@ -22,7 +23,7 @@ import { CurrencyModule } from '../currency/currency.module';
 		CurrencyModule,
 	],
 	controllers: [PaymentsController, PaymentsWebhookController],
-	providers: [PaymentsService, KycGuard],
+	providers: [PaymentsService, KycGuard, WebhookSignatureGuard],
 	exports: [PaymentsService],
 })
 export class PaymentsModule {}

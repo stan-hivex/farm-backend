@@ -75,6 +75,24 @@ export class AuthController {
    * ================= REGISTER =================
    */
   @Public()
+  @Get('username-availability')
+  @Throttle({
+    default: {
+      limit: 20,
+      ttl: 60,
+      generateKey: authThrottleKey,
+    },
+  })
+  @ApiOperation({ summary: 'Check whether a username is available' })
+  async usernameAvailability(@Query('username') username?: string) {
+    if (!username?.trim()) {
+      throw new BadRequestException('Username is required');
+    }
+
+    return this.authService.checkUsernameAvailability(username);
+  }
+
+  @Public()
   @Post('register')
   @Throttle({
     default: {

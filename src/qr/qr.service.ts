@@ -1,4 +1,10 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import * as QRCode from 'qrcode';
@@ -115,6 +121,9 @@ export class QrService {
       if (!merchant) {
         throw new BadRequestException('Merchant not found');
       }
+      if (merchant.status !== 'approved') {
+        throw new ForbiddenException('Merchant is not approved to accept payments');
+      }
 
       const { sig, ...data } = parsed;
       const expected = this.sign(
@@ -168,6 +177,9 @@ export class QrService {
       where: { id: (validation as any).merchant_id },
     });
     if (!merchant) throw new NotFoundException('Merchant not found');
+    if (merchant.status !== 'approved') {
+      throw new ForbiddenException('Merchant is not approved to accept payments');
+    }
 
     const customerWallet = await this.prisma.wallets.findFirst({
       where: { user_id: customerId, is_active: true },
