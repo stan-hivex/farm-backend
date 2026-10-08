@@ -8,7 +8,9 @@ import { PaymentMethod } from '@prisma/client';
 import { CacheService } from '../common/cache/cache.service';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
+import { HIDDEN_TRANSACTION_HISTORY_STATUSES } from '../common/utils/hidden-transaction-history-statuses';
 
 @Injectable()
 export class PaymentsService {
@@ -25,7 +27,14 @@ export class PaymentsService {
 
   async initiateDeposit(
     userId: string,
-    dto: { amount_fiat: number; currency: string; paymentMethod?: string; phone?: string },
+    dto: {
+      amount_fiat: number;
+      currency: string;
+      paymentMethod?: string;
+      phone?: string;
+      email?: string;
+      crypto?: string;
+    },
     ctx?: { deviceRisk?: number; ip?: string; country?: string },
   ) {
     const supportedPaymentMethods: PaymentMethod[] = ['CARD', 'MOBILE_MONEY', 'CRYPTO', 'BANK_TRANSFER'];
@@ -40,7 +49,8 @@ export class PaymentsService {
     });
     if (!user) throw new NotFoundException('User not found');
 
-    const reference = generateTxReference();
+    const reference =
+      paymentMethod === 'CRYPTO' ? randomUUID() : generateTxReference();
     const rate = await this.getExchangeRate(dto.currency, 'FARM');
     const amount_farm = dto.amount_fiat / rate;
     const fee_fiat = dto.amount_fiat * 0.02;
@@ -172,6 +182,13 @@ export class PaymentsService {
     }
 
     if (paymentMethod === 'CRYPTO') {
+      const email = dto.email?.trim() || user.email?.trim();
+      if (!email) {
+        throw new BadRequestException(
+          'An email address is required for IvoryPay crypto deposits',
+        );
+      }
+
       // Convert FARM -> USD using the active superadmin-managed currency rate.
       const farmAmount = amount_farm; // amount in FARM
       const currentRate = await this.currencyConversionService.getCurrentRate();
@@ -186,9 +203,9 @@ export class PaymentsService {
         amount: amountUsd,
         currency: 'USD',
         reference,
-        email: user.email || `${user.phone}@farm.app`,
+        email,
         description: `Farm deposit - ${farmAmount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
-        crypto: 'USDT',
+        crypto: dto.crypto || 'USDT',
         baseFiat: 'USD',
         redirect_url: 'https://farmapp.africa/payment-callback',
         metadata: {
@@ -203,6 +220,7 @@ export class PaymentsService {
           device_risk: ctx?.deviceRisk ?? null,
           ip: ctx?.ip ?? null,
           payment_method: 'CRYPTO',
+          crypto: dto.crypto || 'USDT',
         },
       });
 
@@ -236,6 +254,7 @@ export class PaymentsService {
             device_risk: ctx?.deviceRisk ?? null,
             ip: ctx?.ip ?? null,
             payment_method: 'CRYPTO',
+            crypto: dto.crypto || 'USDT',
           },
         },
       });
@@ -443,6 +462,11 @@ export class PaymentsService {
     throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
   }
 
+  async getCryptoPaymentOptions() {
+    const tokens = await this.ivorypay.getSupportedPaymentTokens();
+    return { success: true, data: { tokens } };
+  }
+
   // `processSuccessfulPayment` removed: paystack webhook handling is centralized
   // in `WebhookService` with queued processing. Wallet credits and transaction
   // finalization should be performed by the webhook processing flow.
@@ -591,7 +615,11 @@ export class PaymentsService {
   async getDepositHistory(userId: string) {
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     const items = await this.prisma.transactions.findMany({
-      where: { transaction_type: 'deposit', receiver_wallet_id: wallet?.id },
+      where: {
+        transaction_type: 'deposit',
+        receiver_wallet_id: wallet?.id,
+        status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES },
+      },
       orderBy: { created_at: 'desc' },
     });
     return { data: items.map((t) => ({ ...t, amount: Number(t.amount) })) };
@@ -603,7 +631,7 @@ export class PaymentsService {
     where: {
       transaction_type: 'withdrawal',
       sender_wallet_id: wallet?.id,
-      status: { not: 'failed' },
+      status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES },
     },
     orderBy: { created_at: 'desc' },
   });

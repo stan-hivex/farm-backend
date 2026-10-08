@@ -9,7 +9,9 @@ describe('TransactionsService', () => {
   beforeEach(async () => {
     const prisma = {
       wallets: {
-        findFirst: jest.fn().mockResolvedValue({ id: 'wallet-current', user_id: 'user-1' }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'wallet-current', user_id: 'user-1' }),
       },
       transactions: {
         findMany: jest.fn().mockResolvedValue([
@@ -52,7 +54,13 @@ describe('TransactionsService', () => {
       providers: [
         TransactionsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: CacheService, useValue: { cacheGet: jest.fn().mockResolvedValue(null), cacheSet: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: CacheService,
+          useValue: {
+            cacheGet: jest.fn().mockResolvedValue(null),
+            cacheSet: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -68,6 +76,45 @@ describe('TransactionsService', () => {
     expect(result.data[0].recipient_user.username).toBe('recipient-user');
     expect(result.data[0].users_sender.username).toBe('sender-user');
     expect(result.data[0].users_recipient.username).toBe('recipient-user');
+  });
+
+  it('excludes unsuccessful transactions from user history queries', async () => {
+    const prisma = {
+      wallets: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'wallet-current' }),
+      },
+      transactions: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+    const cache = {
+      cacheGet: jest.fn().mockResolvedValue(null),
+      cacheSet: jest.fn().mockResolvedValue(undefined),
+    };
+    const filteredService = new TransactionsService(
+      prisma as any,
+      cache as any,
+    );
+
+    await filteredService.findAll('user-1', { page: 1, limit: 10 });
+
+    expect(prisma.transactions.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            expect.objectContaining({
+              status: expect.objectContaining({
+                notIn: expect.arrayContaining(['failed', 'cancelled', 'reversed']),
+              }),
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(prisma.transactions.count).toHaveBeenCalledWith({
+      where: prisma.transactions.findMany.mock.calls[0][0].where,
+    });
   });
 
   it('returns persisted deposit and provider details for a transaction receipt', async () => {
@@ -95,12 +142,15 @@ describe('TransactionsService', () => {
       wallets_transactions_sender_wallet_idTowallets: null,
       wallets_transactions_receiver_wallet_idTowallets: null,
     };
+    const transactionFindFirst = jest.fn().mockResolvedValue(transaction);
     const prisma = {
       wallets: {
-        findFirst: jest.fn().mockResolvedValue({ id: 'wallet-current', user_id: 'user-1' }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'wallet-current', user_id: 'user-1' }),
       },
       transactions: {
-        findFirst: jest.fn().mockResolvedValue(transaction),
+        findFirst: transactionFindFirst,
       },
       deposit: {
         findFirst: jest.fn().mockResolvedValue({
@@ -137,6 +187,17 @@ describe('TransactionsService', () => {
 
     const result = await detailedService.findOne('user-1', 'tx-deposit');
 
+    expect(transactionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          transaction_reference: 'tx-deposit',
+          OR: [
+            { sender_wallet_id: 'wallet-current' },
+            { receiver_wallet_id: 'wallet-current' },
+          ],
+        },
+      }),
+    );
     expect(result.data).toMatchObject({
       amount: 30,
       fee: 0,

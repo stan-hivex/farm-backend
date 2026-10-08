@@ -5,6 +5,7 @@ import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import { HIDDEN_TRANSACTION_HISTORY_STATUSES } from '../common/utils/hidden-transaction-history-statuses';
 import { CacheService } from '../common/cache/cache.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 
@@ -263,9 +264,19 @@ export class WalletsService {
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     if (!wallet) throw new NotFoundException('Wallet not found');
 
-    const where: any = { OR: [{ sender_wallet_id: wallet.id }, { receiver_wallet_id: wallet.id }] };
-    if (query.type) where.transaction_type = query.type;
-    if (query.status) where.status = query.status;
+    const where: any = {
+      AND: [
+        {
+          OR: [
+            { sender_wallet_id: wallet.id },
+            { receiver_wallet_id: wallet.id },
+          ],
+        },
+        { status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES } },
+      ],
+    };
+    if (query.type) where.AND.push({ transaction_type: query.type });
+    if (query.status) where.AND.push({ status: query.status });
 
     const [txns, total] = await Promise.all([
       this.prisma.transactions.findMany({

@@ -1,4 +1,10 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  BadGatewayException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
@@ -262,13 +268,7 @@ export class IvorypayService {
 
   async createPayment(options: any) {
     if (!this.apiKey) {
-      this.logger.warn('IVORYPAY_API_KEY not configured, returning mock checkout URL');
-      const paymentLink = `${this.baseUrl}/pay/${options.reference}`;
-      return {
-        data: { payment_link: paymentLink },
-        payment_link: paymentLink,
-        checkout_url: paymentLink,
-      };
+      throw new ServiceUnavailableException('IvoryPay is not configured');
     }
 
     try {
@@ -353,6 +353,65 @@ export class IvorypayService {
         this.logger.debug(`Ivorypay response body: ${JSON.stringify(e.response.data)}`);
       }
       throw new BadRequestException(`Ivorypay integration failed: ${message}`);
+    }
+  }
+
+  async getSupportedPaymentTokens(): Promise<string[]> {
+    if (!this.apiKey) {
+      throw new ServiceUnavailableException('IvoryPay is not configured');
+    }
+
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/v1/tokens/supported/network-tokens`,
+        {
+          headers: {
+            Authorization: this.apiKey,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      const groupedTokens = response.data?.data;
+      if (!groupedTokens || typeof groupedTokens !== 'object') {
+        throw new BadGatewayException(
+          'IvoryPay returned an invalid supported-token response',
+        );
+      }
+
+      const tokens = new Set<string>();
+      for (const networkTokens of Object.values(groupedTokens)) {
+        if (!Array.isArray(networkTokens)) continue;
+        for (const item of networkTokens) {
+          if (
+            item?.isActive === true &&
+            typeof item.token === 'string' &&
+            item.token.trim()
+          ) {
+            tokens.add(item.token.trim().toUpperCase());
+          }
+        }
+      }
+      if (tokens.size === 0) {
+        throw new BadGatewayException(
+          'IvoryPay has no active crypto payment tokens',
+        );
+      }
+      return [...tokens].sort();
+    } catch (error) {
+      if (
+        error instanceof BadGatewayException ||
+        error instanceof ServiceUnavailableException
+      ) {
+        throw error;
+      }
+      const message =
+        (error as any)?.response?.data?.message ??
+        (error as Error)?.message ??
+        'IvoryPay token lookup failed';
+      this.logger.error(`IvoryPay supported-token lookup failed: ${message}`);
+      throw new BadGatewayException(
+        'Could not load supported crypto payment tokens from IvoryPay',
+      );
     }
   }
 

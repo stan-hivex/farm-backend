@@ -19,6 +19,83 @@ describe('IvorypayService', () => {
 
     service = new IvorypayService(configService);
     mockedAxios.get.mockReset();
+    mockedAxios.post.mockReset();
+  });
+
+  it('creates a hosted crypto checkout with the documented request shape', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          reference: '550e8400-e29b-41d4-a716-446655440000',
+          checkoutUrl:
+            'https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000',
+        },
+      },
+    } as any);
+
+    const result = await service.createPayment({
+      amount: 2.5,
+      reference: '550e8400-e29b-41d4-a716-446655440000',
+      email: 'customer@example.com',
+      type: 'CRYPTO',
+      mode: 'CHECKOUT',
+      baseFiat: 'USD',
+      crypto: 'USDC',
+      redirect_url: 'https://farmapp.africa/payment-callback',
+      metadata: { user_id: 'user-1' },
+    });
+
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://api.ivorypay.io/api/v1/transactions',
+      expect.objectContaining({
+        amount: 2.5,
+        reference: '550e8400-e29b-41d4-a716-446655440000',
+        email: 'customer@example.com',
+        type: 'CRYPTO',
+        mode: 'CHECKOUT',
+        baseFiat: 'USD',
+        crypto: 'USDC',
+        redirect_url: 'https://farmapp.africa/payment-callback',
+        metadata: JSON.stringify({ user_id: 'user-1' }),
+      }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'test-api-key',
+        }),
+      }),
+    );
+    expect(result.checkout_url).toBe(
+      'https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000',
+    );
+  });
+
+  it('returns only active crypto tokens enabled for the business', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          'Binance Smart Chain': [
+            { token: 'USDT', isActive: true },
+            { token: 'USDC', isActive: false },
+          ],
+          Polygon: [{ token: 'usdc', isActive: true }],
+        },
+      },
+    } as any);
+
+    await expect(service.getSupportedPaymentTokens()).resolves.toEqual([
+      'USDC',
+      'USDT',
+    ]);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://api.ivorypay.io/api/v1/tokens/supported/network-tokens',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'test-api-key',
+        }),
+      }),
+    );
   });
 
   it('extracts tx_ref, trxref, and transaction_reference from Ivorypay payload', () => {

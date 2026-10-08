@@ -199,4 +199,55 @@ describe('DepositService', () => {
       status: 'SUCCESS',
     });
   });
+
+  it('stores the verified Paystack channel instead of the selected checkout default', async () => {
+    const deposit = {
+      id: 'deposit-4',
+      userId: 'user-1',
+      amount: 25,
+      currency: 'KES',
+      paymentMethod: 'CARD',
+      status: 'SUCCESS',
+    };
+    const transaction = {
+      id: 'transaction-4',
+      transaction_reference: 'reference-4',
+      transaction_type: 'deposit',
+      status: 'completed',
+      amount: 25,
+      metadata: { provider: 'paystack', payment_method: 'CARD' },
+    };
+    const tx = {
+      transactions: { update: jest.fn().mockResolvedValue(transaction) },
+      deposit: { update: jest.fn().mockResolvedValue(deposit) },
+    };
+    prisma.deposit.findFirst = jest.fn().mockResolvedValue(deposit);
+    prisma.transactions.findUnique = jest.fn().mockResolvedValue(transaction);
+    prisma.$transaction = jest.fn(
+      async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
+    paystack.verifyTransaction = jest.fn().mockResolvedValue({
+      status: 'success',
+      channel: 'mobile_money',
+    });
+
+    await expect(
+      service.finalizeSuccessfulDeposit('reference-4'),
+    ).resolves.toBe(true);
+
+    expect(tx.transactions.update).toHaveBeenCalledWith({
+      where: { id: 'transaction-4' },
+      data: {
+        metadata: {
+          provider: 'paystack',
+          payment_method: 'MOBILE_MONEY',
+          payment_channel: 'mobile_money',
+        },
+      },
+    });
+    expect(tx.deposit.update).toHaveBeenCalledWith({
+      where: { id: 'deposit-4' },
+      data: { paymentMethod: 'MOBILE_MONEY' },
+    });
+  });
 });

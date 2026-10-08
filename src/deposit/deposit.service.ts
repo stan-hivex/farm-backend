@@ -260,6 +260,35 @@ export class DepositService {
             this.logger.warn(`finalizeSuccessfulDeposit: paystack verify indicates non-success for ${reference} status=${verified?.status ?? 'unknown'} - aborting credit`);
             return false;
           }
+          const paymentMethod = this.paystackPaymentMethod(verified.channel);
+          if (paymentMethod) {
+            try {
+              const nextMetadata = {
+                ...metadata,
+                payment_method: paymentMethod,
+                payment_channel: verified.channel,
+              };
+              await this.prisma.$transaction(async (tx) => {
+                await tx.transactions.update({
+                  where: { id: transaction.id },
+                  data: { metadata: nextMetadata },
+                });
+                if (deposit) {
+                  await tx.deposit.update({
+                    where: { id: deposit.id },
+                    data: { paymentMethod },
+                  });
+                }
+              });
+              transaction.metadata = nextMetadata;
+              if (deposit) deposit.paymentMethod = paymentMethod;
+            } catch (error) {
+              this.logger.warn(
+                `finalizeSuccessfulDeposit: could not persist verified Paystack channel for ${reference}`,
+                error as any,
+              );
+            }
+          }
         } catch (e) {
           this.logger.warn(`finalizeSuccessfulDeposit: paystack verify failed for ${reference} - aborting credit`, e as any);
           return false;
@@ -330,6 +359,19 @@ export class DepositService {
 
     this.logger.warn(`finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} is not eligible for wallet credit`);
     return false;
+  }
+
+  private paystackPaymentMethod(channel: unknown): 'CARD' | 'MOBILE_MONEY' | 'BANK_TRANSFER' | null {
+    switch (String(channel ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_')) {
+      case 'card':
+        return 'CARD';
+      case 'mobile_money':
+        return 'MOBILE_MONEY';
+      case 'bank_transfer':
+        return 'BANK_TRANSFER';
+      default:
+        return null;
+    }
   }
 
   async failDeposit(reference: string, reason?: string) {

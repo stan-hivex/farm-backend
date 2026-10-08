@@ -1,6 +1,14 @@
 import { Controller, Get, Post, Body, UseGuards, Req, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsNumber,
+  IsPositive,
+  IsOptional,
+  IsEmail,
+  IsIn,
+} from 'class-validator';
 import type { Request } from 'express';
 import { PaymentsService } from './payments.service';
 import { verifyDeviceToken } from '../common/utils/device-token.util';
@@ -17,6 +25,8 @@ class DepositDto {
   @IsNotEmpty() @IsString() currency!: string;
   @IsOptional() @IsString() paymentMethod?: 'CARD' | 'MOBILE_MONEY' | 'CRYPTO' | 'BANK_TRANSFER';
   @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsEmail() email?: string;
+  @IsOptional() @IsIn(['USDT', 'USDC']) crypto?: string;
 }
 // WithdrawDto removed: use WithdrawService endpoints instead
 
@@ -45,6 +55,15 @@ export class PaymentsController {
       deviceRisk = header ? Number(header as string) || 0 : 0;
     }
     return this.svc.initiateDeposit(u.id, dto, { deviceRisk, ip: req.ip || '' });
+  }
+
+  @Permissions('payments:write')
+  @Get('crypto/options')
+  @ApiBearerAuth('JWT')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Get crypto tokens enabled for IvoryPay checkout' })
+  cryptoOptions() {
+    return this.svc.getCryptoPaymentOptions();
   }
 
   // Withdrawal endpoint removed: use POST /api/v1/withdraw/create (WithdrawService)
