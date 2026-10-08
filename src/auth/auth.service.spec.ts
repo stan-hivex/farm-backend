@@ -92,6 +92,37 @@ describe('AuthService', () => {
     );
   });
 
+  it('checks email case-insensitively and phone uniqueness', async () => {
+    const prisma = module.get(PrismaService);
+    const findFirst = jest.spyOn(prisma.users, 'findFirst');
+    findFirst
+      .mockResolvedValueOnce({ id: 'existing-email' } as any)
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      service.checkRegistrationAvailability({
+        email: '  Person@Example.com ',
+        phone: ' +254700123456 ',
+      }),
+    ).resolves.toEqual({
+      data: { emailAvailable: false, phoneAvailable: true },
+    });
+    expect(findFirst).toHaveBeenNthCalledWith(1, {
+      where: { email: { equals: 'person@example.com', mode: 'insensitive' } },
+      select: { id: true },
+    });
+    expect(findFirst).toHaveBeenNthCalledWith(2, {
+      where: { phone: '+254700123456' },
+      select: { id: true },
+    });
+  });
+
+  it('requires an email or phone for contact availability checks', async () => {
+    await expect(service.checkRegistrationAvailability({})).rejects.toThrow(
+      'Email or phone number is required',
+    );
+  });
+
   it('does not wait for SMS or push delivery when registering', async () => {
     const prisma = module.get(PrismaService);
     const notifications = module.get(NotificationsService);

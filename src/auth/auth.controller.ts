@@ -93,6 +93,23 @@ export class AuthController {
   }
 
   @Public()
+  @Get('registration-availability')
+  @Throttle({
+    default: {
+      limit: 20,
+      ttl: 60,
+      generateKey: authThrottleKey,
+    },
+  })
+  @ApiOperation({ summary: 'Check whether a registration email or phone is available' })
+  async registrationAvailability(
+    @Query('email') email?: string,
+    @Query('phone') phone?: string,
+  ) {
+    return this.authService.checkRegistrationAvailability({ email, phone });
+  }
+
+  @Public()
   @Post('register')
   @Throttle({
     default: {

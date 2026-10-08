@@ -5,6 +5,7 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as admin from 'firebase-admin';
 import { randomBytes } from 'crypto';
@@ -58,7 +59,44 @@ export class AuthService {
     };
   }
 
+  async checkRegistrationAvailability(input: {
+    email?: string;
+    phone?: string;
+  }) {
+    const email = input.email?.trim().toLowerCase();
+    const phone = input.phone?.trim();
+    if (!email && !phone) {
+      throw new BadRequestException('Email or phone number is required');
+    }
+
+    const [existingEmail, existingPhone] = await Promise.all([
+      email
+        ? this.prisma.users.findFirst({
+            where: { email: { equals: email, mode: 'insensitive' } },
+            select: { id: true },
+          })
+        : null,
+      phone
+        ? this.prisma.users.findFirst({
+            where: { phone },
+            select: { id: true },
+          })
+        : null,
+    ]);
+
+    return {
+      data: {
+        emailAvailable: email ? !existingEmail : null,
+        phoneAvailable: phone ? !existingPhone : null,
+      },
+    };
+  }
+
   async register(dto: RegisterDto, ip: string, turnstileToken?: string) {
+    const email = dto.email?.trim().toLowerCase();
+    const phone = dto.phone.trim();
+    const username = dto.username.trim().toLowerCase();
+
     // Validate Turnstile token (bot protection)
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
@@ -67,15 +105,17 @@ export class AuthService {
     const existing = await this.prisma.users.findFirst({
       where: {
         OR: [
-          { phone: dto.phone },
-          { username: dto.username.toLowerCase() },
-          ...(dto.email ? [{ email: dto.email }] : []),
+          { phone },
+          { username },
+          ...(email
+            ? [{ email: { equals: email, mode: 'insensitive' as const } }]
+            : []),
         ],
       },
     });
     if (existing) {
-      if (existing.phone === dto.phone) throw new ConflictException('Phone already registered');
-      if (existing.username === dto.username.toLowerCase()) throw new ConflictException('Username taken');
+      if (existing.phone === phone) throw new ConflictException('Phone already registered');
+      if (existing.username === username) throw new ConflictException('Username taken');
       throw new ConflictException('Email already registered');
     }
 
@@ -96,38 +136,61 @@ export class AuthService {
       throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
     }
 
-    const user = await this.prisma.$transaction(async (tx) => {
-      const u = await tx.users.create({
-        data: {
-          first_name: dto.first_name,
-          last_name: dto.last_name,
-          username: dto.username.toLowerCase(),
-          phone: dto.phone,
-          email: dto.email,
-          firebase_uid: null,
-          password_hash,
-          country: dto.country,
-          referred_by,
-          referral_code: generateReferralCode(),
-        },
+    let user: Awaited<ReturnType<typeof this.prisma.users.create>>;
+    try {
+      user = await this.prisma.$transaction(async (tx) => {
+        const u = await tx.users.create({
+          data: {
+            first_name: dto.first_name,
+            last_name: dto.last_name,
+            username,
+            phone,
+            email,
+            firebase_uid: null,
+            password_hash,
+            country: dto.country,
+            referred_by,
+            referral_code: generateReferralCode(),
+          },
+        });
+        await tx.wallets.create({
+          data: {
+            user_id: u.id,
+            wallet_name: `${u.first_name}'s Wallet`,
+            wallet_type: 'user',
+            wallet_address: generateWalletAddress(u.id, qrSecret),
+            currency: 'FARM',
+          },
+        });
+        await tx.activity_logs.create({
+          data: { user_id: u.id, activity: 'REGISTER', ip_address: ip },
+        });
+        return u;
       });
-      await tx.wallets.create({
-        data: {
-          user_id: u.id,
-          wallet_name: `${u.first_name}'s Wallet`,
-          wallet_type: 'user',
-          wallet_address: generateWalletAddress(u.id, qrSecret),
-          currency: 'FARM',
-        },
-      });
-      await tx.activity_logs.create({
-        data: { user_id: u.id, activity: 'REGISTER', ip_address: ip },
-      });
-      return u;
-    });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const target = error.meta?.target;
+        const fields = Array.isArray(target)
+          ? target.map(String)
+          : [String(target ?? '')];
+        if (fields.some((field) => field.includes('phone'))) {
+          throw new ConflictException('Phone already registered');
+        }
+        if (fields.some((field) => field.includes('username'))) {
+          throw new ConflictException('Username taken');
+        }
+        if (fields.some((field) => field.includes('email'))) {
+          throw new ConflictException('Email already registered');
+        }
+      }
+      throw error;
+    }
 
-    if (dto.email) {
-      void this.ensureFirebaseAccount(dto.email, dto.password)
+    if (email) {
+      void this.ensureFirebaseAccount(email, dto.password)
         .then((firebaseUid) =>
           this.prisma.users.updateMany({
             where: { id: user.id, firebase_uid: null },
