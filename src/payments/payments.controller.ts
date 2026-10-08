@@ -27,6 +27,8 @@ class DepositDto {
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsIn(['USDT', 'USDC']) crypto?: string;
+  @IsOptional() @IsString() chain?: string;
+  @IsOptional() @IsString() walletAddress?: string;
 }
 // WithdrawDto removed: use WithdrawService endpoints instead
 

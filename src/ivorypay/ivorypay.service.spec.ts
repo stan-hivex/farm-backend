@@ -38,10 +38,13 @@ describe('IvorypayService', () => {
       amount: 2.5,
       reference: '550e8400-e29b-41d4-a716-446655440000',
       email: 'customer@example.com',
+      firstName: 'Test',
+      lastName: 'Customer',
       type: 'CRYPTO',
       mode: 'CHECKOUT',
       baseFiat: 'USD',
       crypto: 'USDC',
+      chain: 'POLYGON',
       redirect_url: 'https://farmapp.africa/payment-callback',
       metadata: { user_id: 'user-1' },
     });
@@ -52,6 +55,8 @@ describe('IvorypayService', () => {
         amount: 2.5,
         reference: '550e8400-e29b-41d4-a716-446655440000',
         email: 'customer@example.com',
+        firstName: 'Test',
+        lastName: 'Customer',
         type: 'CRYPTO',
         mode: 'CHECKOUT',
         baseFiat: 'USD',
@@ -65,6 +70,7 @@ describe('IvorypayService', () => {
         }),
       }),
     );
+    expect(mockedAxios.post.mock.calls[0][1]).not.toHaveProperty('chain');
     expect(result.checkout_url).toBe(
       'https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000',
     );

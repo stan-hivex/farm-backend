@@ -280,6 +280,8 @@ export class IvorypayService {
         amount: options.amount,
         reference: options.reference,
         email: options.email,
+        ...(options.firstName && { firstName: options.firstName }),
+        ...(options.lastName && { lastName: options.lastName }),
         type: 'CRYPTO',
         mode: 'CHECKOUT',
         baseFiat: options.baseFiat || 'KES',

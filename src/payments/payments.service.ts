@@ -34,6 +34,8 @@ export class PaymentsService {
       phone?: string;
       email?: string;
       crypto?: string;
+      chain?: string;
+      walletAddress?: string;
     },
     ctx?: { deviceRisk?: number; ip?: string; country?: string },
   ) {
@@ -45,7 +47,13 @@ export class PaymentsService {
     const paymentMethod = rawPaymentMethod as PaymentMethod;
 
     const user = await this.prisma.users.findUnique({
-      where: { id: userId }, select: { email: true, phone: true },
+      where: { id: userId },
+      select: {
+        email: true,
+        phone: true,
+        first_name: true,
+        last_name: true,
+      },
     });
     if (!user) throw new NotFoundException('User not found');
 
@@ -188,6 +196,20 @@ export class PaymentsService {
           'An email address is required for IvoryPay crypto deposits',
         );
       }
+      const crypto = (dto.crypto || 'USDT').trim().toUpperCase();
+      const chain = dto.chain?.trim().toUpperCase();
+      const walletAddress = dto.walletAddress?.trim();
+      if (!chain || !walletAddress) {
+        throw new BadRequestException(
+          'Crypto deposits require a network and sender wallet address',
+        );
+      }
+      const supportedNetworks = this.ivorypay.getProviderNetworks(crypto).networks;
+      if (!supportedNetworks.includes(chain)) {
+        throw new BadRequestException(
+          `Unsupported ${crypto} network. Choose a supported network for this token.`,
+        );
+      }
 
       // Convert FARM -> USD using the active superadmin-managed currency rate.
       const farmAmount = amount_farm; // amount in FARM
@@ -204,8 +226,11 @@ export class PaymentsService {
         currency: 'USD',
         reference,
         email,
+        firstName: user.first_name,
+        lastName: user.last_name,
         description: `Farm deposit - ${farmAmount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
-        crypto: dto.crypto || 'USDT',
+        crypto,
+        chain,
         baseFiat: 'USD',
         redirect_url: 'https://farmapp.africa/payment-callback',
         metadata: {
@@ -220,7 +245,9 @@ export class PaymentsService {
           device_risk: ctx?.deviceRisk ?? null,
           ip: ctx?.ip ?? null,
           payment_method: 'CRYPTO',
-          crypto: dto.crypto || 'USDT',
+          crypto,
+          chain,
+          sender_wallet_address: walletAddress,
         },
       });
 
@@ -254,7 +281,9 @@ export class PaymentsService {
             device_risk: ctx?.deviceRisk ?? null,
             ip: ctx?.ip ?? null,
             payment_method: 'CRYPTO',
-            crypto: dto.crypto || 'USDT',
+            crypto,
+            chain,
+            sender_wallet_address: walletAddress,
           },
         },
       });
