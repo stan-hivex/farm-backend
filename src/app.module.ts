@@ -129,6 +129,6 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(IdempotencyMiddleware).forRoutes('*');
+    consumer.apply(IdempotencyMiddleware).forRoutes('*path');
   }
 }
