@@ -295,12 +295,11 @@ export class WebhookService {
       try {
         const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
-          const metadata = transaction.metadata as any ?? {};
+          const metadata = (transaction.metadata as any) ?? {};
           const webhookAmount = Number(payload.data?.amount ?? payload.amount);
-          // Prefer comparing against original fiat amount if available in metadata
-          let expected = metadata?.amount_fiat !== undefined && metadata?.amount_fiat !== null
-            ? Number(metadata.amount_fiat)
-            : Number(transaction.amount);
+          // IvoryPay reports the hosted checkout's fiat amount in USD; FARM is
+          // only the amount ultimately credited to the user's wallet.
+          const expected = this.getExpectedIvorypayWebhookAmount(transaction);
 
           if (!isFinite(expected) || isNaN(webhookAmount)) {
             this.logger.warn(`Ivorypay amount validation skipped for ${reference} due to missing data`);
@@ -509,6 +508,13 @@ export class WebhookService {
       this.logger.warn(`Ivorypay webhook verification failed for ${reference}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
+  }
+
+  private getExpectedIvorypayWebhookAmount(transaction: any): number {
+    const metadata = (transaction?.metadata as any) ?? {};
+    return Number(
+      metadata.amount_usd ?? metadata.amount_fiat ?? transaction?.amount,
+    );
   }
 
   private isIvorypayVerifiedAmountAcceptable(transaction: any, verifiedTransaction: any): boolean {

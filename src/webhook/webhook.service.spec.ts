@@ -1,6 +1,20 @@
 import { WebhookService } from './webhook.service';
 
 describe('WebhookService IvoryPay webhook processing', () => {
+  it('validates crypto webhook amounts against USD metadata, not the FARM credit', () => {
+    const service = Object.create(WebhookService.prototype) as WebhookService;
+
+    expect(
+      (service as any).getExpectedIvorypayWebhookAmount({
+        amount: 250,
+        metadata: {
+          amount_usd: 2.5,
+          amount_farm: 250,
+        },
+      }),
+    ).toBe(2.5);
+  });
+
   it('marks a failed crypto payout as failed and releases the withdrawal funds', async () => {
     const transaction = {
       id: 'transaction-id',

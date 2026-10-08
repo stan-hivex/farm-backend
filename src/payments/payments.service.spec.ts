@@ -113,8 +113,6 @@ describe('PaymentsService crypto deposits', () => {
       firstName: 'Test',
       lastName: 'Customer',
       crypto: 'USDC',
-      chain: 'POLYGON',
-      walletAddress: '0x1234567890123456789012345678901234567890',
     });
 
     const paymentOptions = ivorypay.createPayment.mock.calls[0][0];
@@ -124,17 +122,17 @@ describe('PaymentsService crypto deposits', () => {
     expect(paymentOptions).toMatchObject({
       email: 'customer@example.com',
       crypto: 'USDC',
-      chain: 'POLYGON',
       baseFiat: 'USD',
     });
+    expect(paymentOptions.amount).toBe(1);
     expect(prisma.transactions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           transaction_reference: paymentOptions.reference,
           metadata: expect.objectContaining({
-            chain: 'POLYGON',
-            sender_wallet_address:
-              '0x1234567890123456789012345678901234567890',
+            amount_usd: 1,
+            amount_fiat: 1,
+            crypto: 'USDC',
           }),
         }),
       }),

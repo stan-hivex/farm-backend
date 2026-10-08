@@ -197,19 +197,7 @@ export class PaymentsService {
         );
       }
       const crypto = (dto.crypto || 'USDT').trim().toUpperCase();
-      const chain = dto.chain?.trim().toUpperCase();
-      const walletAddress = dto.walletAddress?.trim();
-      if (!chain || !walletAddress) {
-        throw new BadRequestException(
-          'Crypto deposits require a network and sender wallet address',
-        );
-      }
-      const supportedNetworks = this.ivorypay.getProviderNetworks(crypto).networks;
-      if (!supportedNetworks.includes(chain)) {
-        throw new BadRequestException(
-          `Unsupported ${crypto} network. Choose a supported network for this token.`,
-        );
-      }
+      this.ivorypay.getProviderNetworks(crypto);
 
       // Convert FARM -> USD using the active superadmin-managed currency rate.
       const farmAmount = amount_farm; // amount in FARM
@@ -219,6 +207,11 @@ export class PaymentsService {
         throw new BadRequestException('The FARM/USD conversion rate is unavailable');
       }
       const amountUsd = Number((farmAmount * farmToUsdRate).toFixed(2));
+      if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+        throw new BadRequestException(
+          'The deposit amount is too small to convert to a positive USD amount',
+        );
+      }
       const usdToFarmRate = Number((1 / farmToUsdRate).toFixed(8));
 
       const payment = await this.ivorypay.createPayment({
@@ -230,13 +223,13 @@ export class PaymentsService {
         lastName: user.last_name,
         description: `Farm deposit - ${farmAmount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
         crypto,
-        chain,
         baseFiat: 'USD',
         redirect_url: 'https://farmapp.africa/payment-callback',
         metadata: {
           provider: 'ivorypay',
           amount_farm: farmAmount,
           amount_usd: amountUsd,
+          amount_fiat: amountUsd,
           farm_to_usd_rate: farmToUsdRate,
           usd_to_farm_rate: usdToFarmRate,
           currency_fiat: 'USD',
@@ -246,8 +239,6 @@ export class PaymentsService {
           ip: ctx?.ip ?? null,
           payment_method: 'CRYPTO',
           crypto,
-          chain,
-          sender_wallet_address: walletAddress,
         },
       });
 
@@ -273,6 +264,7 @@ export class PaymentsService {
             provider_ref: providerRef,
             amount_farm: farmAmount,
             amount_usd: amountUsd,
+            amount_fiat: amountUsd,
             farm_to_usd_rate: farmToUsdRate,
             usd_to_farm_rate: usdToFarmRate,
             currency_fiat: 'USD',
@@ -282,8 +274,6 @@ export class PaymentsService {
             ip: ctx?.ip ?? null,
             payment_method: 'CRYPTO',
             crypto,
-            chain,
-            sender_wallet_address: walletAddress,
           },
         },
       });
