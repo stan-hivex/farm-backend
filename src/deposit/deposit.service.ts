@@ -260,13 +260,21 @@ export class DepositService {
             this.logger.warn(`finalizeSuccessfulDeposit: paystack verify indicates non-success for ${reference} status=${verified?.status ?? 'unknown'} - aborting credit`);
             return false;
           }
-          const paymentMethod = this.paystackPaymentMethod(verified.channel);
+          const paymentChannel = verified.channel ?? verified.authorization?.channel;
+          const paymentMethod = this.paystackPaymentMethod(paymentChannel);
           if (paymentMethod) {
             try {
+              const specificMethod = this.paystackMobileMoneyProvider({
+                ...verified,
+                channel: paymentChannel,
+              }) ?? paymentMethod;
               const nextMetadata = {
                 ...metadata,
-                payment_method: paymentMethod,
-                payment_channel: verified.channel,
+                payment_method: specificMethod,
+                payment_channel: paymentChannel,
+                ...(verified.authorization
+                  ? { paystack_authorization: verified.authorization }
+                  : {}),
               };
               await this.prisma.$transaction(async (tx) => {
                 await tx.transactions.update({
@@ -372,6 +380,35 @@ export class DepositService {
       default:
         return null;
     }
+  }
+
+  private paystackMobileMoneyProvider(verified: any): 'MPESA' | 'AIRTEL' | null {
+    if (String(verified?.channel ?? '').trim().toLowerCase() !== 'mobile_money') {
+      return null;
+    }
+
+    const authorization = verified.authorization ?? {};
+    const metadata = verified.metadata ?? {};
+    const candidates = [
+      verified.mobile_money?.provider,
+      verified.mobile_money?.name,
+      verified.mobile_money_provider,
+      verified.provider,
+      authorization.mobile_money_provider,
+      authorization.provider,
+      authorization.brand,
+      authorization.bank,
+      metadata.mobile_money_provider,
+      metadata.payment_method,
+      metadata.paymentMethod,
+    ];
+
+    for (const candidate of candidates) {
+      const provider = String(candidate ?? '').trim().toLowerCase();
+      if (/m[\s_-]?pesa/.test(provider)) return 'MPESA';
+      if (/\bairtel\b/.test(provider)) return 'AIRTEL';
+    }
+    return null;
   }
 
   async failDeposit(reference: string, reason?: string) {

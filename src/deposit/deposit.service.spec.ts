@@ -250,4 +250,12 @@ describe('DepositService', () => {
       data: { paymentMethod: 'MOBILE_MONEY' },
     });
   });
+
+  it.each([
+    [{ channel: 'mobile_money', mobile_money: { provider: 'mpesa' } }, 'MPESA'],
+    [{ channel: 'mobile_money', authorization: { brand: 'Airtel' } }, 'AIRTEL'],
+    [{ channel: 'mobile_money' }, null],
+  ])('recognizes a Paystack mobile-money provider when supplied', (verified, expected) => {
+    expect((service as any).paystackMobileMoneyProvider(verified)).toBe(expected);
+  });
 });

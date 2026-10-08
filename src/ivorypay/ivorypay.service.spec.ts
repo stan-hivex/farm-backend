@@ -98,6 +98,30 @@ describe('IvorypayService', () => {
     );
   });
 
+  it('normalizes a host-only base URL to the documented /api base path', async () => {
+    const configService = {
+      get: jest.fn((key: string, defaultValue?: any) => {
+        if (key === 'IVORYPAY_BASE_URL') return 'https://api.ivorypay.io/';
+        if (key === 'IVORYPAY_API_KEY') return 'test-api-key';
+        return defaultValue;
+      }),
+    } as unknown as ConfigService;
+    const hostOnlyService = new IvorypayService(configService);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: { Polygon: [{ token: 'USDT', isActive: true }] },
+      },
+    } as any);
+
+    await hostOnlyService.getSupportedPaymentTokens();
+
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://api.ivorypay.io/api/v1/tokens/supported/network-tokens',
+      expect.any(Object),
+    );
+  });
+
   it('extracts tx_ref, trxref, and transaction_reference from Ivorypay payload', () => {
     const result = (service as any).extractProviderIdentifiers({
       tx_ref: 'TX123',

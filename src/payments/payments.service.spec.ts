@@ -97,7 +97,7 @@ describe('PaymentsService crypto deposits', () => {
       block: false,
     });
 
-    await service.initiateDeposit('user-1', {
+    const result = await service.initiateDeposit('user-1', {
       amount_fiat: 100,
       currency: 'KES',
       paymentMethod: 'CRYPTO',
@@ -121,5 +121,15 @@ describe('PaymentsService crypto deposits', () => {
         }),
       }),
     );
+    expect(result).toMatchObject({
+      data: {
+        payment_link:
+          'https://checkout.ivorypay.io/checkout/reference',
+        checkout_url:
+          'https://checkout.ivorypay.io/checkout/reference',
+        checkoutUrl:
+          'https://checkout.ivorypay.io/checkout/reference',
+      },
+    });
   });
 });

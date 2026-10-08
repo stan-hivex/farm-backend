@@ -290,8 +290,9 @@ export class PaymentsService {
         data: {
           provider: 'IVORYPAY',
           reference,
-          payment_link: (payment as any).data?.payment_link || (payment as any).payment_link,
-          checkout_url: (payment as any).data?.checkout_url || (payment as any).checkout_url,
+          payment_link: (payment as any).checkout_url,
+          checkout_url: (payment as any).checkout_url,
+          checkoutUrl: (payment as any).checkout_url,
         },
         message: 'Crypto deposit initiated via Ivorypay',
       };

@@ -46,7 +46,10 @@ export class IvorypayService {
 
   constructor(private readonly cfg: ConfigService) {
     const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
-    this.baseUrl = rawBaseUrl.replace(/\/+$/, '');
+    const normalizedBaseUrl = rawBaseUrl.replace(/\/+$/, '');
+    this.baseUrl = normalizedBaseUrl.endsWith('/api')
+      ? normalizedBaseUrl
+      : `${normalizedBaseUrl}/api`;
     this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
   }
 
@@ -318,6 +321,11 @@ export class IvorypayService {
         data.collectionDetails?.checkoutUrl ||
         null;
       const paymentLink = redirectUrl ?? data.payment_link ?? data.checkout_url ?? data.url ?? data.link ?? data.checkout ?? data.page_url ?? data.collectionDetails?.checkoutUrl;
+      if (typeof paymentLink !== 'string' || !paymentLink.trim()) {
+        throw new BadGatewayException(
+          'IvoryPay did not return a hosted checkout URL',
+        );
+      }
 
       this.logger.log(
         `Ivorypay createPayment success: internalReference=${options.reference} ` +
