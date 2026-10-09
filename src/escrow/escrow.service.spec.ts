@@ -286,6 +286,88 @@ describe('EscrowService creation fee', () => {
 });
 
 describe('EscrowService release retries', () => {
+  it('releases funds to the seller and records one completed transaction', async () => {
+    const tx: any = {
+      escrow_contracts: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      wallets: {
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balance: 0 })
+          .mockResolvedValueOnce({ balance: 98.5 })
+          .mockResolvedValueOnce({ balance: 1.5 }),
+      },
+      transactions: {
+        create: jest.fn().mockResolvedValue({
+          id: 'release-transaction',
+          transaction_reference: 'release-reference',
+        }),
+      },
+      ledger_entries: {
+        createMany: jest.fn().mockResolvedValue({ count: 2 }),
+        create: jest.fn().mockResolvedValue({}),
+      },
+      users: {
+        findFirst: jest.fn().mockResolvedValue({
+          wallets: [{ id: 'platform-wallet' }],
+        }),
+      },
+    };
+    const service = new EscrowService(
+      { $transaction: jest.fn((work) => work(tx)) } as any,
+      {} as any,
+      {} as any,
+      {
+        sendNotification: jest.fn().mockResolvedValue(undefined),
+      } as any,
+      {} as any,
+      {
+        emitBalanceUpdate: jest.fn(),
+        emitTransactionUpdate: jest.fn(),
+      } as any,
+    );
+
+    await service.executeRelease({
+      id: 'escrow-1',
+      buyer_id: 'buyer-1',
+      seller_id: 'seller-1',
+      buyer_wallet_id: 'buyer-wallet',
+      seller_wallet_id: 'seller-wallet',
+      amount: 100,
+      title: 'Order',
+      reference_code: 'escrow-reference',
+    });
+
+    expect(tx.escrow_contracts.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'escrow-1', status: { in: ['active'] } },
+        data: expect.objectContaining({ status: 'completed' }),
+      }),
+    );
+    expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
+      where: { id: 'buyer-wallet' },
+      data: {
+        locked_balance: { decrement: 100 },
+        balance: { decrement: 100 },
+      },
+    });
+    expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'seller-wallet' },
+      data: { balance: { increment: 98.5 } },
+    });
+    expect(tx.transactions.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        transaction_type: 'escrow_release',
+        status: 'completed',
+        amount: 100,
+        fee: 1.5,
+        net_amount: 98.5,
+      }),
+    });
+    expect(tx.ledger_entries.createMany).toHaveBeenCalledTimes(1);
+  });
+
   it('treats a repeated release of a completed escrow as successful', async () => {
     const prisma = {
       escrow_contracts: {

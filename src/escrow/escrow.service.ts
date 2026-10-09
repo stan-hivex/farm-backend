@@ -420,6 +420,12 @@ export class EscrowService {
     escrow: any,
     resolution?: { adminId: string; note: string },
   ) {
+    if (!escrow.buyer_wallet_id || !escrow.seller_wallet_id) {
+      throw new BadRequestException('Escrow is missing a buyer or seller wallet');
+    }
+    if (!Number.isFinite(Number(escrow.amount)) || Number(escrow.amount) <= 0) {
+      throw new BadRequestException('Escrow amount is invalid');
+    }
     const releaseFee = Number((Number(escrow.amount) * 0.015).toFixed(2)); // 1.5% release fee
     const amountToSeller = Number(escrow.amount) - releaseFee;
     const amountLocked = Number(escrow.amount);
