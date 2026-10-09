@@ -44,8 +44,6 @@ describe('IvorypayService', () => {
       mode: 'CHECKOUT',
       baseFiat: 'USD',
       crypto: 'USDC',
-      cryptocurrency: 'USDC',
-      network: 'POLYGON',
       chain: 'POLYGON',
       redirect_url: 'https://farmapp.africa/payment-callback',
       metadata: { user_id: 'user-1' },
@@ -62,6 +60,8 @@ describe('IvorypayService', () => {
         type: 'CRYPTO',
         mode: 'CHECKOUT',
         baseFiat: 'USD',
+        crypto: 'USDC',
+        chain: 'POLYGON',
         redirect_url: 'https://farmapp.africa/payment-callback',
         metadata: JSON.stringify({ user_id: 'user-1' }),
       }),
@@ -72,10 +72,8 @@ describe('IvorypayService', () => {
       }),
     );
     const requestBody = mockedAxios.post.mock.calls[0][1] as Record<string, unknown>;
-    expect(requestBody).not.toHaveProperty('crypto');
-    expect(requestBody).not.toHaveProperty('cryptocurrency');
-    expect(requestBody).not.toHaveProperty('chain');
-    expect(requestBody).not.toHaveProperty('network');
+    expect(requestBody).toHaveProperty('crypto', 'USDC');
+    expect(requestBody).toHaveProperty('chain', 'POLYGON');
     expect(result.checkout_url).toBe(
       'https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000',
     );
@@ -112,20 +110,39 @@ describe('IvorypayService', () => {
     });
   });
 
-  it('returns only active crypto tokens enabled for the business', async () => {
+  it('returns all active token and network combinations enabled for the business', async () => {
     mockedAxios.get.mockResolvedValueOnce({
       data: {
         success: true,
         data: {
           'Binance Smart Chain': [
-            { token: 'USDT', isActive: true },
-            { token: 'USDC', isActive: false },
+            { token: 'USDT', blockchain: 'BSC_TESTNET', isActive: true },
+            { token: 'USDC', blockchain: 'BSC_TESTNET', isActive: false },
           ],
-          Polygon: [{ token: 'usdc', isActive: true }],
+          Polygon: [{ token: 'usdc', blockchain: 'POLYGON', isActive: true }],
         },
       },
     } as any);
 
+    await expect(service.getSupportedPaymentOptions()).resolves.toEqual([
+      { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
+      {
+        token: 'USDT',
+        network: 'BSC_TESTNET',
+        networkName: 'Binance Smart Chain',
+      },
+    ]);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          'Binance Smart Chain': [
+            { token: 'USDT', blockchain: 'BSC_TESTNET', isActive: true },
+          ],
+          Polygon: [{ token: 'usdc', blockchain: 'POLYGON', isActive: true }],
+        },
+      },
+    } as any);
     await expect(service.getSupportedPaymentTokens()).resolves.toEqual([
       'USDC',
       'USDT',

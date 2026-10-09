@@ -286,6 +286,8 @@ export class IvorypayService {
         type: 'CRYPTO',
         mode: 'CHECKOUT',
         baseFiat: options.baseFiat || 'KES',
+        crypto: options.crypto,
+        ...(options.chain && { chain: options.chain }),
         ...(options.redirect_url && { redirect_url: options.redirect_url }),
         metadata: options.metadata ? (typeof options.metadata === 'string' ? options.metadata : JSON.stringify(options.metadata)) : null,
       };
@@ -366,7 +368,9 @@ export class IvorypayService {
     }
   }
 
-  async getSupportedPaymentTokens(): Promise<string[]> {
+  async getSupportedPaymentOptions(): Promise<
+    Array<{ token: string; network: string; networkName: string }>
+  > {
     if (!this.apiKey) {
       throw new ServiceUnavailableException('IvoryPay is not configured');
     }
@@ -388,8 +392,11 @@ export class IvorypayService {
         );
       }
 
-      const tokens = new Set<string>();
-      for (const networkTokens of Object.values(groupedTokens)) {
+      const options = new Map<
+        string,
+        { token: string; network: string; networkName: string }
+      >();
+      for (const [networkName, networkTokens] of Object.entries(groupedTokens)) {
         if (!Array.isArray(networkTokens)) continue;
         for (const item of networkTokens) {
           if (
@@ -397,16 +404,29 @@ export class IvorypayService {
             typeof item.token === 'string' &&
             item.token.trim()
           ) {
-            tokens.add(item.token.trim().toUpperCase());
+            const token = item.token.trim().toUpperCase();
+            const network =
+              typeof item.blockchain === 'string' && item.blockchain.trim()
+                ? item.blockchain.trim()
+                : networkName;
+            options.set(`${token}:${network}`, {
+              token,
+              network,
+              networkName,
+            });
           }
         }
       }
-      if (tokens.size === 0) {
+      if (options.size === 0) {
         throw new BadGatewayException(
-          'IvoryPay has no active crypto payment tokens',
+          'IvoryPay has no active crypto payment options',
         );
       }
-      return [...tokens].sort();
+      return [...options.values()].sort(
+        (first, second) =>
+          first.token.localeCompare(second.token) ||
+          first.networkName.localeCompare(second.networkName),
+      );
     } catch (error) {
       if (
         error instanceof BadGatewayException ||
@@ -420,9 +440,14 @@ export class IvorypayService {
         'IvoryPay token lookup failed';
       this.logger.error(`IvoryPay supported-token lookup failed: ${message}`);
       throw new BadGatewayException(
-        'Could not load supported crypto payment tokens from IvoryPay',
+        'Could not load supported crypto payment options from IvoryPay',
       );
     }
+  }
+
+  async getSupportedPaymentTokens(): Promise<string[]> {
+    const options = await this.getSupportedPaymentOptions();
+    return [...new Set(options.map((option) => option.token))].sort();
   }
 
   async verifyTransaction(reference: string, providerReference?: string, fallbackReferences: string[] = []) {

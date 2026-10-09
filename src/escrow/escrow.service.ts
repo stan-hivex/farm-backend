@@ -136,7 +136,7 @@ export class EscrowService {
     const result = await this.prisma.$transaction(async (tx) => {
       const lockedWallets = await tx.$queryRaw<
         Array<{ balance: unknown; locked_balance: unknown }>
-      >`SELECT balance, locked_balance FROM wallets WHERE id = ${buyer.wallets[0].id} FOR UPDATE`;
+      >`SELECT balance, locked_balance FROM wallets WHERE id = ${buyer.wallets[0].id}::uuid FOR UPDATE`;
       const lockedWallet = lockedWallets[0];
       if (!lockedWallet) throw new NotFoundException('Buyer wallet not found');
 

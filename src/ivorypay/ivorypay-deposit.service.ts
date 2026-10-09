@@ -27,6 +27,22 @@ export class IvorypayDepositService {
       throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
     }
 
+    const options = await this.ivorypayService.getSupportedPaymentOptions();
+    const requestedToken =
+      typeof dto.crypto === 'string' ? dto.crypto.trim().toUpperCase() : '';
+    const requestedNetwork =
+      typeof dto.chain === 'string' ? dto.chain.trim() : '';
+    const selectedOption = options.find(
+      (option) =>
+        (!requestedToken || option.token === requestedToken) &&
+        (!requestedNetwork || option.network === requestedNetwork),
+    );
+    if (!selectedOption) {
+      throw new BadRequestException(
+        'The selected crypto token and network are not enabled for IvoryPay',
+      );
+    }
+
     const reference = uuidv4();
     const deposit = await this.prisma.deposit.create({
       data: {
@@ -44,22 +60,36 @@ export class IvorypayDepositService {
     });
 
     const amountUsd = Number((amount / 130).toFixed(2));
-    const init = await this.ivorypayService.createPayment({
-      amount: amountUsd,
-      currency: 'USD',
-      reference,
-      email: dto.email || `${userId}@farm.app`,
-      description: `Farm deposit ${amount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
-      baseFiat: 'USD',
-      metadata: {
-        provider: 'ivorypay',
-        amount_farm: amount,
-        amount_usd: amountUsd,
-        currency_fiat: 'USD',
-        user_id: userId,
-        payment_method: 'CRYPTO',
-      },
-    });
+    let init: any;
+    try {
+      init = await this.ivorypayService.createPayment({
+        amount: amountUsd,
+        currency: 'USD',
+        reference,
+        email: dto.email || `${userId}@farm.app`,
+        description: `Farm deposit ${amount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
+        baseFiat: 'USD',
+        crypto: selectedOption.token,
+        chain: selectedOption.network,
+        redirect_url: 'https://farmapp.africa/payment-callback',
+        metadata: {
+          provider: 'ivorypay',
+          amount_farm: amount,
+          amount_usd: amountUsd,
+          currency_fiat: 'USD',
+          user_id: userId,
+          payment_method: 'CRYPTO',
+          crypto: selectedOption.token,
+          chain: selectedOption.network,
+        },
+      });
+    } catch (error) {
+      await this.prisma.deposit.update({
+        where: { id: deposit.id },
+        data: { status: 'FAILED' },
+      });
+      throw error;
+    }
 
     const providerRef = init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
     await this.prisma.deposit.update({ where: { id: deposit.id }, data: { providerRef } });

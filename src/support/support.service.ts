@@ -1,9 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class SupportService {
+  private readonly logger = new Logger(SupportService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
@@ -36,6 +38,7 @@ export class SupportService {
                 id: true,
                 first_name: true,
                 last_name: true,
+                username: true,
                 role: true,
               },
             },
@@ -70,6 +73,7 @@ export class SupportService {
                 id: true,
                 first_name: true,
                 last_name: true,
+                username: true,
                 role: true,
               },
             },
@@ -109,6 +113,7 @@ export class SupportService {
               id: true,
               first_name: true,
               last_name: true,
+              username: true,
               role: true,
             },
           },
@@ -128,22 +133,39 @@ export class SupportService {
     });
 
     if (isAdmin && ticket.user_id) {
-      await this.notificationsService.sendNotification(ticket.user_id, {
-        type: 'admin',
-        title: 'Support replied',
-        body: `An admin has replied to your support enquiry: ${ticket.subject ?? 'Support enquiry'}.`,
-        entityId: ticketId,
-        metadata: {
-          category: 'support_reply',
-          ticketId,
-        },
-      });
+      const responder = reply.users;
+      const responderName = responder
+        ? [responder.first_name, responder.last_name]
+            .filter((part): part is string => Boolean(part?.trim()))
+            .join(' ') || responder.username
+        : null;
+      try {
+        await this.notificationsService.sendNotification(ticket.user_id, {
+          type: 'admin',
+          title: 'Support replied',
+          body: `${responderName || 'Support'} replied to your support enquiry: ${ticket.subject ?? 'Support enquiry'}.`,
+          entityId: ticketId,
+          metadata: {
+            category: 'support_reply',
+            ticketId,
+          },
+        });
+      } catch (error) {
+        this.logger.error(
+          `Reply saved for support ticket ${ticketId}, but notification delivery failed`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
     }
 
     return { data: reply, message: 'Reply sent.' };
   }
 
-  async replyToTicketAsAdmin(ticketId: string, adminId: string, message: string) {
+  async replyToTicketAsAdmin(
+    ticketId: string,
+    adminId: string,
+    message: string,
+  ) {
     return this.replyToTicket(ticketId, adminId, message, true);
   }
 

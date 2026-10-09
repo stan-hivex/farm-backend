@@ -12,7 +12,9 @@ describe('SupportService', () => {
     const notifications = { sendNotification: jest.fn() };
     const service = new SupportService(prisma, notifications as any);
 
-    await expect(service.listAdminTickets()).resolves.toEqual({ data: tickets });
+    await expect(service.listAdminTickets()).resolves.toEqual({
+      data: tickets,
+    });
     expect(prisma.support_tickets.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: { created_at: 'desc' },
@@ -25,9 +27,19 @@ describe('SupportService', () => {
   });
 
   it('stores an admin reply and marks the ticket answered', async () => {
+    const admin = {
+      id: 'admin-1',
+      first_name: 'Alex',
+      last_name: 'Admin',
+      username: 'alexadmin',
+      role: 'admin',
+    };
     const tx: any = {
       support_messages: {
-        create: jest.fn().mockResolvedValue({ id: 'reply-1' }),
+        create: jest.fn().mockResolvedValue({
+          id: 'reply-1',
+          users: admin,
+        }),
       },
       support_tickets: {
         update: jest.fn().mockResolvedValue({}),
@@ -48,7 +60,11 @@ describe('SupportService', () => {
     };
     const service = new SupportService(prisma, notifications as any);
 
-    await service.replyToTicketAsAdmin('ticket-1', 'admin-1', '  We can help.  ');
+    await service.replyToTicketAsAdmin(
+      'ticket-1',
+      'admin-1',
+      '  We can help.  ',
+    );
 
     expect(tx.support_messages.create).toHaveBeenCalledWith({
       data: {
@@ -62,6 +78,7 @@ describe('SupportService', () => {
             id: true,
             first_name: true,
             last_name: true,
+            username: true,
             role: true,
           },
         },
@@ -78,13 +95,54 @@ describe('SupportService', () => {
     expect(notifications.sendNotification).toHaveBeenCalledWith('user-1', {
       type: 'admin',
       title: 'Support replied',
-      body: 'An admin has replied to your support enquiry: Help.',
+      body: 'Alex Admin replied to your support enquiry: Help.',
       entityId: 'ticket-1',
       metadata: {
         category: 'support_reply',
         ticketId: 'ticket-1',
       },
     });
+  });
+
+  it('returns the saved admin reply even if notification delivery fails', async () => {
+    const reply = {
+      id: 'reply-1',
+      message: 'We can help.',
+      users: {
+        first_name: 'Alex',
+        last_name: 'Admin',
+        username: 'alexadmin',
+        role: 'admin',
+      },
+    };
+    const tx: any = {
+      support_messages: {
+        create: jest.fn().mockResolvedValue(reply),
+      },
+      support_tickets: {
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const prisma: any = {
+      support_tickets: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ticket-1',
+          user_id: 'user-1',
+          subject: 'Help',
+        }),
+      },
+      $transaction: jest.fn((work) => work(tx)),
+    };
+    const notifications = {
+      sendNotification: jest.fn().mockRejectedValue(new Error('Push failed')),
+    };
+    const service = new SupportService(prisma, notifications as any);
+
+    await expect(
+      service.replyToTicketAsAdmin('ticket-1', 'admin-1', 'We can help.'),
+    ).resolves.toEqual({ data: reply, message: 'Reply sent.' });
+    expect(tx.support_messages.create).toHaveBeenCalled();
+    expect(tx.support_tickets.update).toHaveBeenCalled();
   });
 
   it('stores a user reply and reopens the ticket', async () => {
@@ -123,6 +181,7 @@ describe('SupportService', () => {
             id: true,
             first_name: true,
             last_name: true,
+            username: true,
             role: true,
           },
         },
@@ -152,7 +211,9 @@ describe('SupportService', () => {
       },
       $transaction: jest.fn((work) => work(tx)),
     };
-    const service = new SupportService(prisma, { sendNotification: jest.fn() } as any);
+    const service = new SupportService(prisma, {
+      sendNotification: jest.fn(),
+    } as any);
 
     await expect(
       service.replyToTicketAsUser('ticket-1', 'other-user', 'Reply'),

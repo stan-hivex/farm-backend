@@ -63,7 +63,7 @@ export class PaymentsController {
   @Get('crypto/options')
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard)
-  @ApiOperation({ summary: 'Get crypto tokens enabled for IvoryPay checkout' })
+  @ApiOperation({ summary: 'Get crypto tokens and networks enabled for IvoryPay checkout' })
   cryptoOptions() {
     return this.svc.getCryptoPaymentOptions();
   }

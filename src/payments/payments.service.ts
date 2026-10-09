@@ -483,8 +483,9 @@ export class PaymentsService {
   }
 
   async getCryptoPaymentOptions() {
-    const tokens = await this.ivorypay.getSupportedPaymentTokens();
-    return { success: true, data: { tokens } };
+    const options = await this.ivorypay.getSupportedPaymentOptions();
+    const tokens = [...new Set(options.map((option) => option.token))].sort();
+    return { success: true, data: { tokens, options } };
   }
 
   // `processSuccessfulPayment` removed: paystack webhook handling is centralized

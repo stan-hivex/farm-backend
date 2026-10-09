@@ -38,6 +38,78 @@ describe('EscrowService biometric authorization', () => {
     expect(securityService.verifyDevice).toHaveBeenCalledWith('buyer-id', 'fingerprint');
     expect(authService.verifyPin).not.toHaveBeenCalled();
   });
+
+  it('creates an active escrow after successful biometric verification', async () => {
+    const activeContract = {
+      id: 'escrow-1',
+      status: 'active',
+      amount: 25,
+      fee: 0.38,
+    };
+    const tx: any = {
+      $queryRaw: jest.fn().mockResolvedValue([{ balance: 100, locked_balance: 0 }]),
+      escrow_contracts: {
+        create: jest.fn().mockResolvedValue({ id: activeContract.id }),
+        update: jest.fn().mockResolvedValue(activeContract),
+      },
+      wallets: {
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balance: 99.62 })
+          .mockResolvedValueOnce({ balance: 0.38 }),
+      },
+      transactions: {
+        create: jest.fn().mockResolvedValue({ transaction_reference: 'tx-1' }),
+      },
+      users: {
+        findFirst: jest.fn().mockResolvedValue({ wallets: [{ id: 'platform-wallet' }] }),
+      },
+      ledger_entries: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma: any = {
+      users: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'buyer-1',
+          username: 'buyer',
+          wallets: [{ id: 'buyer-wallet', balance: 100, locked_balance: 0 }],
+        }),
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'seller-1',
+          username: 'seller',
+          wallets: [{ id: 'seller-wallet' }],
+        }),
+      },
+      escrow_contracts: { findFirst: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn((work) => work(tx)),
+    };
+    const authService: any = { verifyPin: jest.fn() };
+    const securityService: any = {
+      verifyDevice: jest.fn().mockResolvedValue({ trusted: true }),
+    };
+    const service = new EscrowService(
+      prisma,
+      authService,
+      {} as any,
+      { sendNotification: jest.fn().mockResolvedValue(undefined) } as any,
+      securityService,
+      { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn() } as any,
+    );
+
+    const result = await service.create('buyer-1', {
+      seller_identifier: 'seller',
+      amount: 25,
+      title: 'Purchase',
+      biometric_auth: true,
+      device_fingerprint: 'trusted-device',
+    });
+
+    expect(result.data.status).toBe('active');
+    expect(securityService.verifyDevice).toHaveBeenCalledWith(
+      'buyer-1',
+      'trusted-device',
+    );
+    expect(authService.verifyPin).not.toHaveBeenCalled();
+  });
 });
 
 describe('EscrowService dispute resolution', () => {
@@ -260,6 +332,7 @@ describe('EscrowService creation fee', () => {
     });
     expect(result.data.status).toBe('active');
 
+    expect(tx.$queryRaw.mock.calls[0][0].join('')).toContain('::uuid');
     expect(prisma.users.findUnique).toHaveBeenCalledWith({
       where: { id: 'buyer-1' },
       include: { wallets: { where: { is_active: true }, take: 1 } },
