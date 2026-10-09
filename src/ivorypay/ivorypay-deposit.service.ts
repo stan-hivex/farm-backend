@@ -1,4 +1,9 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { IvorypayService } from './ivorypay.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -100,6 +105,108 @@ export class IvorypayDepositService {
       throw new BadRequestException('Deposit not found');
     }
     return { success: true, data: { reference, status: deposit.status, provider: deposit.provider } };
+  }
+
+  async verifyDeposit(userId: string, reference: string) {
+    const deposit = await this.prisma.deposit.findFirst({
+      where: { reference, userId, provider: 'ivorypay' },
+    });
+    if (!deposit) {
+      throw new NotFoundException('IvoryPay deposit not found');
+    }
+    if (deposit.status === 'SUCCESS') {
+      return {
+        success: true,
+        data: { reference, status: 'completed', alreadyProcessed: true },
+      };
+    }
+    if (deposit.status !== 'PENDING') {
+      return { success: true, data: { reference, status: deposit.status } };
+    }
+
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
+    if (!transaction || transaction.transaction_type !== 'deposit') {
+      throw new NotFoundException('Deposit transaction not found');
+    }
+
+    const metadata = (transaction.metadata as any) ?? {};
+    const verified = await this.ivorypayService.verifyTransaction(
+      reference,
+      deposit.providerRef ?? metadata.provider_ref,
+      [reference],
+    );
+    const verifiedData = verified?.data ?? verified;
+    const verifiedStatus = (
+      verifiedData?.status ??
+      verified?.status ??
+      ''
+    )
+      .toString()
+      .toLowerCase();
+
+    if (!['success', 'completed'].includes(verifiedStatus)) {
+      if (['failed', 'cancelled', 'expired'].includes(verifiedStatus)) {
+        await this.handleWebhook(
+          {
+            event: 'payment.failed',
+            reference,
+            data: { ...verifiedData, reference, status: verifiedStatus },
+          },
+          true,
+        );
+      }
+      return {
+        success: true,
+        data: { reference, status: verifiedStatus || deposit.status },
+      };
+    }
+
+    const expectedAmount = Number(
+      metadata.amount_usd ?? metadata.amount_fiat ?? NaN,
+    );
+    const verifiedAmount = Number(
+      verifiedData?.amount_usd ??
+        verifiedData?.amountInFiat ??
+        verifiedData?.amount ??
+        NaN,
+    );
+    if (
+      Number.isFinite(expectedAmount) &&
+      expectedAmount > 0 &&
+      Number.isFinite(verifiedAmount) &&
+      verifiedAmount > 0 &&
+      Math.abs(expectedAmount - verifiedAmount) > 0.5
+    ) {
+      this.logger.error(
+        `IvoryPay verification amount mismatch for ${reference}: expected=${expectedAmount} verified=${verifiedAmount}`,
+      );
+      throw new BadRequestException(
+        'IvoryPay verified amount does not match the pending deposit',
+      );
+    }
+
+    await this.handleWebhook(
+      {
+        event: 'payment.success',
+        reference,
+        data: { ...verifiedData, reference, status: 'SUCCESS' },
+      },
+      true,
+    );
+
+    const updatedDeposit = await this.prisma.deposit.findFirst({
+      where: { reference, userId },
+      select: { status: true },
+    });
+    return {
+      success: true,
+      data: {
+        reference,
+        status: updatedDeposit?.status ?? 'PENDING',
+      },
+    };
   }
 
   async handleWebhook(payload: any, verified = false) {

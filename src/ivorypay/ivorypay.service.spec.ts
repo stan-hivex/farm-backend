@@ -76,6 +76,37 @@ describe('IvorypayService', () => {
     );
   });
 
+  it('trims surrounding whitespace from the configured API key', async () => {
+    const configService = {
+      get: jest.fn((key: string, defaultValue?: any) => {
+        if (key === 'IVORYPAY_BASE_URL') return 'https://api.ivorypay.io/api';
+        if (key === 'IVORYPAY_API_KEY') return '  test-api-key \n';
+        return defaultValue;
+      }),
+    } as unknown as ConfigService;
+    const configuredService = new IvorypayService(configService);
+    mockedAxios.post.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          checkoutUrl: 'https://checkout.ivorypay.io/checkout/reference',
+        },
+      },
+    } as any);
+
+    await configuredService.createPayment({
+      amount: 10,
+      reference: 'reference',
+      email: 'customer@example.com',
+      crypto: 'USDT',
+      baseFiat: 'USD',
+    });
+
+    expect(mockedAxios.post.mock.calls[0][2].headers).toMatchObject({
+      Authorization: 'test-api-key',
+    });
+  });
+
   it('returns only active crypto tokens enabled for the business', async () => {
     mockedAxios.get.mockResolvedValueOnce({
       data: {

@@ -25,7 +25,13 @@ describe('WalletsService transaction history', () => {
     const query = prisma.transactions.findMany.mock.calls[0][0];
     expect(query.where.AND).toContainEqual({
       status: expect.objectContaining({
-        notIn: expect.arrayContaining(['failed', 'cancelled', 'reversed']),
+        notIn: expect.arrayContaining([
+          'pending',
+          'processing',
+          'failed',
+          'cancelled',
+          'reversed',
+        ]),
       }),
     });
     expect(prisma.transactions.count).toHaveBeenCalledWith({

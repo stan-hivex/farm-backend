@@ -24,7 +24,13 @@ describe('PaymentsService transaction histories', () => {
 
     for (const [options] of prisma.transactions.findMany.mock.calls) {
       expect(options.where.status.notIn).toEqual(
-        expect.arrayContaining(['failed', 'cancelled', 'reversed']),
+        expect.arrayContaining([
+          'pending',
+          'processing',
+          'failed',
+          'cancelled',
+          'reversed',
+        ]),
       );
     }
   });

@@ -71,6 +71,7 @@ export class DepositService {
 
     const createdAmount = deposit.amount;
     let paymentUrl: string | null = null;
+    let accessCode: string | null = null;
 
     if (paymentMethod !== 'CRYPTO') {
       await this.prisma.transactions.create({
@@ -178,9 +179,11 @@ export class DepositService {
         currency: 'KES',
         channels: ['mobile_money'],
         phone: dto.phone,
+        callback_url: 'https://farmapp.africa/payment-callback',
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
+      accessCode = init.access_code || null;
     } else if (paymentMethod === 'CARD') {
       const init = await this.paystack.initializePayment({
         email: dto.email || `${userId}@farm.app`,
@@ -188,9 +191,11 @@ export class DepositService {
         reference,
         currency: 'KES',
         channels: ['card'],
+        callback_url: 'https://farmapp.africa/payment-callback',
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
+      accessCode = init.access_code || null;
     } else if (paymentMethod === 'BANK_TRANSFER') {
       const init = await this.paystack.initializePayment({
         email: dto.email || `${userId}@farm.app`,
@@ -198,9 +203,11 @@ export class DepositService {
         reference,
         currency: 'KES',
         channels: ['bank_transfer'],
+        callback_url: 'https://farmapp.africa/payment-callback',
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
+      accessCode = init.access_code || null;
     } else {
       throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
     }
@@ -209,6 +216,7 @@ export class DepositService {
       success: true,
       payment_url: paymentUrl,
       authorization_url: paymentUrl,
+      access_code: accessCode,
       reference,
       deposit,
     };

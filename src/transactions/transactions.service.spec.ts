@@ -105,7 +105,13 @@ describe('TransactionsService', () => {
           AND: expect.arrayContaining([
             expect.objectContaining({
               status: expect.objectContaining({
-                notIn: expect.arrayContaining(['failed', 'cancelled', 'reversed']),
+                notIn: expect.arrayContaining([
+                  'pending',
+                  'processing',
+                  'failed',
+                  'cancelled',
+                  'reversed',
+                ]),
               }),
             }),
           ]),

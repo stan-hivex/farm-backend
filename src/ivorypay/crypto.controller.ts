@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -26,6 +34,18 @@ export class CryptoController {
   @Get('status/:reference')
   async status(@Param('reference') reference: string) {
     return this.ivorypayDepositService.getStatus(reference);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Permissions('payments:write')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('status/:reference/verify')
+  async verify(@Req() req: any, @Param('reference') reference: string) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.ivorypayDepositService.verifyDeposit(userId, reference);
   }
 
   @UseGuards(WebhookSignatureGuard)

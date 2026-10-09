@@ -42,7 +42,7 @@ export class TransactionsService {
     if (query.type) where.AND.push({ transaction_type: query.type });
     if (query.status) where.AND.push({ status: query.status });
     const cacheKey =
-      `transactions:${userId}:${page}:${limit}:user-history-v2:` +
+      `transactions:${userId}:${page}:${limit}:user-history-v3:` +
       `${query.type ?? 'all'}:${query.status ?? 'all'}`;
     const cached = await this.cache.cacheGet<any>(cacheKey);
     if (cached) {

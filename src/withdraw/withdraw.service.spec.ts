@@ -21,6 +21,7 @@ describe('WithdrawService', () => {
       users: { findFirst: jest.fn() },
       withdrawal: {
         create: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
@@ -45,6 +46,20 @@ describe('WithdrawService', () => {
 
     service = module.get<WithdrawService>(WithdrawService);
     prisma = module.get(PrismaService);
+  });
+
+  it('hides pending and failed withdrawals from user history', async () => {
+    await service.getUserWithdrawals('user-1');
+
+    expect(prisma.withdrawal.findMany).toHaveBeenCalledWith({
+      where: {
+        userId: 'user-1',
+        status: {
+          notIn: ['PENDING', 'PROCESSING', 'FAILED', 'CANCELLED'],
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
   });
 
   it('persists the selected crypto asset for crypto withdrawals', async () => {

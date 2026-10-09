@@ -50,7 +50,8 @@ export class IvorypayService {
     this.baseUrl = normalizedBaseUrl.endsWith('/api')
       ? normalizedBaseUrl
       : `${normalizedBaseUrl}/api`;
-    this.apiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
+    const configuredApiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
+    this.apiKey = configuredApiKey?.trim() || undefined;
   }
 
   private maskAddress(address: string | null | undefined): string {

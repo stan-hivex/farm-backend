@@ -78,6 +78,7 @@ describe('DepositService', () => {
   it('charges card deposits only the amount entered by the user', async () => {
     paystack.initializePayment = jest.fn().mockResolvedValue({
       authorization_url: 'https://checkout.example.test/payment',
+      access_code: 'paystack-access-code',
     });
     prisma.deposit.create.mockResolvedValue({
       id: 'deposit-1',
@@ -99,7 +100,11 @@ describe('DepositService', () => {
     });
 
     expect(paystack.initializePayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 10 }),
+      expect.objectContaining({
+        amount: 10,
+        channels: ['card'],
+        callback_url: 'https://farmapp.africa/payment-callback',
+      }),
     );
     expect(prisma.deposit.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -108,6 +113,7 @@ describe('DepositService', () => {
     );
     expect(result.deposit.fee).toBe(0);
     expect(result.deposit.total).toBe(10);
+    expect(result.access_code).toBe('paystack-access-code');
   });
 
   it('charges mobile money deposits only the amount entered by the user', async () => {

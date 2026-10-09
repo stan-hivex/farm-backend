@@ -219,7 +219,10 @@ export class WithdrawService {
 
   async getUserWithdrawals(userId: string) {
     return this.prisma.withdrawal.findMany({
-      where: { userId, status: { not: 'FAILED' } },
+      where: {
+        userId,
+        status: { notIn: ['PENDING', 'PROCESSING', 'FAILED', 'CANCELLED'] },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
