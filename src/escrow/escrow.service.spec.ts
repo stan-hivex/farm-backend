@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { EscrowService } from './escrow.service';
 
 describe('EscrowService biometric authorization', () => {
@@ -196,7 +196,12 @@ describe('EscrowService creation fee', () => {
       $queryRaw: jest.fn().mockResolvedValue([{ balance: 101.5, locked_balance: 0 }]),
       escrow_contracts: {
         create: jest.fn().mockResolvedValue({ id: 'escrow-1' }),
-        update: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({
+          id: 'escrow-1',
+          status: 'active',
+          amount: 100,
+          fee: 1.5,
+        }),
       },
       wallets: {
         update: jest.fn()
@@ -247,13 +252,25 @@ describe('EscrowService creation fee', () => {
       websocket,
     );
 
-    await service.create('buyer-1', {
+    const result = await service.create('buyer-1', {
       seller_identifier: 'seller',
       amount: 100,
       title: 'Order',
       pin: '1234',
     });
+    expect(result.data.status).toBe('active');
 
+    expect(prisma.users.findUnique).toHaveBeenCalledWith({
+      where: { id: 'buyer-1' },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+    expect(prisma.users.findFirst).toHaveBeenCalledWith({
+      where: {
+        OR: [{ username: 'seller' }, { phone: 'seller' }],
+        is_deleted: false,
+      },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
     expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
       where: { id: 'buyer-wallet' },
       data: {
@@ -265,5 +282,70 @@ describe('EscrowService creation fee', () => {
       where: { id: 'superadmin-wallet' },
       data: { balance: { increment: 1.5 } },
     });
+  });
+});
+
+describe('EscrowService release retries', () => {
+  it('treats a repeated release of a completed escrow as successful', async () => {
+    const prisma = {
+      escrow_contracts: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'escrow-1',
+          buyer_id: 'buyer-1',
+          status: 'completed',
+        }),
+      },
+    };
+    const authService = { verifyPin: jest.fn() };
+    const service = new EscrowService(
+      prisma as any,
+      authService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const executeRelease = jest.spyOn(service, 'executeRelease');
+
+    await expect(
+      service.release('escrow-1', 'buyer-1', { pin: '1234' }),
+    ).resolves.toEqual({ message: 'Escrow has already been released' });
+
+    expect(authService.verifyPin).not.toHaveBeenCalled();
+    expect(executeRelease).not.toHaveBeenCalled();
+  });
+
+  it('returns success if a concurrent request completes the release first', async () => {
+    const prisma = {
+      escrow_contracts: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce({
+            id: 'escrow-1',
+            buyer_id: 'buyer-1',
+            status: 'active',
+          })
+          .mockResolvedValueOnce({
+            id: 'escrow-1',
+            buyer_id: 'buyer-1',
+            status: 'completed',
+          }),
+      },
+    };
+    const service = new EscrowService(
+      prisma as any,
+      { verifyPin: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    jest
+      .spyOn(service, 'executeRelease')
+      .mockRejectedValue(new BadRequestException('Escrow is no longer active'));
+
+    await expect(
+      service.release('escrow-1', 'buyer-1', { pin: '1234' }),
+    ).resolves.toEqual({ message: 'Escrow has already been released' });
   });
 });

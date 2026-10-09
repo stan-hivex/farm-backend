@@ -68,7 +68,17 @@ export class EscrowService {
     seller_identifier: string; amount: number; title: string;
     description?: string; auto_release_days?: number; pin?: string; biometric_auth?: boolean; device_fingerprint?: string;
   }) {
-    if (dto.amount <= 0) throw new BadRequestException('Amount must be positive');
+    if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
+      throw new BadRequestException('Amount must be a positive number');
+    }
+    const sellerIdentifier = dto.seller_identifier?.trim();
+    const title = dto.title?.trim();
+    if (!sellerIdentifier) throw new BadRequestException('Seller username or phone number is required');
+    if (!title) throw new BadRequestException('Escrow title is required');
+    if (title.length > 255) throw new BadRequestException('Escrow title must be 255 characters or fewer');
+    if (dto.auto_release_days != null && (dto.auto_release_days < 1 || dto.auto_release_days > 90)) {
+      throw new BadRequestException('Auto-release must be between 1 and 90 days');
+    }
 
     if (dto.biometric_auth) {
       if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
@@ -83,16 +93,19 @@ export class EscrowService {
 
     const buyer = await this.prisma.users.findUnique({
       where: { id: buyerId },
-      include: { wallets: { take: 1 } },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
     });
     if (!buyer?.wallets[0]) throw new NotFoundException('Buyer wallet not found');
+    if (buyer.wallets[0].is_frozen) {
+      throw new BadRequestException('Buyer wallet is frozen and cannot fund an escrow');
+    }
 
     const seller = await this.prisma.users.findFirst({
       where: {
-        OR: [{ username: dto.seller_identifier }, { phone: dto.seller_identifier }],
+        OR: [{ username: sellerIdentifier }, { phone: sellerIdentifier }],
         is_deleted: false,
       },
-      include: { wallets: { take: 1 } },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
     });
     if (!seller?.wallets[0]) throw new NotFoundException('Seller not found');
     if (seller.id === buyerId) throw new BadRequestException('Cannot create escrow with yourself');
@@ -142,7 +155,7 @@ export class EscrowService {
           seller_wallet_id: seller.wallets[0].id,
           amount: dto.amount,
           fee,
-          title: dto.title,
+          title,
           description: dto.description,
           auto_release_at,
           status: 'pending',
@@ -155,7 +168,7 @@ export class EscrowService {
           locked_balance: { increment: dto.amount },
         },
       });
-      await tx.escrow_contracts.update({
+      const activeContract = await tx.escrow_contracts.update({
         where: { id: c.id },
         data: { status: 'active', funded_at: new Date() },
       });
@@ -168,7 +181,7 @@ export class EscrowService {
           amount: dto.amount,
           fee,
           net_amount: dto.amount,
-          description: `Escrow lock: ${dto.title}`,
+          description: `Escrow lock: ${title}`,
           metadata: { user_id: buyerId, escrow_id: c.id },
           processed_at: new Date(),
         },
@@ -178,11 +191,11 @@ export class EscrowService {
         await this.creditSuperadminWalletInTx(
           tx,
           Number(fee),
-          `Escrow creation fee from ${buyer.username}: ${dto.title}`,
+          `Escrow creation fee from ${buyer.username}: ${title}`,
         );
       }
       return {
-        contract: c,
+        contract: activeContract,
         balance: Number(updatedBuyerWallet.balance),
         transactionReference: transaction.transaction_reference,
       };
@@ -231,6 +244,15 @@ export class EscrowService {
   }
 
   async release(escrowId: string, buyerId: string, dto?: { pin?: string; biometric_auth?: boolean; device_fingerprint?: string }) {
+    const escrow = await this.getEscrowOrFail(escrowId);
+    if (escrow.buyer_id !== buyerId) throw new ForbiddenException('Only the buyer can release');
+    if (escrow.status === 'completed') {
+      return { message: 'Escrow has already been released' };
+    }
+    if (escrow.status !== 'active') {
+      throw new BadRequestException(`Cannot release escrow with status: ${escrow.status}`);
+    }
+
     if (dto?.biometric_auth) {
       if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
       const verified = await this.securityService.verifyDevice(buyerId, dto.device_fingerprint);
@@ -242,11 +264,17 @@ export class EscrowService {
       await this.authService.verifyPin(buyerId, dto.pin);
     }
 
-    const escrow = await this.getEscrowOrFail(escrowId);
-    if (escrow.buyer_id !== buyerId) throw new ForbiddenException('Only the buyer can release');
-    if (escrow.status !== 'active')
-      throw new BadRequestException(`Cannot release escrow with status: ${escrow.status}`);
-    await this.executeRelease(escrow);
+    try {
+      await this.executeRelease(escrow);
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        const latestEscrow = await this.getEscrowOrFail(escrowId);
+        if (latestEscrow.buyer_id === buyerId && latestEscrow.status === 'completed') {
+          return { message: 'Escrow has already been released' };
+        }
+      }
+      throw error;
+    }
     return { message: 'Escrow released to seller' };
   }
 

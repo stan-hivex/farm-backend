@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional, Length, IsInt, Min, Max, IsBoolean } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional, Length, IsInt, Min, Max, IsBoolean, MaxLength } from 'class-validator';
 import { EscrowService } from './escrow.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -18,7 +18,7 @@ class EscrowAuthDto {
 class CreateEscrowDto extends EscrowAuthDto {
   @IsNotEmpty() @IsString() seller_identifier!: string;
   @IsNumber() @IsPositive() amount!: number;
-  @IsNotEmpty() @IsString() title!: string;
+  @IsNotEmpty() @IsString() @MaxLength(255) title!: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsInt() @Min(1) @Max(90) auto_release_days?: number;
 }
