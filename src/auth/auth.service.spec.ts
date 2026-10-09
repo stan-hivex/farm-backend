@@ -53,35 +53,46 @@ describe('AuthService', () => {
     const prisma = module.get(PrismaService);
     const config = module.get(ConfigService);
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
-    jest.spyOn(config, 'get').mockImplementation((key: string) =>
-      key === 'QR_HMAC_SECRET' ? 'test-secret' : undefined,
-    );
-    jest.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) =>
-      callback({
-        users: {
-          create: jest.fn().mockResolvedValue({
-            id: 'new-user',
-            first_name: 'Test',
-            phone: '+254700123456',
-          }),
-        },
-        wallets: { create: jest.fn().mockResolvedValue({}) },
-        activity_logs: { create: jest.fn().mockResolvedValue({}) },
-      }),
-    );
-    jest.spyOn(service, 'sendOtp').mockResolvedValue({ message: 'OTP delivery started' });
-    jest.spyOn(service as any, 'ensureFirebaseAccount').mockReturnValue(
-      new Promise(() => {}),
-    );
+    jest
+      .spyOn(config, 'get')
+      .mockImplementation((key: string) =>
+        key === 'QR_HMAC_SECRET' ? 'test-secret' : undefined,
+      );
+    jest
+      .spyOn(prisma, '$transaction')
+      .mockImplementation(async (callback: any) =>
+        callback({
+          users: {
+            create: jest.fn().mockResolvedValue({
+              id: 'new-user',
+              first_name: 'Test',
+              phone: '+254700123456',
+            }),
+          },
+          wallets: { create: jest.fn().mockResolvedValue({}) },
+          activity_logs: { create: jest.fn().mockResolvedValue({}) },
+        }),
+      );
+    jest
+      .spyOn(service, 'sendOtp')
+      .mockResolvedValue({ message: 'OTP delivery started' });
+    jest
+      .spyOn(service as any, 'ensureFirebaseAccount')
+      .mockReturnValue(new Promise(() => {}));
 
-    await expect(service.register({
-      first_name: 'Test',
-      last_name: 'User',
-      username: 'test_user',
-      phone: '+254700123456',
-      email: 'test@example.com',
-      password: 'NewSecure1!Password',
-    } as any, '203.0.113.1')).resolves.toEqual({
+    await expect(
+      service.register(
+        {
+          first_name: 'Test',
+          last_name: 'User',
+          username: 'test_user',
+          phone: '+254700123456',
+          email: 'test@example.com',
+          password: 'NewSecure1!Password',
+        } as any,
+        '203.0.113.1',
+      ),
+    ).resolves.toEqual({
       message: 'Registration successful. OTP sent to your phone number.',
     });
     expect(service.sendOtp).toHaveBeenCalledWith(
@@ -131,7 +142,9 @@ describe('AuthService', () => {
     jest.spyOn(prisma.user_settings, 'findUnique').mockResolvedValue({
       push_notifications: true,
     } as any);
-    jest.spyOn(notifications, 'sendPush').mockReturnValue(new Promise(() => {}) as any);
+    jest
+      .spyOn(notifications, 'sendPush')
+      .mockReturnValue(new Promise(() => {}) as any);
 
     await expect(
       service.sendOtp('user-1', '+254700123456', 'phone_verification', true),
@@ -151,8 +164,11 @@ describe('AuthService', () => {
       role: 'user',
     } as any);
 
-    await expect(service.sendPasswordResetLink('PERSON@example.com')).resolves.toEqual({
-      message: 'If an active account exists for this email, a reset link has been sent.',
+    await expect(
+      service.sendPasswordResetLink('PERSON@example.com'),
+    ).resolves.toEqual({
+      message:
+        'If an active account exists for this email, a reset link has been sent.',
     });
     expect(firebase.auth.generatePasswordResetLink).not.toHaveBeenCalled();
     expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
@@ -163,8 +179,11 @@ describe('AuthService', () => {
     const notifications = module.get(NotificationsService);
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
 
-    await expect(service.sendPasswordResetLink('missing@example.com')).resolves.toEqual({
-      message: 'If an active account exists for this email, a reset link has been sent.',
+    await expect(
+      service.sendPasswordResetLink('missing@example.com'),
+    ).resolves.toEqual({
+      message:
+        'If an active account exists for this email, a reset link has been sent.',
     });
     expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
   });
@@ -172,7 +191,8 @@ describe('AuthService', () => {
   it('links an existing FARM account to Firebase before reset email delivery', async () => {
     const prisma = module.get(PrismaService);
     const firebase = module.get(FirebaseService);
-    const findUser = jest.spyOn(prisma.users, 'findFirst')
+    const findUser = jest
+      .spyOn(prisma.users, 'findFirst')
       .mockResolvedValueOnce({
         id: 'user-2',
         email: 'person@example.com',
@@ -182,7 +202,9 @@ describe('AuthService', () => {
         role: 'user',
       } as any)
       .mockResolvedValueOnce({ firebase_uid: null } as any);
-    const updateUser = jest.spyOn(prisma.users, 'update').mockResolvedValue({} as any);
+    const updateUser = jest
+      .spyOn(prisma.users, 'update')
+      .mockResolvedValue({} as any);
     (firebase.auth.getUserByEmail as jest.Mock).mockResolvedValue({
       uid: 'firebase-user-2',
     });
@@ -211,27 +233,35 @@ describe('AuthService', () => {
       is_active: true,
       is_deleted: false,
     } as any);
-    jest.spyOn(config, 'get').mockImplementation((key: string) =>
-      key === 'BCRYPT_ROUNDS' ? '4' : undefined,
-    );
+    jest
+      .spyOn(config, 'get')
+      .mockImplementation((key: string) =>
+        key === 'BCRYPT_ROUNDS' ? '4' : undefined,
+      );
     const updateUser = jest.fn().mockResolvedValue({});
     const revokeSessions = jest.fn().mockResolvedValue({});
-    jest.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) =>
-      callback({
-        users: { update: updateUser },
-        user_sessions: { updateMany: revokeSessions },
+    jest
+      .spyOn(prisma, '$transaction')
+      .mockImplementation(async (callback: any) =>
+        callback({
+          users: { update: updateUser },
+          user_sessions: { updateMany: revokeSessions },
+        }),
+      );
+
+    await expect(
+      service.completePasswordReset({
+        firebase_id_token: 'firebase-token',
+        password: 'NewSecure1!Password',
+        confirm_password: 'NewSecure1!Password',
+      }),
+    ).resolves.toEqual({ message: 'Password reset successfully' });
+    expect(updateUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'user-1' },
+        data: expect.objectContaining({ failed_login_attempts: 0 }),
       }),
     );
-
-    await expect(service.completePasswordReset({
-      firebase_id_token: 'firebase-token',
-      password: 'NewSecure1!Password',
-      confirm_password: 'NewSecure1!Password',
-    })).resolves.toEqual({ message: 'Password reset successfully' });
-    expect(updateUser).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'user-1' },
-      data: expect.objectContaining({ failed_login_attempts: 0 }),
-    }));
     expect(revokeSessions).toHaveBeenCalledWith({
       where: { user_id: 'user-1', is_revoked: false },
       data: expect.objectContaining({ is_revoked: true }),
@@ -239,10 +269,18 @@ describe('AuthService', () => {
   });
 
   it('normalizes phone numbers consistently for firebase verification', () => {
-    expect((service as any).normalizePhoneNumber('+254700123456')).toBe('+254700123456');
-    expect((service as any).normalizePhoneNumber('254700123456')).toBe('+254700123456');
-    expect((service as any).normalizePhoneNumber('  +254 700 123 456 ')).toBe('+254700123456');
-    expect((service as any).normalizePhoneNumber('0700123456')).toBe('+254700123456');
+    expect((service as any).normalizePhoneNumber('+254700123456')).toBe(
+      '+254700123456',
+    );
+    expect((service as any).normalizePhoneNumber('254700123456')).toBe(
+      '+254700123456',
+    );
+    expect((service as any).normalizePhoneNumber('  +254 700 123 456 ')).toBe(
+      '+254700123456',
+    );
+    expect((service as any).normalizePhoneNumber('0700123456')).toBe(
+      '+254700123456',
+    );
   });
 
   it('requires a temporary second-factor step for regular users', async () => {
@@ -284,20 +322,26 @@ describe('AuthService', () => {
       id: 'pending-1',
     } as any);
 
-    jest.spyOn(jwt, 'signAsync').mockImplementation(async (_payload, options: any) => {
-      if (options?.secret === config.get('JWT_ACCESS_SECRET')) {
-        return 'access-token';
-      }
-      if (options?.secret === config.get('JWT_REFRESH_SECRET')) {
-        return 'refresh-token';
-      }
-      return 'token';
-    });
+    jest
+      .spyOn(jwt, 'signAsync')
+      .mockImplementation(async (_payload, options: any) => {
+        if (options?.secret === config.get('JWT_ACCESS_SECRET')) {
+          return 'access-token';
+        }
+        if (options?.secret === config.get('JWT_REFRESH_SECRET')) {
+          return 'refresh-token';
+        }
+        return 'token';
+      });
 
-    const result: any = await service.login({
-      identifier: '+254700123456',
-      password: 'secret123',
-    } as any, '127.0.0.1', 'jest');
+    const result: any = await service.login(
+      {
+        identifier: '+254700123456',
+        password: 'secret123',
+      } as any,
+      '127.0.0.1',
+      'jest',
+    );
 
     expect(result.data.requiresPhoneVerification).toBe(true);
     expect(result.data.pendingLoginId).toBe('pending-1');
@@ -333,7 +377,9 @@ describe('AuthService', () => {
     jest.spyOn(prisma.users, 'update').mockResolvedValue({} as any);
     jest.spyOn(prisma.user_sessions, 'create').mockResolvedValue({} as any);
     jest.spyOn(prisma.activity_logs, 'create').mockResolvedValue({} as any);
-    jest.spyOn(prisma.pending_login_verifications, 'create').mockResolvedValue({} as any);
+    jest
+      .spyOn(prisma.pending_login_verifications, 'create')
+      .mockResolvedValue({} as any);
     jest.spyOn(config, 'get').mockImplementation((key: string) => {
       if (key === 'REQUIRE_PHONE_VERIFICATION') return 'false';
       if (key === 'BCRYPT_ROUNDS') return '12';
@@ -384,20 +430,26 @@ describe('AuthService', () => {
     jest.spyOn(prisma.activity_logs, 'create').mockResolvedValue({} as any);
     jest.spyOn(prisma.user_sessions, 'create').mockResolvedValue({} as any);
 
-    jest.spyOn(jwt, 'signAsync').mockImplementation(async (_payload, options: any) => {
-      if (options?.secret === config.get('JWT_ACCESS_SECRET')) {
-        return 'access-token';
-      }
-      if (options?.secret === config.get('JWT_REFRESH_SECRET')) {
-        return 'refresh-token';
-      }
-      return 'token';
-    });
+    jest
+      .spyOn(jwt, 'signAsync')
+      .mockImplementation(async (_payload, options: any) => {
+        if (options?.secret === config.get('JWT_ACCESS_SECRET')) {
+          return 'access-token';
+        }
+        if (options?.secret === config.get('JWT_REFRESH_SECRET')) {
+          return 'refresh-token';
+        }
+        return 'token';
+      });
 
-    const result: any = await service.login({
-      identifier: '+254710000000',
-      password: 'secret123',
-    } as any, '127.0.0.1', 'jest');
+    const result: any = await service.login(
+      {
+        identifier: '+254710000000',
+        password: 'secret123',
+      } as any,
+      '127.0.0.1',
+      'jest',
+    );
 
     expect(result.data.requiresPhoneVerification).toBe(false);
     expect(result.data.access_token).toBe('access-token');
@@ -408,28 +460,40 @@ describe('AuthService', () => {
   it('creates admin accounts with the admin role only', async () => {
     const prisma = module.get(PrismaService);
 
-    jest.spyOn(prisma.users, 'findUnique').mockResolvedValue({ id: 'super-admin-1', role: 'super_admin' } as any);
+    jest
+      .spyOn(prisma.users, 'findUnique')
+      .mockResolvedValue({ id: 'super-admin-1', role: 'super_admin' } as any);
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
     let createdUserRole: string | undefined;
-    jest.spyOn(prisma, '$transaction').mockImplementation(async (callback: any) => {
-      const tx = {
-        users: {
-          create: jest.fn().mockImplementation(({ data }: { data: { role: string } }) => {
-            createdUserRole = data.role;
-            return { id: 'admin-2', phone: '+254700123456', first_name: 'Ada' };
-          }),
-        },
-        wallets: { create: jest.fn().mockResolvedValue({}) },
-        activity_logs: { create: jest.fn().mockResolvedValue({}) },
-      };
-      return callback(tx);
-    });
+    jest
+      .spyOn(prisma, '$transaction')
+      .mockImplementation(async (callback: any) => {
+        const tx = {
+          users: {
+            create: jest
+              .fn()
+              .mockImplementation(({ data }: { data: { role: string } }) => {
+                createdUserRole = data.role;
+                return {
+                  id: 'admin-2',
+                  phone: '+254700123456',
+                  first_name: 'Ada',
+                };
+              }),
+          },
+          wallets: { create: jest.fn().mockResolvedValue({}) },
+          activity_logs: { create: jest.fn().mockResolvedValue({}) },
+        };
+        return callback(tx);
+      });
     jest.spyOn(service as any, 'sendOtp').mockResolvedValue(undefined);
-    jest.spyOn((service as any).cfg, 'get').mockImplementation((key: string) => {
-      if (key === 'QR_HMAC_SECRET') return 'test-secret';
-      if (key === 'BCRYPT_ROUNDS') return '12';
-      return 'test';
-    });
+    jest
+      .spyOn((service as any).cfg, 'get')
+      .mockImplementation((key: string) => {
+        if (key === 'QR_HMAC_SECRET') return 'test-secret';
+        if (key === 'BCRYPT_ROUNDS') return '12';
+        return 'test';
+      });
 
     const result = await service.createAdmin('super-admin-1', {
       first_name: 'Ada',
@@ -462,5 +526,91 @@ describe('AuthService', () => {
         country: 'Kenya',
       } as any),
     ).rejects.toThrow('Only superadmins can create admin accounts');
+  });
+
+  it('resets a forgotten PIN, clears lockout attempts, and records the reset', async () => {
+    const prisma = module.get(PrismaService);
+    const config = module.get(ConfigService);
+    const userPasswordHash = await bcrypt.hash('secret123', 4);
+    const findUnique = jest
+      .spyOn(prisma.users, 'findUnique')
+      .mockResolvedValue({
+        id: 'user-1',
+        phone: '+254700123456',
+        password_hash: userPasswordHash,
+      } as any);
+    const update = jest
+      .spyOn(prisma.users, 'update')
+      .mockResolvedValue({} as any);
+    const createLog = jest
+      .spyOn(prisma.activity_logs, 'create')
+      .mockResolvedValue({} as any);
+    jest
+      .spyOn(config, 'get')
+      .mockImplementation((key: string) =>
+        key === 'BCRYPT_ROUNDS' ? '4' : undefined,
+      );
+
+    await expect(
+      service.resetForgottenPin('user-1', {
+        phone: '0700 123 456',
+        password: 'secret123',
+        new_pin: '2580',
+        confirm_pin: '2580',
+      }),
+    ).resolves.toEqual({ message: 'PIN reset successfully' });
+
+    expect(findUnique).toHaveBeenCalledWith({ where: { id: 'user-1' } });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      data: expect.objectContaining({ failed_pin_attempts: 0 }),
+    });
+    const savedPinHash = update.mock.calls[0][0].data.pin_hash;
+    await expect(bcrypt.compare('2580', savedPinHash)).resolves.toBe(true);
+    expect(createLog).toHaveBeenCalledWith({
+      data: { user_id: 'user-1', activity: 'RESET_FORGOTTEN_PIN' },
+    });
+  });
+
+  it('rejects forgotten PIN resets when the supplied phone is not the account phone', async () => {
+    const prisma = module.get(PrismaService);
+    jest.spyOn(prisma.users, 'findUnique').mockResolvedValue({
+      id: 'user-1',
+      phone: '+254700123456',
+      password_hash: await bcrypt.hash('secret123', 4),
+    } as any);
+    const update = jest.spyOn(prisma.users, 'update');
+
+    await expect(
+      service.resetForgottenPin('user-1', {
+        phone: '+254711111111',
+        password: 'secret123',
+        new_pin: '2580',
+        confirm_pin: '2580',
+      }),
+    ).rejects.toThrow('Phone number does not match this account');
+
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('rejects forgotten PIN resets when the account password is incorrect', async () => {
+    const prisma = module.get(PrismaService);
+    jest.spyOn(prisma.users, 'findUnique').mockResolvedValue({
+      id: 'user-1',
+      phone: '+254700123456',
+      password_hash: await bcrypt.hash('secret123', 4),
+    } as any);
+    const update = jest.spyOn(prisma.users, 'update');
+
+    await expect(
+      service.resetForgottenPin('user-1', {
+        phone: '+254700123456',
+        password: 'incorrect',
+        new_pin: '2580',
+        confirm_pin: '2580',
+      }),
+    ).rejects.toThrow('Incorrect password');
+
+    expect(update).not.toHaveBeenCalled();
   });
 });
