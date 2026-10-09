@@ -44,6 +44,8 @@ describe('IvorypayService', () => {
       mode: 'CHECKOUT',
       baseFiat: 'USD',
       crypto: 'USDC',
+      cryptocurrency: 'USDC',
+      network: 'POLYGON',
       chain: 'POLYGON',
       redirect_url: 'https://farmapp.africa/payment-callback',
       metadata: { user_id: 'user-1' },
@@ -60,7 +62,6 @@ describe('IvorypayService', () => {
         type: 'CRYPTO',
         mode: 'CHECKOUT',
         baseFiat: 'USD',
-        crypto: 'USDC',
         redirect_url: 'https://farmapp.africa/payment-callback',
         metadata: JSON.stringify({ user_id: 'user-1' }),
       }),
@@ -70,7 +71,11 @@ describe('IvorypayService', () => {
         }),
       }),
     );
-    expect(mockedAxios.post.mock.calls[0][1]).not.toHaveProperty('chain');
+    const requestBody = mockedAxios.post.mock.calls[0][1] as Record<string, unknown>;
+    expect(requestBody).not.toHaveProperty('crypto');
+    expect(requestBody).not.toHaveProperty('cryptocurrency');
+    expect(requestBody).not.toHaveProperty('chain');
+    expect(requestBody).not.toHaveProperty('network');
     expect(result.checkout_url).toBe(
       'https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000',
     );
