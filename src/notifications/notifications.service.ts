@@ -247,11 +247,21 @@ async updateSettings(userId: string, body: any) {
         },
       );
     } catch (error) {
+      const providerError = axios.isAxiosError(error)
+        ? error.response?.data
+        : undefined;
       const status = axios.isAxiosError(error)
         ? error.response?.status
         : undefined;
+      const providerCode =
+        providerError &&
+        typeof providerError === 'object' &&
+        typeof providerError.name === 'string' &&
+        /^[a-z_]+$/.test(providerError.name)
+          ? providerError.name
+          : undefined;
       this.logger.error(
-        `Transactional email API delivery failed${status ? ` (HTTP ${status})` : ''}`,
+        `Transactional email API delivery failed${status ? ` (HTTP ${status})` : ''}${providerCode ? ` (${providerCode})` : ''}`,
       );
       throw new Error(
         status

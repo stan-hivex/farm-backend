@@ -107,7 +107,21 @@ describe('NotificationsService.notifyTransfer', () => {
       const service = createService();
       jest
         .spyOn(axios, 'post')
-        .mockRejectedValue(new Error('provider returned private diagnostic'));
+        .mockRejectedValue(
+          Object.assign(new Error('provider returned private diagnostic'), {
+            isAxiosError: true,
+            response: {
+              status: 403,
+              data: {
+                name: 'validation_error',
+                message: 'example.com is not verified',
+              },
+            },
+          }),
+        );
+      const errorLog = jest
+        .spyOn((service as any).logger, 'error')
+        .mockImplementation();
 
       await expect(
         service.sendEmailOrThrow(
@@ -116,7 +130,15 @@ describe('NotificationsService.notifyTransfer', () => {
           '<p>Reset</p>',
           'Reset',
         ),
-      ).rejects.toThrow('Transactional email provider request failed');
+      ).rejects.toThrow(
+        'Transactional email provider rejected the request (HTTP 403)',
+      );
+      expect(errorLog).toHaveBeenCalledWith(
+        'Transactional email API delivery failed (HTTP 403) (validation_error)',
+      );
+      expect(errorLog).not.toHaveBeenCalledWith(
+        expect.stringContaining('example.com'),
+      );
     });
   });
 });
