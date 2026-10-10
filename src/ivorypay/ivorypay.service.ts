@@ -42,9 +42,7 @@ const SUPPORTED_NETWORKS_BY_TOKEN: Record<string, Record<string, string>> = {
 export class IvorypayService {
   private readonly logger = new Logger(IvorypayService.name);
   private readonly baseUrl: string;
-  private readonly checkoutSessionsUrl = 'https://api.joinpuul.com/api/v1';
   private readonly apiKey: string | undefined;
-  private readonly checkoutSessionsApiKey: string | undefined;
 
   constructor(private readonly cfg: ConfigService) {
     const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
@@ -54,9 +52,6 @@ export class IvorypayService {
       : `${normalizedBaseUrl}/api`;
     const configuredApiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
     this.apiKey = configuredApiKey?.trim() || undefined;
-    const configuredCheckoutApiKey = this.cfg.get<string>('PUUL_API_KEY');
-    this.checkoutSessionsApiKey =
-      configuredCheckoutApiKey?.trim() || this.apiKey;
   }
 
   private maskAddress(address: string | null | undefined): string {
@@ -373,93 +368,10 @@ export class IvorypayService {
     }
   }
 
-  async createCheckoutSession(options: {
-    amount: number;
-    fiatCurrency: string;
-  }) {
-    if (!this.checkoutSessionsApiKey) {
-      throw new ServiceUnavailableException('IvoryPay is not configured');
-    }
-
-    const supportedOptions = await this.getSupportedPaymentOptions();
-    const acceptedTokens = [
-      ...new Set(supportedOptions.map((option) => option.token)),
-    ];
-    const acceptedNetworks = [
-      ...new Set(supportedOptions.map((option) => option.network)),
-    ];
-    if (!acceptedTokens.length || !acceptedNetworks.length) {
-      throw new BadGatewayException(
-        'IvoryPay has no active crypto checkout options',
-      );
-    }
-
-    const requestBody = {
-      amount: options.amount,
-      fiatCurrency: options.fiatCurrency,
-      acceptedTokens,
-      acceptedNetworks,
-    };
-    const endpoint = `${this.checkoutSessionsUrl}/checkout/sessions`;
-
-    try {
-      const response = await axios.post(endpoint, requestBody, {
-        headers: {
-          Authorization: this.checkoutSessionsApiKey,
-          'Content-Type': 'application/json',
-        },
-      });
-      const rawData = response.data;
-      if (!rawData || rawData.success === false) {
-        throw new BadGatewayException(
-          rawData?.message || 'Puul checkout session creation failed',
-        );
-      }
-
-      const data = rawData.data ?? rawData;
-      const checkoutUrl = data.checkoutUrl ?? data.checkout_url;
-      if (typeof checkoutUrl !== 'string' || !checkoutUrl.trim()) {
-        throw new BadGatewayException(
-          'Puul did not return a hosted checkout URL',
-        );
-      }
-
-      return {
-        rawResponse: rawData,
-        data,
-        checkout_url: checkoutUrl,
-        payment_link: checkoutUrl,
-        providerReference: data.reference,
-      };
-    } catch (error: any) {
-      const message =
-        error.response?.data?.message ??
-        error.message ??
-        'Puul checkout session creation failed';
-      this.logger.error(
-        `IvoryPay Puul checkout session failed [${error.response?.status ?? 'unknown'}]: ${message}`,
-      );
-      if (error.response?.data) {
-        this.logger.debug(
-          `Puul checkout response: ${JSON.stringify(error.response.data)}`,
-        );
-      }
-      if (
-        error instanceof BadGatewayException ||
-        error instanceof ServiceUnavailableException
-      ) {
-        throw error;
-      }
-      throw new BadGatewayException(
-        `IvoryPay checkout session could not be created: ${message}`,
-      );
-    }
-  }
-
   async getSupportedPaymentOptions(): Promise<
     Array<{ token: string; network: string; networkName: string }>
   > {
-    if (!this.apiKey && !this.checkoutSessionsApiKey) {
+    if (!this.apiKey) {
       throw new ServiceUnavailableException('IvoryPay is not configured');
     }
 
@@ -468,7 +380,7 @@ export class IvorypayService {
         `${this.baseUrl}/v1/tokens/supported/network-tokens`,
         {
           headers: {
-            Authorization: this.apiKey ?? this.checkoutSessionsApiKey,
+            Authorization: this.apiKey,
             'Content-Type': 'application/json',
           },
         },
@@ -539,14 +451,14 @@ export class IvorypayService {
   }
 
   async verifyTransaction(reference: string, providerReference?: string, fallbackReferences: string[] = []) {
-    if (!this.apiKey && !this.checkoutSessionsApiKey) {
+    if (!this.apiKey) {
       this.logger.warn('IVORYPAY_API_KEY not configured, returning mock verify');
       return { status: 'completed', reference };
     }
 
     const rawCandidates = [
-      providerReference?.toString()?.trim(),
       reference,
+      providerReference?.toString()?.trim(),
       ...fallbackReferences.map((id) => id?.toString()?.trim()),
     ]
       .filter((id): id is string => !!id)
@@ -568,17 +480,8 @@ export class IvorypayService {
       }
 
       const verifyUrls = [
-        ...(this.checkoutSessionsApiKey
-          ? [
-              `${this.checkoutSessionsUrl}/checkout/sessions/${encodeURIComponent(lookupId)}`,
-            ]
-          : []),
-        ...(this.apiKey
-          ? [
-              `${this.baseUrl}/v1/business/transactions/${encodeURIComponent(lookupId)}/verify`,
-              `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupId)}/verify`,
-            ]
-          : []),
+        `${this.baseUrl}/v1/business/transactions/${encodeURIComponent(lookupId)}/verify`,
+        `${this.baseUrl}/v1/transactions/${encodeURIComponent(lookupId)}/verify`,
       ];
 
       for (const verifyUrl of verifyUrls) {
@@ -586,9 +489,7 @@ export class IvorypayService {
           this.logger.log(`Ivorypay: verifying transaction ${lookupId} (internal reference=${reference}) via ${verifyUrl}`);
           const response = await axios.get(verifyUrl, {
             headers: {
-              Authorization: verifyUrl.startsWith(this.checkoutSessionsUrl)
-                ? this.checkoutSessionsApiKey!
-                : this.apiKey!,
+              Authorization: `${this.apiKey}`,
               'Content-Type': 'application/json',
             },
           });
@@ -604,23 +505,16 @@ export class IvorypayService {
           }
 
           const verifiedData = response.data.data ?? response.data;
-          const status =
-            verifiedData?.paymentStatus ??
-            verifiedData?.payment?.status ??
-            verifiedData?.status ??
-            response.data?.status;
+          const status = verifiedData?.status ?? response.data?.status;
           if (!status) {
             this.logger.warn(`Ivorypay verify response for ${lookupReference} missing status field: ${JSON.stringify(response.data)}`);
             throw new BadRequestException('Ivorypay verification failed: missing status field');
           }
 
-          const normalizedStatus =
-            status.toString().toLowerCase() === 'paid' ? 'success' : status;
           const providerIdentifiers = this.extractProviderIdentifiers(verifiedData);
           verifiedData.providerIdentifiers = providerIdentifiers;
           verifiedData.providerReference = lookupReference;
           verifiedData.reference = verifiedData.reference ?? reference;
-          verifiedData.status = normalizedStatus;
 
           this.logger.log(
             `Ivorypay: verified transaction ${lookupReference} (internalReference=${reference}) status=${status} ` +

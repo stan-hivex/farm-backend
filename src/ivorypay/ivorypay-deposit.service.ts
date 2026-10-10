@@ -27,6 +27,40 @@ export class IvorypayDepositService {
       throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
     }
 
+    const requestedToken =
+      typeof dto.crypto === 'string' ? dto.crypto.trim().toUpperCase() : '';
+    const requestedNetwork =
+      typeof dto.chain === 'string' ? dto.chain.trim() : '';
+    if (!requestedToken) {
+      throw new BadRequestException(
+        'Choose a cryptocurrency before creating an IvoryPay deposit',
+      );
+    }
+
+    const options = await this.ivorypayService.getSupportedPaymentOptions();
+    const tokenOptions = options.filter(
+      (option) => option.token === requestedToken,
+    );
+    if (tokenOptions.length === 0) {
+      throw new BadRequestException(
+        'The selected crypto token is not enabled for IvoryPay',
+      );
+    }
+
+    let selectedNetwork:
+      | { token: string; network: string; networkName: string }
+      | undefined;
+    if (requestedNetwork) {
+      selectedNetwork = tokenOptions.find(
+        (option) => option.network === requestedNetwork,
+      );
+      if (!selectedNetwork) {
+        throw new BadRequestException(
+          'The selected crypto token and network are not enabled for IvoryPay',
+        );
+      }
+    }
+
     const reference = uuidv4();
     const deposit = await this.prisma.deposit.create({
       data: {
@@ -46,9 +80,30 @@ export class IvorypayDepositService {
     const amountUsd = Number((amount / 130).toFixed(2));
     let init: any;
     try {
-      init = await this.ivorypayService.createCheckoutSession({
+      init = await this.ivorypayService.createPayment({
         amount: amountUsd,
-        fiatCurrency: 'USD',
+        currency: 'USD',
+        reference,
+        email: dto.email || `${userId}@farm.app`,
+        description: `Farm deposit ${amount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
+        baseFiat: 'USD',
+        crypto: requestedToken,
+        ...(selectedNetwork && {
+          chain: selectedNetwork.network,
+        }),
+        redirect_url: 'https://farmapp.africa/payment-callback',
+        metadata: {
+          provider: 'ivorypay',
+          amount_farm: amount,
+          amount_usd: amountUsd,
+          currency_fiat: 'USD',
+          user_id: userId,
+          payment_method: 'CRYPTO',
+          crypto: requestedToken,
+          ...(selectedNetwork && {
+            chain: selectedNetwork.network,
+          }),
+        },
       });
     } catch (error) {
       await this.prisma.deposit.update({
@@ -89,8 +144,8 @@ export class IvorypayDepositService {
       success: true,
       data: {
         reference,
-        payment_url: init.data?.checkoutUrl || init.checkout_url,
-        authorization_url: init.data?.checkoutUrl || init.checkout_url,
+        payment_url: init.data?.payment_link || init.payment_link || init.checkout_url,
+        authorization_url: init.data?.payment_link || init.payment_link || init.checkout_url,
       },
       message: 'Crypto deposit initiated via IvoryPay',
     };
@@ -219,13 +274,8 @@ export class IvorypayDepositService {
       throw new BadRequestException('Signature verification required');
     }
 
-    const deposit =
-      (await this.prisma.deposit.findFirst({ where: { reference } })) ??
-      (await this.prisma.deposit.findFirst({ where: { providerRef: reference } }));
-    const internalReference = deposit?.reference ?? reference;
-    const transaction = await this.prisma.transactions.findUnique({
-      where: { transaction_reference: internalReference },
-    });
+    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
 
     if (!deposit || !transaction) {
       this.logger.warn(`IvoryPay webhook ignored: deposit/transaction not found for ${reference}`);
@@ -276,9 +326,7 @@ export class IvorypayDepositService {
     }
 
     const result = await this.prisma.$transaction(async (tx: any) => {
-      const currentDeposit = await tx.deposit.findFirst({
-        where: { reference: internalReference },
-      });
+      const currentDeposit = await tx.deposit.findFirst({ where: { reference } });
       if (!currentDeposit) {
         throw new BadRequestException('Deposit missing during IvoryPay processing');
       }

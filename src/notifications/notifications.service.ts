@@ -314,6 +314,17 @@ async updateSettings(userId: string, body: any) {
         notification: { title, body },
         data: payloadData,
         tokens,
+        android: {
+          priority: 'high',
+          notification: {
+            channelId: 'farm_notifications',
+            sound: 'default',
+          },
+        },
+        apns: {
+          headers: { 'apns-priority': '10' },
+          payload: { aps: { sound: 'default' } },
+        },
       };
       const resp = await messaging.sendEachForMulticast(payload as any);
       const invalidTokens = resp.responses

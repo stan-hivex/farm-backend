@@ -1,6 +1,71 @@
 import { NotificationsService } from './notifications.service';
 import axios from 'axios';
 
+describe('NotificationsService.sendNotification for support replies', () => {
+  it('stores the notification and sends a high-priority push', async () => {
+    const notification = { id: 'notification-1' };
+    const sendEachForMulticast = jest.fn().mockResolvedValue({
+      responses: [{ success: true }],
+      successCount: 1,
+      failureCount: 0,
+    });
+    const prisma = {
+      notifications: {
+        create: jest.fn().mockResolvedValue(notification),
+      },
+      device_tokens: {
+        findMany: jest.fn().mockResolvedValue([{ token: 'fcm-token' }]),
+        updateMany: jest.fn(),
+      },
+    };
+    const service = new NotificationsService(
+      prisma as any,
+      { get: jest.fn() } as any,
+      { messaging: { sendEachForMulticast } } as any,
+    );
+
+    await service.sendNotification('user-1', {
+      type: 'admin',
+      title: 'Support replied',
+      body: 'Support replied to your enquiry.',
+      entityId: 'ticket-1',
+      metadata: { category: 'support_reply', ticketId: 'ticket-1' },
+    });
+
+    expect(prisma.notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          user_id: 'user-1',
+          title: 'Support replied',
+        }),
+      }),
+    );
+    expect(sendEachForMulticast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokens: ['fcm-token'],
+        notification: {
+          title: 'Support replied',
+          body: 'Support replied to your enquiry.',
+        },
+        android: expect.objectContaining({
+          priority: 'high',
+          notification: expect.objectContaining({
+            channelId: 'farm_notifications',
+          }),
+        }),
+        apns: expect.objectContaining({
+          headers: { 'apns-priority': '10' },
+        }),
+        data: expect.objectContaining({
+          type: 'admin',
+          entityId: 'ticket-1',
+          notificationId: 'notification-1',
+        }),
+      }),
+    );
+  });
+});
+
 describe('NotificationsService.notifyTransfer', () => {
   it('builds a richer transfer-received notification with sender and balance details', async () => {
     const prisma = {
