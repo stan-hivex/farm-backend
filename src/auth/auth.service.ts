@@ -854,8 +854,9 @@ export class AuthService {
     if (!redis) {
       throw new Error('Password reset rate limiting is unavailable');
     }
+    const rateLimitKey = `password-reset:${requestId}`;
     const allowed = await redis.set(
-      `password-reset:${requestId}`,
+      rateLimitKey,
       '1',
       'EX',
       3 * 60,
@@ -865,29 +866,29 @@ export class AuthService {
       return genericResponse;
     }
 
-    const user = await this.prisma.users.findFirst({
-      where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
-      select: {
-        id: true,
-        email: true,
-        firebase_uid: true,
-        role: true,
-        is_active: true,
-        is_deleted: true,
-      },
-    });
-    const role = String(user?.role ?? '').toLowerCase();
-    if (
-      !user ||
-      !user.email ||
-      user.is_deleted ||
-      !user.is_active ||
-      !['user', 'admin', 'super_admin'].includes(role)
-    ) {
-      return genericResponse;
-    }
-
     try {
+      const user = await this.prisma.users.findFirst({
+        where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+        select: {
+          id: true,
+          email: true,
+          firebase_uid: true,
+          role: true,
+          is_active: true,
+          is_deleted: true,
+        },
+      });
+      const role = String(user?.role ?? '').toLowerCase();
+      if (
+        !user ||
+        !user.email ||
+        user.is_deleted ||
+        !user.is_active ||
+        !['user', 'admin', 'super_admin'].includes(role)
+      ) {
+        return genericResponse;
+      }
+
       const firebaseUid =
         user.firebase_uid || (await this.ensureFirebaseAccount(user.email));
       if (!user.firebase_uid) {
@@ -921,7 +922,16 @@ export class AuthService {
         this.buildPasswordResetEmail(escapedResetLink),
         `You requested a password reset for FARM.\n\nReset your password: ${resetLink}`,
       );
+      return genericResponse;
     } catch (error) {
+      try {
+        await redis.del(rateLimitKey);
+      } catch {
+        this.logger.warn(
+          'Could not release password-reset rate limit after request failure',
+        );
+      }
+
       if (
         error &&
         typeof error === 'object' &&
@@ -932,7 +942,6 @@ export class AuthService {
       }
       throw error;
     }
-    return genericResponse;
   }
 
   private buildPasswordResetEmail(resetLink: string): string {

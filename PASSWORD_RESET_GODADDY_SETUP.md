@@ -47,7 +47,8 @@ Port 465 uses implicit SSL/TLS. Make sure the mailbox permits SMTP relay.
 - Requests return the same success response whether an account exists or not.
 - Per-email requests are limited to one every three minutes using an atomic
   SHA-256-derived Redis key; endpoint rate limiting also applies. Redis is
-  already required by the backend deployment.
+  already required by the backend deployment. If lookup or delivery fails,
+  the per-email key is cleared so the user can retry immediately.
 - The backend stores no reset code or full email link and does not log email
   content. Firebase's generated action code is single-use and expires.
 - Rotate any SMTP password previously shared outside the credential manager

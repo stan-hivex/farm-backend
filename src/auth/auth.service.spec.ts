@@ -34,6 +34,7 @@ describe('AuthService', () => {
           useValue: {
             getClient: jest.fn(() => ({
               set: jest.fn().mockResolvedValue('OK'),
+              del: jest.fn().mockResolvedValue(1),
             })),
           },
         },
@@ -293,6 +294,36 @@ describe('AuthService', () => {
     expect(findUser).not.toHaveBeenCalled();
     expect(firebase.auth.generatePasswordResetLink).not.toHaveBeenCalled();
     expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('releases the email throttle when reset email delivery fails', async () => {
+    const prisma = module.get(PrismaService);
+    const redis = module.get(RedisService);
+    const notifications = module.get(NotificationsService);
+    const del = jest.fn().mockResolvedValue(1);
+    jest.spyOn(redis, 'getClient').mockReturnValue({
+      set: jest.fn().mockResolvedValue('OK'),
+      del,
+    } as any);
+    jest.spyOn(prisma.users, 'findFirst').mockResolvedValue({
+      id: 'user-1',
+      email: 'person@example.com',
+      firebase_uid: 'firebase-user-1',
+      is_active: true,
+      is_deleted: false,
+      role: 'user',
+    } as any);
+    const deliveryError = new Error('SMTP delivery failed');
+    jest
+      .spyOn(notifications, 'sendEmailOrThrow')
+      .mockRejectedValueOnce(deliveryError);
+
+    await expect(
+      service.sendPasswordResetLink('person@example.com'),
+    ).rejects.toBe(deliveryError);
+    expect(del).toHaveBeenCalledWith(
+      expect.stringMatching(/^password-reset:[a-f0-9]{64}$/),
+    );
   });
 
   it('fails explicitly if the shared rate limiter is unavailable', async () => {
