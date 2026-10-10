@@ -17,6 +17,7 @@ import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FirebaseService } from '../notifications/firebase.service';
+import { RedisService } from '../common/redis/redis.service';
 import { TurnstileService } from '../common/services/turnstile.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -51,6 +52,7 @@ export class AuthService {
     private notifications: NotificationsService,
     private turnstile: TurnstileService,
     private firebase: FirebaseService,
+    private redis: RedisService,
   ) {}
 
   // ── Register ────────────────────────────────────────────────────────────────
@@ -848,26 +850,16 @@ export class AuthService {
     const requestId = createHash('sha256')
       .update(normalizedEmail)
       .digest('hex');
-    const requestRef = this.firebase.firestore
-      .collection('passwordResetRequests')
-      .doc(requestId);
-    const allowed = await this.firebase.firestore.runTransaction(
-      async (transaction) => {
-        const request = await transaction.get(requestRef);
-        const lastRequestedAt = request.get('lastRequestedAt');
-        if (
-          lastRequestedAt &&
-          typeof lastRequestedAt.toMillis === 'function' &&
-          Date.now() - lastRequestedAt.toMillis() < 3 * 60 * 1000
-        ) {
-          return false;
-        }
-
-        transaction.set(requestRef, {
-          lastRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return true;
-      },
+    const redis = this.redis.getClient();
+    if (!redis) {
+      throw new Error('Password reset rate limiting is unavailable');
+    }
+    const allowed = await redis.set(
+      `password-reset:${requestId}`,
+      '1',
+      'EX',
+      3 * 60,
+      'NX',
     );
     if (!allowed) {
       return genericResponse;

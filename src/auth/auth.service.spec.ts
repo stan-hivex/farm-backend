@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TurnstileService } from '../common/services/turnstile.service';
 import { FirebaseService } from '../notifications/firebase.service';
+import { RedisService } from '../common/redis/redis.service';
 import * as bcrypt from 'bcrypt';
 
 describe('AuthService', () => {
@@ -29,6 +30,14 @@ describe('AuthService', () => {
         },
         { provide: TurnstileService, useValue: { verifyToken: jest.fn() } },
         {
+          provide: RedisService,
+          useValue: {
+            getClient: jest.fn(() => ({
+              set: jest.fn().mockResolvedValue('OK'),
+            })),
+          },
+        },
+        {
           provide: FirebaseService,
           useValue: {
             verifyIdToken: jest.fn(),
@@ -40,19 +49,6 @@ describe('AuthService', () => {
                 .mockResolvedValue(
                   'https://farmapp-e2145.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=secret-code',
                 ),
-            },
-            firestore: {
-              collection: jest.fn(() => ({
-                doc: jest.fn(() => ({})),
-              })),
-              runTransaction: jest.fn((callback) =>
-                callback({
-                  get: jest.fn().mockResolvedValue({
-                    get: jest.fn().mockReturnValue(undefined),
-                  }),
-                  set: jest.fn(),
-                }),
-              ),
             },
           },
         },
@@ -171,6 +167,7 @@ describe('AuthService', () => {
   it('sends a Firebase-generated reset link through the configured email service', async () => {
     const prisma = module.get(PrismaService);
     const firebase = module.get(FirebaseService);
+    const redis = module.get(RedisService);
     const notifications = module.get(NotificationsService);
     const config = module.get(ConfigService);
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue({
@@ -213,6 +210,14 @@ describe('AuthService', () => {
     );
     expect(notifications.sendEmailOrThrow.mock.calls[0][2]).toContain(
       'Or copy this link:',
+    );
+    const redisClient = (redis.getClient as jest.Mock).mock.results[0].value;
+    expect(redisClient.set).toHaveBeenCalledWith(
+      expect.stringMatching(/^password-reset:[a-f0-9]{64}$/),
+      '1',
+      'EX',
+      180,
+      'NX',
     );
   });
 
@@ -265,28 +270,38 @@ describe('AuthService', () => {
   it('throttles reset requests for the same normalized email', async () => {
     const prisma = module.get(PrismaService);
     const firebase = module.get(FirebaseService);
+    const redis = module.get(RedisService);
     const notifications = module.get(NotificationsService);
     const findUser = jest.spyOn(prisma.users, 'findFirst');
-    const runTransaction = firebase.firestore.runTransaction as jest.Mock;
-    runTransaction.mockImplementationOnce((callback) =>
-      callback({
-        get: jest.fn().mockResolvedValue({
-          get: jest.fn().mockReturnValue({
-            toMillis: () => Date.now() - 60_000,
-          }),
-        }),
-        set: jest.fn(),
-      }),
-    );
+    const set = jest.fn().mockResolvedValue(null);
+    jest.spyOn(redis, 'getClient').mockReturnValue({
+      set,
+    } as any);
 
     await expect(
       service.sendPasswordResetLink(' Person@Example.com '),
     ).resolves.toEqual({
       message: 'If an account exists, we have sent a reset link',
     });
+    expect(set).toHaveBeenCalledWith(
+      expect.stringMatching(/^password-reset:[a-f0-9]{64}$/),
+      '1',
+      'EX',
+      180,
+      'NX',
+    );
     expect(findUser).not.toHaveBeenCalled();
     expect(firebase.auth.generatePasswordResetLink).not.toHaveBeenCalled();
     expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('fails explicitly if the shared rate limiter is unavailable', async () => {
+    const redis = module.get(RedisService);
+    jest.spyOn(redis, 'getClient').mockReturnValue(null);
+
+    await expect(
+      service.sendPasswordResetLink('person@example.com'),
+    ).rejects.toThrow('Password reset rate limiting is unavailable');
   });
 
   it('synchronizes a reset regular-user password and revokes existing sessions', async () => {
