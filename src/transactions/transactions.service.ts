@@ -246,6 +246,7 @@ export class TransactionsService {
               method: true,
               cryptoAsset: true,
               network: true,
+              fee: true,
               settlement: true,
               status: true,
               rejectionReason: true,
@@ -288,8 +289,8 @@ export class TransactionsService {
         ),
         original_description: txn.description,
         amount: Number(txn.amount),
-        fee: Number(txn.fee),
-        net_amount: Number(txn.net_amount),
+        fee: Number(withdrawal?.fee ?? txn.fee),
+        net_amount: Number(withdrawal?.settlement ?? txn.net_amount),
         amount_farm:
           metadata.amount_farm ??
           (txn.currency === 'FARM' ? Number(txn.amount) : null),

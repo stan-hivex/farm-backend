@@ -13,7 +13,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as admin from 'firebase-admin';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FirebaseService } from '../notifications/firebase.service';
@@ -824,27 +824,7 @@ export class AuthService {
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
     }
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await this.prisma.users.findFirst({
-      where: {
-        email: { equals: normalizedEmail, mode: 'insensitive' },
-      },
-      select: { id: true, firebase_uid: true, email: true, is_deleted: true },
-    });
-    if (user && !user.is_deleted && user.email) {
-      const firebaseUid =
-        user.firebase_uid || (await this.ensureFirebaseAccount(user.email));
-      if (!user.firebase_uid) {
-        await this.prisma.users.update({
-          where: { id: user.id },
-          data: { firebase_uid: firebaseUid },
-        });
-      }
-    }
-    return {
-      message:
-        'If an account exists for this email, a password reset link has been sent.',
-    };
+    return this.sendPasswordResetLink(email);
   }
 
   async resetPassword(dto: ResetPasswordDto) {
@@ -855,6 +835,44 @@ export class AuthService {
 
   async sendPasswordResetLink(email: string) {
     const normalizedEmail = email.trim().toLowerCase();
+    if (
+      normalizedEmail.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+    ) {
+      throw new BadRequestException('Enter a valid email address');
+    }
+
+    const genericResponse = {
+      message: 'If an account exists, we have sent a reset link',
+    };
+    const requestId = createHash('sha256')
+      .update(normalizedEmail)
+      .digest('hex');
+    const requestRef = this.firebase.firestore
+      .collection('passwordResetRequests')
+      .doc(requestId);
+    const allowed = await this.firebase.firestore.runTransaction(
+      async (transaction) => {
+        const request = await transaction.get(requestRef);
+        const lastRequestedAt = request.get('lastRequestedAt');
+        if (
+          lastRequestedAt &&
+          typeof lastRequestedAt.toMillis === 'function' &&
+          Date.now() - lastRequestedAt.toMillis() < 3 * 60 * 1000
+        ) {
+          return false;
+        }
+
+        transaction.set(requestRef, {
+          lastRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return true;
+      },
+    );
+    if (!allowed) {
+      return genericResponse;
+    }
+
     const user = await this.prisma.users.findFirst({
       where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
       select: {
@@ -874,24 +892,75 @@ export class AuthService {
       !user.is_active ||
       !['user', 'admin', 'super_admin'].includes(role)
     ) {
-      return {
-        message:
-          'If an active account exists for this email, a reset link has been sent.',
-      };
+      return genericResponse;
     }
 
-    const firebaseUid =
-      user.firebase_uid || (await this.ensureFirebaseAccount(user.email));
-    if (!user.firebase_uid) {
-      await this.prisma.users.update({
-        where: { id: user.id },
-        data: { firebase_uid: firebaseUid },
-      });
+    try {
+      const firebaseUid =
+        user.firebase_uid || (await this.ensureFirebaseAccount(user.email));
+      if (!user.firebase_uid) {
+        await this.prisma.users.update({
+          where: { id: user.id },
+          data: { firebase_uid: firebaseUid },
+        });
+      }
+
+      const continueUrl =
+        this.cfg.get<string>('FIREBASE_PASSWORD_RESET_CONTINUE_URL') ||
+        'https://farmapp-e2145.firebaseapp.com/admin-reset-password';
+      const resetLink =
+        await this.firebase.auth.generatePasswordResetLink(user.email, {
+          url: continueUrl,
+          handleCodeInApp: true,
+          android: {
+            packageName: 'farmapp.africa',
+            installApp: true,
+          },
+          iOS: { bundleId: 'com.mycompany.farm' },
+        });
+      const escapedResetLink = resetLink
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      await this.notifications.sendEmailOrThrow(
+        user.email,
+        'Reset your FARM password',
+        this.buildPasswordResetEmail(escapedResetLink),
+        `You requested a password reset for FARM.\n\nReset your password: ${resetLink}`,
+      );
+    } catch (error) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'auth/user-not-found'
+      ) {
+        return genericResponse;
+      }
+      throw error;
     }
-    return {
-      message:
-        'If an active account exists for this email, a reset link has been sent.',
-    };
+    return genericResponse;
+  }
+
+  private buildPasswordResetEmail(resetLink: string): string {
+    return `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+  <body style="margin:0;padding:32px 16px;background:#f4f4f4;color:#111;font-family:Arial,Helvetica,sans-serif">
+    <table role="presentation" style="width:100%;max-width:560px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:8px">
+      <tr><td style="padding:32px">
+        <div style="font-size:22px;font-weight:700;letter-spacing:2px">FARM</div>
+        <div style="height:3px;width:44px;margin:14px 0 26px;background:#111"></div>
+        <h1 style="font-size:22px;margin:0 0 16px">Reset your password</h1>
+        <p style="font-size:15px;line-height:1.6;margin:0 0 22px">You requested a password reset for FARM. Use the button below to choose a new password.</p>
+        <a href="${resetLink}" style="display:inline-block;padding:13px 22px;background:#111;color:#fff;text-decoration:none;border-radius:4px;font-size:15px;font-weight:700">Reset Password</a>
+        <p style="font-size:12px;line-height:1.6;color:#555;margin:26px 0 6px">If you did not request this change, you can ignore this email.</p>
+        <p style="font-size:12px;line-height:1.6;color:#555;margin:0">Or copy this link: <a href="${resetLink}" style="color:#111;word-break:break-all">${resetLink}</a></p>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
   }
 
   async completePasswordReset(dto: AdminPasswordResetCompleteDto) {

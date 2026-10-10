@@ -215,7 +215,7 @@ export class AuthController {
       generateKey: authThrottleKey,
     },
   })
-  @ApiOperation({ summary: 'Send password reset OTP to email' })
+  @ApiOperation({ summary: 'Request a password reset link by email' })
   forgotPassword(
     @Body() dto: ForgotPasswordDto,
     @Req() req: Request,
@@ -233,8 +233,23 @@ export class AuthController {
       generateKey: authThrottleKey,
     },
   })
-  @ApiOperation({ summary: 'Prepare an active account for Firebase password reset' })
+  @ApiOperation({ summary: 'Send a password reset link by email' })
   sendPasswordResetLink(@Body() dto: ForgotPasswordDto) {
+    return this.authService.sendPasswordResetLink(dto.email);
+  }
+
+  @Public()
+  @Post('request-password-reset')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 5,
+      ttl: 300,
+      generateKey: authThrottleKey,
+    },
+  })
+  @ApiOperation({ summary: 'Send a password reset link by email' })
+  requestPasswordReset(@Body() dto: ForgotPasswordDto) {
     return this.authService.sendPasswordResetLink(dto.email);
   }
 

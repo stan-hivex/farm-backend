@@ -223,4 +223,70 @@ describe('TransactionsService', () => {
       deposit_verification_attempts: 1,
     });
   });
+
+  it('returns the persisted withdrawal fee and settlement for a transaction receipt', async () => {
+    const transaction = {
+      id: 'tx-withdrawal',
+      transaction_reference: 'withdrawal-reference',
+      sender_wallet_id: 'wallet-current',
+      receiver_wallet_id: null,
+      transaction_type: 'withdrawal',
+      status: 'completed',
+      amount: 100,
+      fee: 1.5,
+      net_amount: 98.5,
+      currency: 'FARM',
+      description: 'Withdrawal',
+      metadata: {},
+      wallets_transactions_sender_wallet_idTowallets: null,
+      wallets_transactions_receiver_wallet_idTowallets: null,
+    };
+    const withdrawalFindUnique = jest.fn().mockResolvedValue({
+      method: 'MPESA',
+      cryptoAsset: null,
+      network: null,
+      fee: 1.5,
+      settlement: 98.5,
+      status: 'COMPLETED',
+      rejectionReason: null,
+    });
+    const prisma = {
+      wallets: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'wallet-current' }),
+      },
+      transactions: {
+        findFirst: jest.fn().mockResolvedValue(transaction),
+      },
+      withdrawal: { findUnique: withdrawalFindUnique },
+      merchants: { findUnique: jest.fn() },
+    };
+    const detailedService = new TransactionsService(
+      prisma as any,
+      { cacheGet: jest.fn(), cacheSet: jest.fn() } as any,
+    );
+
+    const result = await detailedService.findOne(
+      'user-1',
+      'withdrawal-reference',
+    );
+
+    expect(withdrawalFindUnique).toHaveBeenCalledWith({
+      where: { reference: 'withdrawal-reference' },
+      select: {
+        method: true,
+        cryptoAsset: true,
+        network: true,
+        fee: true,
+        settlement: true,
+        status: true,
+        rejectionReason: true,
+      },
+    });
+    expect(result.data).toMatchObject({
+      fee: 1.5,
+      net_amount: 98.5,
+      settlement_amount: 98.5,
+      withdrawal_status: 'COMPLETED',
+    });
+  });
 });

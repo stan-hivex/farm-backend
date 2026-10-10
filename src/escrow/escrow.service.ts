@@ -1,12 +1,19 @@
 import {
-  Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger,
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { generateEscrowReference, generateTxReference } from '../common/utils/reference.util';
+import {
+  generateEscrowReference,
+  generateTxReference,
+} from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 
@@ -45,9 +52,13 @@ export class EscrowService {
     return superadmin.wallets[0];
   }
 
-  private async creditSuperadminWalletInTx(tx: any, amount: number, description: string) {
+  private async creditSuperadminWalletInTx(
+    tx: any,
+    amount: number,
+    description: string,
+  ) {
     if (amount <= 0) return;
-    
+
     const wallet = await this.getSuperadminWalletInTx(tx);
     await tx.wallets.update({
       where: { id: wallet.id },
@@ -64,30 +75,57 @@ export class EscrowService {
     });
   }
 
-  async create(buyerId: string, dto: {
-    seller_identifier: string; amount: number; title: string;
-    description?: string; auto_release_days?: number; pin?: string; biometric_auth?: boolean; device_fingerprint?: string;
-  }) {
+  async create(
+    buyerId: string,
+    dto: {
+      seller_identifier: string;
+      amount: number;
+      title: string;
+      description?: string;
+      auto_release_days?: number;
+      pin?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
+    },
+  ) {
     if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
       throw new BadRequestException('Amount must be a positive number');
     }
     const sellerIdentifier = dto.seller_identifier?.trim();
     const title = dto.title?.trim();
-    if (!sellerIdentifier) throw new BadRequestException('Seller username or phone number is required');
+    if (!sellerIdentifier)
+      throw new BadRequestException(
+        'Seller username or phone number is required',
+      );
     if (!title) throw new BadRequestException('Escrow title is required');
-    if (title.length > 255) throw new BadRequestException('Escrow title must be 255 characters or fewer');
-    if (dto.auto_release_days != null && (dto.auto_release_days < 1 || dto.auto_release_days > 90)) {
-      throw new BadRequestException('Auto-release must be between 1 and 90 days');
+    if (title.length > 255)
+      throw new BadRequestException(
+        'Escrow title must be 255 characters or fewer',
+      );
+    if (
+      dto.auto_release_days != null &&
+      (dto.auto_release_days < 1 || dto.auto_release_days > 90)
+    ) {
+      throw new BadRequestException(
+        'Auto-release must be between 1 and 90 days',
+      );
     }
 
     if (dto.biometric_auth) {
-      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
-      const verified = await this.securityService.verifyDevice(buyerId, dto.device_fingerprint);
+      if (!dto.device_fingerprint)
+        throw new BadRequestException(
+          'Device fingerprint required for biometric authorization',
+        );
+      const verified = await this.securityService.verifyDevice(
+        buyerId,
+        dto.device_fingerprint,
+      );
       if (!verified || (verified as any).trusted !== true) {
         throw new BadRequestException('Biometric device verification failed');
       }
     } else {
-      if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
+      if (!dto.pin)
+        throw new BadRequestException('Transaction PIN is required');
       await this.authService.verifyPin(buyerId, dto.pin);
     }
 
@@ -95,9 +133,12 @@ export class EscrowService {
       where: { id: buyerId },
       include: { wallets: { where: { is_active: true }, take: 1 } },
     });
-    if (!buyer?.wallets[0]) throw new NotFoundException('Buyer wallet not found');
+    if (!buyer?.wallets[0])
+      throw new NotFoundException('Buyer wallet not found');
     if (buyer.wallets[0].is_frozen) {
-      throw new BadRequestException('Buyer wallet is frozen and cannot fund an escrow');
+      throw new BadRequestException(
+        'Buyer wallet is frozen and cannot fund an escrow',
+      );
     }
 
     const seller = await this.prisma.users.findFirst({
@@ -108,7 +149,8 @@ export class EscrowService {
       include: { wallets: { where: { is_active: true }, take: 1 } },
     });
     if (!seller?.wallets[0]) throw new NotFoundException('Seller not found');
-    if (seller.id === buyerId) throw new BadRequestException('Cannot create escrow with yourself');
+    if (seller.id === buyerId)
+      throw new BadRequestException('Cannot create escrow with yourself');
 
     const oneMinuteAgo = new Date(Date.now() - 60_000);
     const recentDuplicate = await this.prisma.escrow_contracts.findFirst({
@@ -120,14 +162,20 @@ export class EscrowService {
       },
     });
     if (recentDuplicate) {
-      throw new BadRequestException('You can only create one escrow with the same seller and amount once every minute');
+      throw new BadRequestException(
+        'You can only create one escrow with the same seller and amount once every minute',
+      );
     }
 
     const fee = Number((dto.amount * 0.015).toFixed(2)); // fixed 1.5% escrow creation fee
     const totalRequired = dto.amount + fee;
-    const available = Number(buyer.wallets[0].balance) - Number(buyer.wallets[0].locked_balance);
+    const available =
+      Number(buyer.wallets[0].balance) -
+      Number(buyer.wallets[0].locked_balance);
     if (available < totalRequired)
-      throw new BadRequestException(`Insufficient balance. Need ${totalRequired} FARM`);
+      throw new BadRequestException(
+        `Insufficient balance. Need ${totalRequired} FARM`,
+      );
 
     const auto_release_at = new Date(
       Date.now() + (dto.auto_release_days || 7) * 86400_000,
@@ -141,9 +189,12 @@ export class EscrowService {
       if (!lockedWallet) throw new NotFoundException('Buyer wallet not found');
 
       const currentAvailable =
-        Number(lockedWallet.balance ?? 0) - Number(lockedWallet.locked_balance ?? 0);
+        Number(lockedWallet.balance ?? 0) -
+        Number(lockedWallet.locked_balance ?? 0);
       if (currentAvailable < totalRequired) {
-        throw new BadRequestException(`Insufficient balance. Need ${totalRequired} FARM`);
+        throw new BadRequestException(
+          `Insufficient balance. Need ${totalRequired} FARM`,
+        );
       }
 
       const c = await tx.escrow_contracts.create({
@@ -209,7 +260,9 @@ export class EscrowService {
         status: 'SUCCESS',
       });
     } catch (error) {
-      this.logger.warn(`Escrow creation realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Escrow creation realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     await Promise.all([
@@ -238,29 +291,51 @@ export class EscrowService {
     ]).catch((error) => this.logger.error('Escrow notification failed', error));
 
     return {
-      data: { ...contract, amount: Number(contract.amount), fee: Number(contract.fee) },
+      data: {
+        ...contract,
+        amount: Number(contract.amount),
+        fee: Number(contract.fee),
+      },
       message: 'Escrow created and funded',
     };
   }
 
-  async release(escrowId: string, buyerId: string, dto?: { pin?: string; biometric_auth?: boolean; device_fingerprint?: string }) {
+  async release(
+    escrowId: string,
+    buyerId: string,
+    dto?: {
+      pin?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
+    },
+  ) {
     const escrow = await this.getEscrowOrFail(escrowId);
-    if (escrow.buyer_id !== buyerId) throw new ForbiddenException('Only the buyer can release');
+    if (escrow.buyer_id !== buyerId)
+      throw new ForbiddenException('Only the buyer can release');
     if (escrow.status === 'completed') {
       return { message: 'Escrow has already been released' };
     }
     if (escrow.status !== 'active') {
-      throw new BadRequestException(`Cannot release escrow with status: ${escrow.status}`);
+      throw new BadRequestException(
+        `Cannot release escrow with status: ${escrow.status}`,
+      );
     }
 
     if (dto?.biometric_auth) {
-      if (!dto.device_fingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
-      const verified = await this.securityService.verifyDevice(buyerId, dto.device_fingerprint);
+      if (!dto.device_fingerprint)
+        throw new BadRequestException(
+          'Device fingerprint required for biometric authorization',
+        );
+      const verified = await this.securityService.verifyDevice(
+        buyerId,
+        dto.device_fingerprint,
+      );
       if (!verified || (verified as any).trusted !== true) {
         throw new BadRequestException('Biometric device verification failed');
       }
     } else {
-      if (!dto?.pin) throw new BadRequestException('Transaction PIN is required');
+      if (!dto?.pin)
+        throw new BadRequestException('Transaction PIN is required');
       await this.authService.verifyPin(buyerId, dto.pin);
     }
 
@@ -269,7 +344,10 @@ export class EscrowService {
     } catch (error) {
       if (error instanceof BadRequestException) {
         const latestEscrow = await this.getEscrowOrFail(escrowId);
-        if (latestEscrow.buyer_id === buyerId && latestEscrow.status === 'completed') {
+        if (
+          latestEscrow.buyer_id === buyerId &&
+          latestEscrow.status === 'completed'
+        ) {
           return { message: 'Escrow has already been released' };
         }
       }
@@ -284,7 +362,8 @@ export class EscrowService {
       throw new ForbiddenException('Not a party to this escrow');
     if (escrow.status !== 'active')
       throw new BadRequestException('Can only dispute an active escrow');
-    const otherPartyId = escrow.buyer_id === userId ? escrow.seller_id : escrow.buyer_id;
+    const otherPartyId =
+      escrow.buyer_id === userId ? escrow.seller_id : escrow.buyer_id;
     await this.prisma.escrow_contracts.update({
       where: { id: escrowId },
       data: {
@@ -294,9 +373,14 @@ export class EscrowService {
       },
     });
     await this.prisma.escrow_messages.create({
-      data: { escrow_id: escrowId, sender_id: userId, message: `DISPUTE RAISED: ${dto.reason}` },
+      data: {
+        escrow_id: escrowId,
+        sender_id: userId,
+        message: `DISPUTE RAISED: ${dto.reason}`,
+      },
     });
-    if (!otherPartyId) throw new BadRequestException('Escrow has no other party');
+    if (!otherPartyId)
+      throw new BadRequestException('Escrow has no other party');
 
     await Promise.all([
       this.notificationsService.sendNotification(userId, {
@@ -321,35 +405,48 @@ export class EscrowService {
           amount: Number(escrow.amount),
         },
       }),
-    ]).catch((error) => this.logger.error('Escrow dispute notification failed', error));
+    ]).catch((error) =>
+      this.logger.error('Escrow dispute notification failed', error),
+    );
 
     return { message: 'Dispute raised. Admin will review within 24 hours.' };
   }
 
   async cancel(escrowId: string, userId: string) {
     const escrow = await this.getEscrowOrFail(escrowId);
-    if (escrow.buyer_id !== userId) throw new ForbiddenException('Only buyer can cancel');
+    if (escrow.buyer_id !== userId)
+      throw new ForbiddenException('Only buyer can cancel');
     if (escrow.status === 'active')
-      throw new BadRequestException('Cannot cancel a funded escrow. Raise a dispute instead.');
+      throw new BadRequestException(
+        'Cannot cancel a funded escrow. Raise a dispute instead.',
+      );
     if (escrow.status !== 'pending')
-      throw new BadRequestException(`Cannot cancel escrow with status: ${escrow.status}`);
+      throw new BadRequestException(
+        `Cannot cancel escrow with status: ${escrow.status}`,
+      );
     await this.prisma.escrow_contracts.update({
-      where: { id: escrowId }, data: { status: 'cancelled' },
+      where: { id: escrowId },
+      data: { status: 'cancelled' },
     });
-    if (!escrow.seller_id) throw new BadRequestException('Escrow has no seller');
+    if (!escrow.seller_id)
+      throw new BadRequestException('Escrow has no seller');
 
-    await this.notificationsService.sendNotification(escrow.seller_id, {
-      type: 'escrow_cancelled',
-      entityId: escrow.id,
-      title: 'Escrow Cancelled',
-      body: `The escrow for ${escrow.title} has been cancelled by the buyer.`,
-      metadata: {
-        escrow_id: escrow.id,
-        title: escrow.title,
-        amount: Number(escrow.amount),
-        cancelled_by: userId,
-      },
-    }).catch((error) => this.logger.error('Escrow cancellation notification failed', error));
+    await this.notificationsService
+      .sendNotification(escrow.seller_id, {
+        type: 'escrow_cancelled',
+        entityId: escrow.id,
+        title: 'Escrow Cancelled',
+        body: `The escrow for ${escrow.title} has been cancelled by the buyer.`,
+        metadata: {
+          escrow_id: escrow.id,
+          title: escrow.title,
+          amount: Number(escrow.amount),
+          cancelled_by: userId,
+        },
+      })
+      .catch((error) =>
+        this.logger.error('Escrow cancellation notification failed', error),
+      );
 
     return { message: 'Escrow cancelled' };
   }
@@ -365,7 +462,10 @@ export class EscrowService {
   }
 
   async list(userId: string, query: any) {
-    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const { skip, take, page, limit } = paginationParams(
+      query.page,
+      query.limit,
+    );
     const where: any = { OR: [{ buyer_id: userId }, { seller_id: userId }] };
     if (query.status) where.status = query.status;
     const [items, total] = await Promise.all([
@@ -383,7 +483,11 @@ export class EscrowService {
       this.prisma.escrow_contracts.count({ where }),
     ]);
     return {
-      data: items.map((e) => ({ ...e, amount: Number(e.amount), fee: Number(e.fee) })),
+      data: items.map((e) => ({
+        ...e,
+        amount: Number(e.amount),
+        fee: Number(e.fee),
+      })),
       meta: paginate(total, page, limit),
     };
   }
@@ -393,14 +497,37 @@ export class EscrowService {
       where: { id: escrowId },
       include: {
         escrow_messages: { orderBy: { created_at: 'asc' } },
-        users_escrow_contracts_buyer_idTousers: { select: { username: true, first_name: true } },
-        users_escrow_contracts_seller_idTousers: { select: { username: true, first_name: true } },
+        users_escrow_contracts_buyer_idTousers: {
+          select: { username: true, first_name: true },
+        },
+        users_escrow_contracts_seller_idTousers: {
+          select: { username: true, first_name: true },
+        },
       },
     });
     if (!escrow) throw new NotFoundException('Escrow not found');
     if (escrow.buyer_id !== userId && escrow.seller_id !== userId)
       throw new ForbiddenException('Access denied');
-    return { data: { ...escrow, amount: Number(escrow.amount), fee: Number(escrow.fee) } };
+    const releaseTransaction = await this.prisma.transactions.findFirst({
+      where: {
+        transaction_type: 'escrow_release',
+        metadata: { path: ['escrow_id'], equals: escrowId } as any,
+      },
+      select: { fee: true, transaction_reference: true },
+    });
+    return {
+      data: {
+        ...escrow,
+        amount: Number(escrow.amount),
+        fee: Number(escrow.fee),
+        release_fee:
+          releaseTransaction == null
+            ? null
+            : Number(releaseTransaction.fee ?? 0),
+        release_transaction_reference:
+          releaseTransaction?.transaction_reference ?? null,
+      },
+    };
   }
 
   async processAutoReleases() {
@@ -409,8 +536,12 @@ export class EscrowService {
     });
     let released = 0;
     for (const escrow of expired) {
-      try { await this.executeRelease(escrow); released++; }
-      catch (e) { this.logger.error(`Auto-release failed for ${escrow.id}: ${e}`); }
+      try {
+        await this.executeRelease(escrow);
+        released++;
+      } catch (e) {
+        this.logger.error(`Auto-release failed for ${escrow.id}: ${e}`);
+      }
     }
     if (released) this.logger.log(`Auto-released ${released} escrow(s)`);
     return released;
@@ -421,7 +552,9 @@ export class EscrowService {
     resolution?: { adminId: string; note: string },
   ) {
     if (!escrow.buyer_wallet_id || !escrow.seller_wallet_id) {
-      throw new BadRequestException('Escrow is missing a buyer or seller wallet');
+      throw new BadRequestException(
+        'Escrow is missing a buyer or seller wallet',
+      );
     }
     if (!Number.isFinite(Number(escrow.amount)) || Number(escrow.amount) <= 0) {
       throw new BadRequestException('Escrow amount is invalid');
@@ -451,13 +584,18 @@ export class EscrowService {
       });
       if (transitioned.count !== 1) {
         throw new BadRequestException(
-          resolution ? 'Escrow is no longer disputed' : 'Escrow is no longer active',
+          resolution
+            ? 'Escrow is no longer disputed'
+            : 'Escrow is no longer active',
         );
       }
       // Deduct only the locked escrow amount from buyer's wallet. The creation fee was already charged at escrow creation.
       const updatedBuyerWallet = await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
-        data: { locked_balance: { decrement: amountLocked }, balance: { decrement: amountLocked } },
+        data: {
+          locked_balance: { decrement: amountLocked },
+          balance: { decrement: amountLocked },
+        },
       });
       // Credit seller's wallet with amount minus release fee
       const updatedSellerWallet = await tx.wallets.update({
@@ -482,13 +620,17 @@ export class EscrowService {
       await tx.ledger_entries.createMany({
         data: [
           {
-            transaction_id: txn.id, wallet_id: escrow.buyer_wallet_id,
-            entry_type: 'debit', amount: amountLocked,
+            transaction_id: txn.id,
+            wallet_id: escrow.buyer_wallet_id,
+            entry_type: 'debit',
+            amount: amountLocked,
             description: `Escrow release ${escrow.reference_code}`,
           },
           {
-            transaction_id: txn.id, wallet_id: escrow.seller_wallet_id,
-            entry_type: 'credit', amount: amountToSeller,
+            transaction_id: txn.id,
+            wallet_id: escrow.seller_wallet_id,
+            entry_type: 'credit',
+            amount: amountToSeller,
             description: `Escrow release ${escrow.reference_code} (after 1.5% fee)`,
           },
         ],
@@ -520,7 +662,9 @@ export class EscrowService {
         status: 'SUCCESS',
       });
     } catch (error) {
-      this.logger.warn(`Escrow release realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Escrow release realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     const buyerResolutionMessage = resolution
@@ -533,7 +677,8 @@ export class EscrowService {
       this.notificationsService.sendNotification(escrow.buyer_id, {
         type: 'escrow_released',
         title: 'Escrow released',
-        body: buyerResolutionMessage ??
+        body:
+          buyerResolutionMessage ??
           `Your escrow for ${escrow.title} was released and ${amountToSeller} FARM was paid to the seller.`,
         entityId: escrow.id,
         metadata: {
@@ -547,7 +692,8 @@ export class EscrowService {
       this.notificationsService.sendNotification(escrow.seller_id, {
         type: 'escrow_received',
         title: 'Escrow payment released',
-        body: sellerResolutionMessage ??
+        body:
+          sellerResolutionMessage ??
           `Escrow for ${escrow.title} was released and ${amountToSeller} FARM credited to your wallet.`,
         entityId: escrow.id,
         metadata: {
@@ -558,7 +704,9 @@ export class EscrowService {
           ...(resolution ? { resolution_note: resolution.note } : {}),
         },
       }),
-    ]).catch((error) => this.logger.error('Escrow release notification failed', error));
+    ]).catch((error) =>
+      this.logger.error('Escrow release notification failed', error),
+    );
   }
 
   async executeRefund(
@@ -586,7 +734,9 @@ export class EscrowService {
       });
       if (transitioned.count !== 1) {
         throw new BadRequestException(
-          resolution ? 'Escrow is no longer disputed' : 'Escrow is no longer active',
+          resolution
+            ? 'Escrow is no longer disputed'
+            : 'Escrow is no longer active',
         );
       }
       const updatedWallet = await tx.wallets.update({
@@ -620,7 +770,9 @@ export class EscrowService {
         status: 'SUCCESS',
       });
     } catch (error) {
-      this.logger.warn(`Escrow refund realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Escrow refund realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     const resolutionText = resolution

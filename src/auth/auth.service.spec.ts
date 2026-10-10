@@ -35,7 +35,24 @@ describe('AuthService', () => {
             auth: {
               getUserByEmail: jest.fn(),
               createUser: jest.fn(),
-              generatePasswordResetLink: jest.fn(),
+              generatePasswordResetLink: jest
+                .fn()
+                .mockResolvedValue(
+                  'https://farmapp-e2145.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=secret-code',
+                ),
+            },
+            firestore: {
+              collection: jest.fn(() => ({
+                doc: jest.fn(() => ({})),
+              })),
+              runTransaction: jest.fn((callback) =>
+                callback({
+                  get: jest.fn().mockResolvedValue({
+                    get: jest.fn().mockReturnValue(undefined),
+                  }),
+                  set: jest.fn(),
+                }),
+              ),
             },
           },
         },
@@ -151,10 +168,11 @@ describe('AuthService', () => {
     ).resolves.toEqual({ message: 'OTP delivery started' });
   });
 
-  it('prepares an active regular user for Firebase password reset delivery', async () => {
+  it('sends a Firebase-generated reset link through the configured email service', async () => {
     const prisma = module.get(PrismaService);
     const firebase = module.get(FirebaseService);
     const notifications = module.get(NotificationsService);
+    const config = module.get(ConfigService);
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue({
       id: 'user-1',
       email: 'person@example.com',
@@ -163,18 +181,43 @@ describe('AuthService', () => {
       is_deleted: false,
       role: 'user',
     } as any);
+    jest
+      .spyOn(config, 'get')
+      .mockImplementation((key: string) =>
+        key === 'FIREBASE_PASSWORD_RESET_CONTINUE_URL'
+          ? 'https://farmapp-e2145.firebaseapp.com/admin-reset-password'
+          : undefined,
+      );
 
     await expect(
       service.sendPasswordResetLink('PERSON@example.com'),
     ).resolves.toEqual({
-      message:
-        'If an active account exists for this email, a reset link has been sent.',
+      message: 'If an account exists, we have sent a reset link',
     });
-    expect(firebase.auth.generatePasswordResetLink).not.toHaveBeenCalled();
-    expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
+    expect(firebase.auth.generatePasswordResetLink).toHaveBeenCalledWith(
+      'person@example.com',
+      {
+        url: 'https://farmapp-e2145.firebaseapp.com/admin-reset-password',
+        handleCodeInApp: true,
+        android: { packageName: 'farmapp.africa', installApp: true },
+        iOS: { bundleId: 'com.mycompany.farm' },
+      },
+    );
+    expect(notifications.sendEmailOrThrow).toHaveBeenCalledWith(
+      'person@example.com',
+      'Reset your FARM password',
+      expect.stringContaining('Reset Password'),
+      expect.stringContaining(
+        'https://farmapp-e2145.firebaseapp.com/__/auth/action',
+      ),
+    );
+    expect(notifications.sendEmailOrThrow.mock.calls[0][2]).toContain(
+      'Or copy this link:',
+    );
   });
 
   it('does not reveal or send email for an unknown reset address', async () => {
+    const firebase = module.get(FirebaseService);
     const prisma = module.get(PrismaService);
     const notifications = module.get(NotificationsService);
     jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
@@ -182,10 +225,10 @@ describe('AuthService', () => {
     await expect(
       service.sendPasswordResetLink('missing@example.com'),
     ).resolves.toEqual({
-      message:
-        'If an active account exists for this email, a reset link has been sent.',
+      message: 'If an account exists, we have sent a reset link',
     });
     expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
+    expect(firebase.auth.generatePasswordResetLink).not.toHaveBeenCalled();
   });
 
   it('links an existing FARM account to Firebase before reset email delivery', async () => {
@@ -216,6 +259,34 @@ describe('AuthService', () => {
       where: { id: 'user-2' },
       data: { firebase_uid: 'firebase-user-2' },
     });
+    expect(firebase.auth.generatePasswordResetLink).toHaveBeenCalled();
+  });
+
+  it('throttles reset requests for the same normalized email', async () => {
+    const prisma = module.get(PrismaService);
+    const firebase = module.get(FirebaseService);
+    const notifications = module.get(NotificationsService);
+    const findUser = jest.spyOn(prisma.users, 'findFirst');
+    const runTransaction = firebase.firestore.runTransaction as jest.Mock;
+    runTransaction.mockImplementationOnce((callback) =>
+      callback({
+        get: jest.fn().mockResolvedValue({
+          get: jest.fn().mockReturnValue({
+            toMillis: () => Date.now() - 60_000,
+          }),
+        }),
+        set: jest.fn(),
+      }),
+    );
+
+    await expect(
+      service.sendPasswordResetLink(' Person@Example.com '),
+    ).resolves.toEqual({
+      message: 'If an account exists, we have sent a reset link',
+    });
+    expect(findUser).not.toHaveBeenCalled();
+    expect(firebase.auth.generatePasswordResetLink).not.toHaveBeenCalled();
+    expect(notifications.sendEmailOrThrow).not.toHaveBeenCalled();
   });
 
   it('synchronizes a reset regular-user password and revokes existing sessions', async () => {

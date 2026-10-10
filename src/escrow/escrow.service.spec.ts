@@ -5,7 +5,9 @@ describe('EscrowService biometric authorization', () => {
   it('uses device verification instead of PIN when biometric auth is provided', async () => {
     const prisma = {
       users: {
-        findUnique: jest.fn().mockRejectedValue(new NotFoundException('Buyer wallet not found')),
+        findUnique: jest
+          .fn()
+          .mockRejectedValue(new NotFoundException('Buyer wallet not found')),
       },
     };
 
@@ -35,7 +37,10 @@ describe('EscrowService biometric authorization', () => {
       } as any),
     ).rejects.toThrow(NotFoundException);
 
-    expect(securityService.verifyDevice).toHaveBeenCalledWith('buyer-id', 'fingerprint');
+    expect(securityService.verifyDevice).toHaveBeenCalledWith(
+      'buyer-id',
+      'fingerprint',
+    );
     expect(authService.verifyPin).not.toHaveBeenCalled();
   });
 
@@ -47,7 +52,9 @@ describe('EscrowService biometric authorization', () => {
       fee: 0.38,
     };
     const tx: any = {
-      $queryRaw: jest.fn().mockResolvedValue([{ balance: 100, locked_balance: 0 }]),
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValue([{ balance: 100, locked_balance: 0 }]),
       escrow_contracts: {
         create: jest.fn().mockResolvedValue({ id: activeContract.id }),
         update: jest.fn().mockResolvedValue(activeContract),
@@ -62,7 +69,9 @@ describe('EscrowService biometric authorization', () => {
         create: jest.fn().mockResolvedValue({ transaction_reference: 'tx-1' }),
       },
       users: {
-        findFirst: jest.fn().mockResolvedValue({ wallets: [{ id: 'platform-wallet' }] }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ wallets: [{ id: 'platform-wallet' }] }),
       },
       ledger_entries: { create: jest.fn().mockResolvedValue({}) },
     };
@@ -265,7 +274,9 @@ describe('EscrowService creation fee', () => {
 
   it('deducts the fee separately and locks the full escrow principal', async () => {
     const tx: any = {
-      $queryRaw: jest.fn().mockResolvedValue([{ balance: 101.5, locked_balance: 0 }]),
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValue([{ balance: 101.5, locked_balance: 0 }]),
       escrow_contracts: {
         create: jest.fn().mockResolvedValue({ id: 'escrow-1' }),
         update: jest.fn().mockResolvedValue({
@@ -276,7 +287,8 @@ describe('EscrowService creation fee', () => {
         }),
       },
       wallets: {
-        update: jest.fn()
+        update: jest
+          .fn()
           .mockResolvedValueOnce({ balance: 100 })
           .mockResolvedValueOnce({ balance: 1.5 }),
       },
@@ -354,6 +366,81 @@ describe('EscrowService creation fee', () => {
     expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
       where: { id: 'superadmin-wallet' },
       data: { balance: { increment: 1.5 } },
+    });
+  });
+
+  describe('EscrowService detail fees', () => {
+    it('returns the creation fee and linked release fee for escrow details', async () => {
+      const escrow = {
+        id: 'escrow-1',
+        buyer_id: 'buyer-1',
+        seller_id: 'seller-1',
+        amount: 100,
+        fee: 1.5,
+        status: 'completed',
+      };
+      const prisma: any = {
+        escrow_contracts: {
+          findUnique: jest.fn().mockResolvedValue(escrow),
+        },
+        transactions: {
+          findFirst: jest.fn().mockResolvedValue({
+            fee: 1.5,
+            transaction_reference: 'release-reference',
+          }),
+        },
+      };
+      const service = new EscrowService(
+        prisma,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      const result = await service.getOne('escrow-1', 'buyer-1');
+
+      expect(prisma.transactions.findFirst).toHaveBeenCalledWith({
+        where: {
+          transaction_type: 'escrow_release',
+          metadata: { path: ['escrow_id'], equals: 'escrow-1' },
+        },
+        select: { fee: true, transaction_reference: true },
+      });
+      expect(result.data).toMatchObject({
+        amount: 100,
+        fee: 1.5,
+        release_fee: 1.5,
+        release_transaction_reference: 'release-reference',
+      });
+    });
+
+    it('returns no release fee when the escrow has not been released', async () => {
+      const prisma: any = {
+        escrow_contracts: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'escrow-2',
+            buyer_id: 'buyer-1',
+            seller_id: 'seller-1',
+            amount: 100,
+            fee: 1.5,
+          }),
+        },
+        transactions: { findFirst: jest.fn().mockResolvedValue(null) },
+      };
+      const service = new EscrowService(
+        prisma,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      const result = await service.getOne('escrow-2', 'buyer-1');
+
+      expect(result.data.release_fee).toBeNull();
     });
   });
 });

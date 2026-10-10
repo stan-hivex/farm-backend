@@ -23,6 +23,13 @@ export class FirebaseService {
     return admin.auth();
   }
 
+  get firestore() {
+    if (!admin.apps.length) {
+      throw new Error('Firebase Admin is not configured');
+    }
+    return admin.firestore();
+  }
+
   constructor() {
     if (admin.apps.length === 0) {
       const projectId = process.env.FIREBASE_PROJECT_ID;

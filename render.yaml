@@ -40,17 +40,27 @@ services:
       - key: CACHE_TTL_SECONDS
         value: "60"
 
-      # Resend SMTP settings for branded password-reset emails.
+      # GoDaddy SMTP settings for branded password-reset emails.
       - key: SMTP_HOST
-        value: smtp.resend.com
+        value: smtpout.secureserver.net
       - key: SMTP_PORT
         value: "465"
       - key: SMTP_USER
-        value: resend
+        sync: false
       - key: SMTP_PASS
         sync: false
       - key: SMTP_FROM
-        value: 'FARM <no-reply@farmapp.africa>'
+        value: 'FARM Support <support@farmapp.africa>'
+
+      # Firebase Admin credentials are stored as Render environment variables.
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: FIREBASE_PASSWORD_RESET_CONTINUE_URL
+        value: https://farmapp-e2145.firebaseapp.com/admin-reset-password
       
       # CORS configuration
       - key: CORS_ORIGINS
