@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { type notification_type } from '@prisma/client';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import * as nodemailer from 'nodemailer';
+import axios from 'axios';
 import Twilio from 'twilio';
 import { FirebaseService } from './firebase.service';
 
@@ -225,21 +226,38 @@ async updateSettings(userId: string, body: any) {
   }
 
   async sendEmailOrThrow(to: string, subject: string, html: string, text: string) {
-    const host = this.cfg.get<string>('SMTP_HOST');
-    const user = this.cfg.get<string>('SMTP_USER');
-    const pass = this.cfg.get<string>('SMTP_PASS');
-    const from = this.cfg.get<string>('SMTP_FROM');
-    if (!host || !user || !pass || !from) {
-      throw new Error('Transactional email delivery is not configured');
+    const apiKey = this.cfg.get<string>('RESEND_API_KEY');
+    const from =
+      this.cfg.get<string>('RESEND_FROM') ||
+      this.cfg.get<string>('SMTP_FROM');
+    if (!apiKey || !from) {
+      throw new Error('Transactional email API is not configured');
     }
 
     try {
-      await this.mailer.sendMail({ from, to, subject, html, text });
-    } catch (error) {
-      this.logger.error(
-        `Transactional email delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+      await axios.post(
+        'https://api.resend.com/emails',
+        { from, to, subject, html, text },
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15_000,
+        },
       );
-      throw error;
+    } catch (error) {
+      const status = axios.isAxiosError(error)
+        ? error.response?.status
+        : undefined;
+      this.logger.error(
+        `Transactional email API delivery failed${status ? ` (HTTP ${status})` : ''}`,
+      );
+      throw new Error(
+        status
+          ? `Transactional email provider rejected the request (HTTP ${status})`
+          : 'Transactional email provider request failed',
+      );
     }
   }
 

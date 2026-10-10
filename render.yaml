@@ -40,7 +40,7 @@ services:
       - key: CACHE_TTL_SECONDS
         value: "60"
 
-      # GoDaddy SMTP settings for branded password-reset emails.
+      # Legacy SMTP settings for other email notifications.
       - key: SMTP_HOST
         value: smtpout.secureserver.net
       - key: SMTP_PORT
@@ -50,6 +50,12 @@ services:
       - key: SMTP_PASS
         sync: false
       - key: SMTP_FROM
+        value: 'FARM Support <support@farmapp.africa>'
+
+      # Resend HTTPS API for password-reset email delivery.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
         value: 'FARM Support <support@farmapp.africa>'
 
       # Firebase Admin credentials are stored as Render environment variables.

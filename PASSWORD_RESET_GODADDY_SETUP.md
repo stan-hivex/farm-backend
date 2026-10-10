@@ -2,8 +2,9 @@
 
 Password-reset requests are handled by the NestJS API on Render. Firebase
 Authentication generates the one-time reset link, and the backend sends it
-through GoDaddy SMTP. The Firebase reset page in the app verifies and consumes
-the reset code, then synchronizes the new password to the FARM backend.
+through the Resend HTTPS API. This avoids SMTP egress timeouts from Render.
+The Firebase reset page in the app verifies and consumes the reset code, then
+synchronizes the new password to the FARM backend.
 
 ## Render environment
 
@@ -12,17 +13,30 @@ Render's environment settings; do not commit them to this repository.
 
 | Variable | Value |
 | --- | --- |
-| `SMTP_HOST` | `smtpout.secureserver.net` |
-| `SMTP_PORT` | `465` |
-| `SMTP_USER` | `support@farmapp.africa` |
-| `SMTP_PASS` | GoDaddy mailbox password |
-| `SMTP_FROM` | `FARM Support <support@farmapp.africa>` |
+| `RESEND_API_KEY` | API key from the Resend dashboard; store as a secret |
+| `RESEND_FROM` | `FARM Support <support@farmapp.africa>` |
 | `FIREBASE_PROJECT_ID` | Firebase project ID |
 | `FIREBASE_CLIENT_EMAIL` | Service-account client email |
 | `FIREBASE_PRIVATE_KEY` | Service-account private key; preserve newlines or use `\n` |
 | `FIREBASE_PASSWORD_RESET_CONTINUE_URL` | `https://farmapp-e2145.firebaseapp.com/admin-reset-password` |
 
-Port 465 uses implicit SSL/TLS. Make sure the mailbox permits SMTP relay.
+## Resend sender setup
+
+1. Create or sign in to the Resend account and add `farmapp.africa` under
+   **Domains**.
+2. Publish the exact DNS records Resend provides for domain verification and
+   DKIM, plus its SPF record as instructed. Avoid creating multiple SPF TXT
+   records at the root; merge authorized senders into the existing SPF record
+   if one already exists.
+3. Wait until Resend shows the domain as verified. Verify that
+   `support@farmapp.africa` is an allowed sender for that domain.
+4. Create a Resend API key with permission to send mail from the verified
+   domain. Add it to Render as `RESEND_API_KEY`; add the sender above as
+   `RESEND_FROM`.
+
+Password reset uses the Resend HTTPS API on port 443, not GoDaddy SMTP. The
+existing SMTP settings may remain for other legacy notification code, but they
+are not used by this password-reset endpoint.
 
 ## Firebase and app links
 
@@ -51,9 +65,11 @@ Port 465 uses implicit SSL/TLS. Make sure the mailbox permits SMTP relay.
   the per-email key is cleared so the user can retry immediately.
 - The backend stores no reset code or full email link and does not log email
   content. Firebase's generated action code is single-use and expires.
-- Rotate any SMTP password previously shared outside the credential manager
-  before configuring `SMTP_PASS`.
+- Rotate any SMTP password previously shared outside the credential manager.
+- A Firebase service-account private key was exposed in the development chat;
+  revoke that key and configure its replacement in Render.
 
-After configuring Render, deploy/restart the backend and test with an existing
-account and an unknown address. Complete the reset from both Android and iOS,
-then verify login with the new password and rejection of the old password.
+After configuring Resend and Firebase values in Render, deploy/restart the
+backend and test with an existing account and an unknown address. Complete the
+reset from both Android and iOS, then verify login with the new password and
+rejection of the old password.
