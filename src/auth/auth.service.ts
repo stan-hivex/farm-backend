@@ -920,7 +920,7 @@ export class AuthService {
         user.email,
         'Reset your FARM password',
         this.buildPasswordResetEmail(escapedResetLink),
-        `You requested a password reset for FARM.\n\nReset your password: ${resetLink}`,
+        'You requested a password reset for FARM. Open this email in an HTML-capable email app and select the Reset Password button to continue.',
       );
       return genericResponse;
     } catch (error) {
@@ -957,7 +957,6 @@ export class AuthService {
         <p style="font-size:15px;line-height:1.6;margin:0 0 22px">You requested a password reset for FARM. Use the button below to choose a new password.</p>
         <a href="${resetLink}" style="display:inline-block;padding:13px 22px;background:#111;color:#fff;text-decoration:none;border-radius:4px;font-size:15px;font-weight:700">Reset Password</a>
         <p style="font-size:12px;line-height:1.6;color:#555;margin:26px 0 6px">If you did not request this change, you can ignore this email.</p>
-        <p style="font-size:12px;line-height:1.6;color:#555;margin:0">Or copy this link: <a href="${resetLink}" style="color:#111;word-break:break-all">${resetLink}</a></p>
       </td></tr>
     </table>
   </body>

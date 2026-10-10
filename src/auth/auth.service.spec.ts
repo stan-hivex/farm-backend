@@ -205,12 +205,19 @@ describe('AuthService', () => {
       'person@example.com',
       'Reset your FARM password',
       expect.stringContaining('Reset Password'),
-      expect.stringContaining(
-        'https://farmapp-e2145.firebaseapp.com/__/auth/action',
-      ),
+      expect.stringContaining('select the Reset Password button'),
     );
     expect(notifications.sendEmailOrThrow.mock.calls[0][2]).toContain(
+      'https://farmapp-e2145.firebaseapp.com/__/auth/action',
+    );
+    expect(notifications.sendEmailOrThrow.mock.calls[0][2]).not.toContain(
       'Or copy this link:',
+    );
+    expect(notifications.sendEmailOrThrow.mock.calls[0][2]).not.toContain(
+      '>https://farmapp-e2145.firebaseapp.com',
+    );
+    expect(notifications.sendEmailOrThrow.mock.calls[0][3]).not.toContain(
+      'oobCode=',
     );
     const redisClient = (redis.getClient as jest.Mock).mock.results[0].value;
     expect(redisClient.set).toHaveBeenCalledWith(
