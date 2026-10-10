@@ -27,20 +27,25 @@ export class IvorypayDepositService {
       throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
     }
 
-    const options = await this.ivorypayService.getSupportedPaymentOptions();
     const requestedToken =
       typeof dto.crypto === 'string' ? dto.crypto.trim().toUpperCase() : '';
     const requestedNetwork =
       typeof dto.chain === 'string' ? dto.chain.trim() : '';
-    const selectedOption = options.find(
-      (option) =>
-        (!requestedToken || option.token === requestedToken) &&
-        (!requestedNetwork || option.network === requestedNetwork),
-    );
-    if (!selectedOption) {
-      throw new BadRequestException(
-        'The selected crypto token and network are not enabled for IvoryPay',
+    let selectedOption:
+      | { token: string; network: string; networkName: string }
+      | undefined;
+    if (requestedToken || requestedNetwork) {
+      const options = await this.ivorypayService.getSupportedPaymentOptions();
+      selectedOption = options.find(
+        (option) =>
+          (!requestedToken || option.token === requestedToken) &&
+          (!requestedNetwork || option.network === requestedNetwork),
       );
+      if (!selectedOption) {
+        throw new BadRequestException(
+          'The selected crypto token and network are not enabled for IvoryPay',
+        );
+      }
     }
 
     const reference = uuidv4();
@@ -69,8 +74,10 @@ export class IvorypayDepositService {
         email: dto.email || `${userId}@farm.app`,
         description: `Farm deposit ${amount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
         baseFiat: 'USD',
-        crypto: selectedOption.token,
-        chain: selectedOption.network,
+        ...(selectedOption && {
+          crypto: selectedOption.token,
+          chain: selectedOption.network,
+        }),
         redirect_url: 'https://farmapp.africa/payment-callback',
         metadata: {
           provider: 'ivorypay',
@@ -79,8 +86,10 @@ export class IvorypayDepositService {
           currency_fiat: 'USD',
           user_id: userId,
           payment_method: 'CRYPTO',
-          crypto: selectedOption.token,
-          chain: selectedOption.network,
+          ...(selectedOption && {
+            crypto: selectedOption.token,
+            chain: selectedOption.network,
+          }),
         },
       });
     } catch (error) {

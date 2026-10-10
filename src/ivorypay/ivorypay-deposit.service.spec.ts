@@ -94,6 +94,23 @@ describe('IvorypayDepositService', () => {
     );
   });
 
+  it('lets IvoryPay checkout choose the crypto token and network by default', async () => {
+    prisma.deposit.create.mockResolvedValue({ id: 'dep-1' });
+    ivorypay.createPayment.mockResolvedValue({
+      data: { payment_link: 'https://checkout.ivorypay.io/checkout/ref' },
+      payment_link: 'https://checkout.ivorypay.io/checkout/ref',
+    });
+
+    await service.createDeposit('user-1', { amount_fiat: 100 });
+
+    const paymentOptions = ivorypay.createPayment.mock.calls[0][0];
+    expect(paymentOptions).not.toHaveProperty('crypto');
+    expect(paymentOptions).not.toHaveProperty('chain');
+    expect(paymentOptions.metadata).not.toHaveProperty('crypto');
+    expect(paymentOptions.metadata).not.toHaveProperty('chain');
+    expect(ivorypay.getSupportedPaymentOptions).not.toHaveBeenCalled();
+  });
+
   it('rejects a crypto token/network pair that IvoryPay has not enabled', async () => {
     await expect(
       service.createDeposit('user-1', {
