@@ -920,7 +920,7 @@ export class AuthService {
         user.email,
         'Reset your FARM password',
         this.buildPasswordResetEmail(escapedResetLink),
-        'You requested a password reset for FARM. Open this email in an HTML-capable email app and select the Reset Password button to continue.',
+        'You requested a password reset for FARM. Open this email in an HTML-capable email app and tap the orange SET A NEW PASSWORD button to continue.',
       );
       return genericResponse;
     } catch (error) {
@@ -954,8 +954,11 @@ export class AuthService {
         <div style="font-size:22px;font-weight:700;letter-spacing:2px">FARM</div>
         <div style="height:3px;width:44px;margin:14px 0 26px;background:#111"></div>
         <h1 style="font-size:22px;margin:0 0 16px">Reset your password</h1>
-        <p style="font-size:15px;line-height:1.6;margin:0 0 22px">You requested a password reset for FARM. Use the button below to choose a new password.</p>
-        <a href="${resetLink}" style="display:inline-block;padding:13px 22px;background:#111;color:#fff;text-decoration:none;border-radius:4px;font-size:15px;font-weight:700">Reset Password</a>
+        <p style="font-size:15px;line-height:1.6;margin:0 0 10px">You requested a password reset for FARM.</p>
+        <p style="font-size:16px;line-height:1.6;font-weight:700;margin:0 0 18px">To set your new password, tap the orange button below.</p>
+        <table role="presentation" style="margin:0 0 24px"><tr><td align="center" bgcolor="#ff9800" style="border-radius:8px">
+          <a href="${resetLink}" style="display:inline-block;padding:18px 32px;background-color:#ff9800;border:2px solid #ff9800;border-radius:8px;color:#171717;text-decoration:none;font-size:17px;line-height:1.3;font-weight:700;letter-spacing:.3px">SET A NEW PASSWORD</a>
+        </td></tr></table>
         <p style="font-size:12px;line-height:1.6;color:#555;margin:26px 0 6px">If you did not request this change, you can ignore this email.</p>
       </td></tr>
     </table>

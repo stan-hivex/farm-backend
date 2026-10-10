@@ -204,8 +204,11 @@ describe('AuthService', () => {
     expect(notifications.sendEmailOrThrow).toHaveBeenCalledWith(
       'person@example.com',
       'Reset your FARM password',
-      expect.stringContaining('Reset Password'),
-      expect.stringContaining('select the Reset Password button'),
+      expect.stringContaining('SET A NEW PASSWORD'),
+      expect.stringContaining('tap the orange SET A NEW PASSWORD button'),
+    );
+    expect(notifications.sendEmailOrThrow.mock.calls[0][2]).toContain(
+      'background-color:#ff9800',
     );
     expect(notifications.sendEmailOrThrow.mock.calls[0][2]).toContain(
       'https://farmapp-e2145.firebaseapp.com/__/auth/action',
