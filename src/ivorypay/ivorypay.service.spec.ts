@@ -110,6 +110,57 @@ describe('IvorypayService', () => {
     });
   });
 
+  it('creates a Puul checkout session with all active tokens and networks', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          Solana: [
+            { token: 'SOL', blockchain: 'SOLANA', isActive: true },
+            { token: 'USDC', blockchain: 'SOLANA', isActive: true },
+          ],
+          Ethereum: [
+            { token: 'USDT', blockchain: 'ETHEREUM', isActive: true },
+          ],
+          Inactive: [
+            { token: 'TEST', blockchain: 'TESTNET', isActive: false },
+          ],
+        },
+      },
+    } as any);
+    mockedAxios.post.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          reference: 'puul-reference',
+          checkoutUrl: 'https://checkout.joinpuul.com/session/puul-reference',
+        },
+      },
+    } as any);
+
+    const result = await service.createCheckoutSession({
+      amount: 100,
+      fiatCurrency: 'USD',
+    });
+
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://api.joinpuul.com/api/v1/checkout/sessions',
+      {
+        amount: 100,
+        fiatCurrency: 'USD',
+        acceptedTokens: ['SOL', 'USDC', 'USDT'],
+        acceptedNetworks: ['SOLANA', 'ETHEREUM'],
+      },
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'test-api-key' }),
+      }),
+    );
+    expect(result.checkout_url).toBe(
+      'https://checkout.joinpuul.com/session/puul-reference',
+    );
+    expect(result.providerReference).toBe('puul-reference');
+  });
+
   it('returns all active token and network combinations enabled for the business', async () => {
     mockedAxios.get.mockResolvedValueOnce({
       data: {
@@ -263,7 +314,7 @@ describe('IvorypayService', () => {
     expect(lookup('abc123')).toBe('abc123');
   });
 
-  it('verifies transaction using the business verify endpoint and falls back to the legacy verify endpoint', async () => {
+  it('verifies Puul checkout sessions before falling back to IvoryPay transaction endpoints', async () => {
     mockedAxios.get
       .mockResolvedValueOnce({ data: { success: false, statusCode: 404, message: 'Transaction not found' }, status: 404 })
       .mockResolvedValueOnce({ data: { success: true, data: { reference: 'ref1', status: 'SUCCESS' } }, status: 200 });
@@ -271,14 +322,29 @@ describe('IvorypayService', () => {
     const result = await service.verifyTransaction('ref1', 'ref1', ['ref1']);
 
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      'https://api.ivorypay.io/api/v1/business/transactions/ref1/verify',
+      'https://api.joinpuul.com/api/v1/checkout/sessions/ref1',
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'test-api-key' }) }),
     );
     expect(mockedAxios.get).toHaveBeenCalledWith(
-      'https://api.ivorypay.io/api/v1/transactions/ref1/verify',
+      'https://api.ivorypay.io/api/v1/business/transactions/ref1/verify',
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'test-api-key' }) }),
     );
     expect(result.reference).toBe('ref1');
     expect(result.status).toBe('SUCCESS');
+  });
+
+  it('normalizes a paid Puul session to a successful payment status', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { data: { reference: 'puul-ref', status: 'PAID', amount: 100 } },
+      status: 200,
+    } as any);
+
+    const result = await service.verifyTransaction('farm-ref', 'puul-ref');
+
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://api.joinpuul.com/api/v1/checkout/sessions/puul-ref',
+      expect.any(Object),
+    );
+    expect(result.status).toBe('success');
   });
 });

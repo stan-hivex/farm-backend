@@ -41,12 +41,8 @@ describe('IvorypayDepositService', () => {
       sendNotification: jest.fn().mockResolvedValue({ id: 'n1' }),
     };
     ivorypay = {
-      createPayment: jest.fn(),
+      createCheckoutSession: jest.fn(),
       verifyTransaction: jest.fn(),
-      getSupportedPaymentOptions: jest.fn().mockResolvedValue([
-        { token: 'USDT', network: 'BSC', networkName: 'BSC' },
-        { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
-      ]),
     };
 
     const module = await Test.createTestingModule({
@@ -62,27 +58,25 @@ describe('IvorypayDepositService', () => {
     service = module.get(IvorypayDepositService);
   });
 
-  it('initializes checkout with the selected active token and network', async () => {
+  it('creates a multi-coin checkout session using the FARM amount converted to USD', async () => {
     prisma.deposit.create.mockResolvedValue({ id: 'dep-1' });
-    ivorypay.createPayment.mockResolvedValue({
-      data: { payment_link: 'https://checkout.ivorypay.io/checkout/ref' },
-      payment_link: 'https://checkout.ivorypay.io/checkout/ref',
+    ivorypay.createCheckoutSession.mockResolvedValue({
+      data: {
+        reference: 'puul-ref-1',
+        checkoutUrl: 'https://checkout.ivorypay.io/checkout/ref',
+      },
+      checkout_url: 'https://checkout.ivorypay.io/checkout/ref',
+      providerReference: 'puul-ref-1',
     });
 
     const result = await service.createDeposit('user-1', {
       amount_fiat: 100,
-      crypto: 'USDC',
-      chain: 'POLYGON',
     });
 
-    expect(ivorypay.createPayment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        crypto: 'USDC',
-        chain: 'POLYGON',
-        baseFiat: 'USD',
-        redirect_url: 'https://farmapp.africa/payment-callback',
-      }),
-    );
+    expect(ivorypay.createCheckoutSession).toHaveBeenCalledWith({
+      amount: 0.77,
+      fiatCurrency: 'USD',
+    });
     expect(result.data.payment_url).toBe(
       'https://checkout.ivorypay.io/checkout/ref',
     );
@@ -94,51 +88,36 @@ describe('IvorypayDepositService', () => {
     );
   });
 
-  it('lets IvoryPay checkout choose the crypto token and network by default', async () => {
+  it('does not require the user to choose a token or network', async () => {
     prisma.deposit.create.mockResolvedValue({ id: 'dep-1' });
-    ivorypay.createPayment.mockResolvedValue({
-      data: { payment_link: 'https://checkout.ivorypay.io/checkout/ref' },
-      payment_link: 'https://checkout.ivorypay.io/checkout/ref',
+    ivorypay.createCheckoutSession.mockResolvedValue({
+      data: {
+        reference: 'puul-ref-1',
+        checkoutUrl: 'https://checkout.joinpuul.com/session/puul-ref-1',
+      },
+      checkout_url: 'https://checkout.joinpuul.com/session/puul-ref-1',
+      providerReference: 'puul-ref-1',
     });
 
-    await service.createDeposit('user-1', { amount_fiat: 100 });
+    const result = await service.createDeposit('user-1', {
+      amount_fiat: 100,
+    });
 
-    const paymentOptions = ivorypay.createPayment.mock.calls[0][0];
-    expect(paymentOptions).not.toHaveProperty('crypto');
-    expect(paymentOptions).not.toHaveProperty('chain');
-    expect(paymentOptions.metadata).not.toHaveProperty('crypto');
-    expect(paymentOptions.metadata).not.toHaveProperty('chain');
-    expect(ivorypay.getSupportedPaymentOptions).not.toHaveBeenCalled();
-  });
-
-  it('rejects a crypto token/network pair that IvoryPay has not enabled', async () => {
-    await expect(
-      service.createDeposit('user-1', {
-        amount_fiat: 100,
-        crypto: 'DAI',
-        chain: 'ETHEREUM',
-      }),
-    ).rejects.toThrow(
-      'The selected crypto token and network are not enabled for IvoryPay',
+    expect(result.data.payment_url).toBe(
+      'https://checkout.joinpuul.com/session/puul-ref-1',
     );
-
-    expect(prisma.deposit.create).not.toHaveBeenCalled();
-    expect(ivorypay.createPayment).not.toHaveBeenCalled();
+    expect(ivorypay.createCheckoutSession).toHaveBeenCalledTimes(1);
   });
 
   it('marks the deposit failed when IvoryPay rejects checkout initialization', async () => {
     prisma.deposit.create.mockResolvedValue({ id: 'dep-1' });
-    ivorypay.createPayment.mockRejectedValue(
-      new Error('IvoryPay integration failed: Invalid Data'),
+    ivorypay.createCheckoutSession.mockRejectedValue(
+      new Error('IvoryPay checkout session could not be created'),
     );
 
     await expect(
-      service.createDeposit('user-1', {
-        amount_fiat: 100,
-        crypto: 'USDT',
-        chain: 'BSC',
-      }),
-    ).rejects.toThrow('IvoryPay integration failed: Invalid Data');
+      service.createDeposit('user-1', { amount_fiat: 100 }),
+    ).rejects.toThrow('IvoryPay checkout session could not be created');
 
     expect(prisma.deposit.update).toHaveBeenCalledWith({
       where: { id: 'dep-1' },
@@ -173,6 +152,40 @@ describe('IvorypayDepositService', () => {
 
     expect(result).toEqual(expect.objectContaining({ processed: true, duplicate: true }));
     expect(prisma.wallets.update).not.toHaveBeenCalled();
+  });
+
+  it('maps a Puul session reference back to the FARM deposit on webhook', async () => {
+    prisma.deposit.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'dep-1',
+        userId: 'user-1',
+        reference: 'farm-ref',
+        providerRef: 'puul-ref',
+        status: 'SUCCESS',
+        amount: 100,
+        currency: 'FARM',
+        provider: 'ivorypay',
+      });
+    prisma.transactions.findUnique.mockResolvedValue({
+      id: 'tx-1',
+      transaction_reference: 'farm-ref',
+      status: 'completed',
+      transaction_type: 'deposit',
+      metadata: { provider: 'ivorypay' },
+    });
+
+    const result = await service.handleWebhook(
+      { reference: 'puul-ref', event: 'payment.success' },
+      true,
+    );
+
+    expect(prisma.transactions.findUnique).toHaveBeenCalledWith({
+      where: { transaction_reference: 'farm-ref' },
+    });
+    expect(result).toEqual(
+      expect.objectContaining({ processed: true, duplicate: true }),
+    );
   });
 
   it('verifies the provider transaction before processing a successful deposit', async () => {
