@@ -37,7 +37,16 @@ describe('WithdrawService', () => {
         { provide: SecurityService, useValue: { verifyDevice: jest.fn().mockResolvedValue({ trusted: true }) } },
         { provide: PaystackService, useValue: {} },
         { provide: IvorypayService, useValue: { createWithdrawal: jest.fn(), verifyTransaction: jest.fn() } },
-        { provide: CacheService, useValue: { cacheInvalidatePattern: jest.fn().mockResolvedValue(true), cacheDelete: jest.fn().mockResolvedValue(true), cacheGet: jest.fn().mockResolvedValue(null), cacheSet: jest.fn().mockResolvedValue(true) } },
+        {
+          provide: CacheService,
+          useValue: {
+            cacheInvalidatePattern: jest.fn().mockResolvedValue(true),
+            cacheDelete: jest.fn().mockResolvedValue(true),
+            cacheGet: jest.fn().mockResolvedValue(null),
+            cacheSet: jest.fn().mockResolvedValue(true),
+            invalidateWallet: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         { provide: NotificationsService, useValue: { sendNotification: jest.fn().mockResolvedValue(true) } },
         { provide: CurrencyConversionService, useValue: { getCurrentRate: jest.fn().mockResolvedValue({ usd_kes_rate: 150, farm_kes_rate: 1, farm_usd_rate: 0.00666667 }) } },
         { provide: WebsocketGateway, useValue: { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn() } },
@@ -96,6 +105,10 @@ describe('WithdrawService', () => {
       pin: '1234',
     } as any);
 
+    expect(module.get(WebsocketGateway).emitBalanceUpdate).toHaveBeenCalledWith(
+      'user-1',
+      800,
+    );
     expect(createdWithdrawalData).toMatchObject({
       cryptoAddress: '0xabc',
       network: 'POLYGON',

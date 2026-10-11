@@ -38,7 +38,11 @@ describe('DepositService', () => {
 
     paystack = {};
     websocket = {};
-    cache = {};
+    cache = {
+      invalidateWallet: jest.fn().mockResolvedValue(undefined),
+      cacheInvalidatePattern: jest.fn().mockResolvedValue(undefined),
+      cacheDelete: jest.fn().mockResolvedValue(undefined),
+    };
     notifications = {};
     currencyConversion = {};
 
@@ -59,19 +63,23 @@ describe('DepositService', () => {
   });
 
   it('rejects crypto deposits on the generic deposit endpoint', async () => {
-    await expect(service.createDeposit('user-1', {
-      amount_fiat: 1,
-      paymentMethod: 'CRYPTO',
-      email: 'user@example.com',
-    })).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    await expect(
+      service.createDeposit('user-1', {
+        amount_fiat: 1,
+        paymentMethod: 'CRYPTO',
+        email: 'user@example.com',
+      }),
+    ).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
   });
 
   it('does not create a generic deposit for crypto requests', async () => {
-    await expect(service.createDeposit('user-2', {
-      amount_fiat: 2,
-      paymentMethod: 'CRYPTO',
-      email: 'user2@example.com',
-    })).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    await expect(
+      service.createDeposit('user-2', {
+        amount_fiat: 2,
+        paymentMethod: 'CRYPTO',
+        email: 'user2@example.com',
+      }),
+    ).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
     expect(prisma.deposit.create).not.toHaveBeenCalled();
   });
 
@@ -140,9 +148,7 @@ describe('DepositService', () => {
       email: 'user@example.com',
     });
 
-    expect(paystack.initializePayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 100 }),
-    );
+    expect(paystack.initializePayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 100 }));
     expect(prisma.deposit.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ amount: 100, fee: 0, total: 100 }),
@@ -187,23 +193,90 @@ describe('DepositService', () => {
 
     prisma.deposit.findFirst = jest.fn().mockResolvedValue(deposit);
     prisma.transactions.findUnique = jest.fn().mockResolvedValue(transaction);
-    prisma.$transaction = jest.fn(
-      async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-    );
+    prisma.$transaction = jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx));
     cache.cacheInvalidatePattern = jest.fn().mockResolvedValue(undefined);
     cache.cacheDelete = jest.fn().mockResolvedValue(undefined);
     websocket.emitBalanceUpdate = jest.fn();
     websocket.emitTransactionUpdate = jest.fn();
 
-    await expect(
-      service.finalizeSuccessfulDeposit('reference-3'),
-    ).resolves.toBe(true);
+    await expect(service.finalizeSuccessfulDeposit('reference-3')).resolves.toBe(true);
 
     expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('user-1', 125);
     expect(websocket.emitTransactionUpdate).toHaveBeenCalledWith('user-1', {
       reference: 'reference-3',
       status: 'SUCCESS',
     });
+  });
+
+  it('verifies a Paystack deposit immediately and returns the updated wallet status', async () => {
+    const deposit = {
+      id: 'deposit-5',
+      userId: 'user-1',
+      reference: 'reference-5',
+      amount: 25,
+      status: 'PENDING',
+      provider: 'paystack',
+    };
+    const transaction = {
+      id: 'transaction-5',
+      transaction_reference: 'reference-5',
+      transaction_type: 'deposit',
+      status: 'pending',
+      amount: 25,
+      metadata: { user_id: 'user-1', provider: 'paystack' },
+    };
+
+    prisma.deposit.findFirst = jest
+      .fn()
+      .mockResolvedValueOnce(deposit)
+      .mockResolvedValueOnce({ ...deposit, status: 'SUCCESS' });
+    prisma.transactions.findUnique = jest
+      .fn()
+      .mockResolvedValueOnce(transaction)
+      .mockResolvedValueOnce({ ...transaction, status: 'completed' });
+    prisma.wallets = {
+      findFirst: jest.fn().mockResolvedValue({ balance: 125, locked_balance: 0 }),
+    };
+    paystack.verifyTransaction = jest.fn().mockResolvedValue({
+      status: 'success',
+      reference: 'reference-5',
+    });
+    jest.spyOn(service, 'finalizeSuccessfulDeposit').mockResolvedValue(true);
+
+    await expect(service.verifyDepositStatus('user-1', 'reference-5')).resolves.toEqual({
+      data: {
+        reference: 'reference-5',
+        status: 'SUCCESS',
+        balance: 125,
+        locked_balance: 0,
+      },
+    });
+
+    expect(paystack.verifyTransaction).toHaveBeenCalledWith('reference-5');
+    expect(service.finalizeSuccessfulDeposit).toHaveBeenCalledWith(
+      'reference-5',
+      expect.objectContaining({ status: 'success' }),
+    );
+  });
+
+  it('does not allow a user to verify another users deposit', async () => {
+    prisma.deposit.findFirst = jest.fn().mockResolvedValue({
+      userId: 'another-user',
+      reference: 'reference-6',
+      status: 'PENDING',
+    });
+    prisma.transactions.findUnique = jest.fn().mockResolvedValue({
+      transaction_reference: 'reference-6',
+      transaction_type: 'deposit',
+      status: 'pending',
+      metadata: { user_id: 'another-user', provider: 'paystack' },
+    });
+    paystack.verifyTransaction = jest.fn();
+
+    await expect(service.verifyDepositStatus('user-1', 'reference-6')).rejects.toThrow(
+      'You do not have access to this deposit',
+    );
+    expect(paystack.verifyTransaction).not.toHaveBeenCalled();
   });
 
   it('stores the verified Paystack channel instead of the selected checkout default', async () => {
@@ -229,17 +302,13 @@ describe('DepositService', () => {
     };
     prisma.deposit.findFirst = jest.fn().mockResolvedValue(deposit);
     prisma.transactions.findUnique = jest.fn().mockResolvedValue(transaction);
-    prisma.$transaction = jest.fn(
-      async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-    );
+    prisma.$transaction = jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx));
     paystack.verifyTransaction = jest.fn().mockResolvedValue({
       status: 'success',
       channel: 'mobile_money',
     });
 
-    await expect(
-      service.finalizeSuccessfulDeposit('reference-4'),
-    ).resolves.toBe(true);
+    await expect(service.finalizeSuccessfulDeposit('reference-4')).resolves.toBe(true);
 
     expect(tx.transactions.update).toHaveBeenCalledWith({
       where: { id: 'transaction-4' },

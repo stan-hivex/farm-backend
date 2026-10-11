@@ -13,7 +13,9 @@ export class CacheService {
   constructor(private readonly cfg: ConfigService, @Optional() private readonly redis?: RedisService) {
     this.prefix = this.cfg.get<string>('CACHE_PREFIX', 'cache:');
     const configuredTtl = Number(this.cfg.get<string>('CACHE_TTL_SECONDS', '60'));
-    this.defaultTtl = Number.isFinite(configuredTtl) ? Math.max(0, configuredTtl) : 60;
+    this.defaultTtl = Number.isFinite(configuredTtl)
+      ? Math.min(60, Math.max(0, configuredTtl))
+      : 60;
     const configuredEnabled = this.cfg.get<string | boolean>('CACHE_ENABLED', 'true');
     this.enabled = String(configuredEnabled).toLowerCase() !== 'false';
   }
@@ -82,6 +84,13 @@ export class CacheService {
 
   async cacheDelete(key: string): Promise<void> {
     return this.del(key);
+  }
+
+  async invalidateWallet(userId: string): Promise<void> {
+    await Promise.all([
+      this.cacheDelete(`wallet:${userId}:balance`),
+      this.cacheInvalidatePattern(`wallet:${userId}:*`),
+    ]);
   }
 
   async cacheInvalidatePattern(pattern: string): Promise<void> {

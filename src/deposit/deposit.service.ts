@@ -1,5 +1,5 @@
 // src/deposit/deposit.service.ts
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
@@ -121,7 +121,10 @@ export class DepositService {
       });
       providerRef = init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
       if (providerRef !== reference) {
-        await this.prisma.deposit.update({ where: { id: deposit.id }, data: { providerRef } });
+        await this.prisma.deposit.update({
+          where: { id: deposit.id },
+          data: { providerRef },
+        });
       }
       paymentUrl = init.data?.payment_link || init.payment_link || init.checkout_url;
 
@@ -154,7 +157,11 @@ export class DepositService {
           action: 'deposit_initiated',
           entity_type: 'transaction',
           entity_id: null,
-          new_values: { reference, amount_fiat: dto.amount_fiat, amount_farm: farmAmount },
+          new_values: {
+            reference,
+            amount_fiat: dto.amount_fiat,
+            amount_farm: farmAmount,
+          },
         },
       });
 
@@ -236,7 +243,81 @@ export class DepositService {
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
-    return { balance: wallet?.balance ?? 0, locked_balance: wallet?.locked_balance ?? 0 };
+    return {
+      balance: wallet?.balance ?? 0,
+      locked_balance: wallet?.locked_balance ?? 0,
+    };
+  }
+
+  async getDepositStatus(userId: string, reference: string) {
+    const [deposit, transaction, wallet] = await Promise.all([
+      this.prisma.deposit.findFirst({ where: { reference } }),
+      this.prisma.transactions.findUnique({
+        where: { transaction_reference: reference },
+      }),
+      this.prisma.wallets.findFirst({
+        where: { user_id: userId, is_active: true },
+      }),
+    ]);
+
+    if (!deposit && !transaction) {
+      throw new NotFoundException('Deposit not found');
+    }
+
+    const metadata = (transaction?.metadata as Record<string, unknown> | null) ?? {};
+    if (deposit?.userId !== userId && metadata.user_id !== userId) {
+      throw new ForbiddenException('You do not have access to this deposit');
+    }
+
+    const transactionStatus = transaction?.status?.toLowerCase();
+    const depositStatus = deposit?.status?.toUpperCase();
+    const status =
+      transactionStatus === 'completed' || depositStatus === 'SUCCESS'
+        ? 'SUCCESS'
+        : (transaction?.status ?? deposit?.status ?? 'PENDING').toString().toUpperCase();
+
+    return {
+      data: {
+        reference,
+        status,
+        balance: Number(wallet?.balance ?? 0),
+        locked_balance: Number(wallet?.locked_balance ?? 0),
+      },
+    };
+  }
+
+  async verifyDepositStatus(userId: string, reference: string) {
+    const [deposit, transaction] = await Promise.all([
+      this.prisma.deposit.findFirst({ where: { reference } }),
+      this.prisma.transactions.findUnique({
+        where: { transaction_reference: reference },
+      }),
+    ]);
+
+    if (!deposit && !transaction) {
+      throw new NotFoundException('Deposit not found');
+    }
+
+    const metadata = (transaction?.metadata as Record<string, unknown> | null) ?? {};
+    const transactionUserId = metadata.user_id;
+    if (deposit?.userId !== userId && transactionUserId !== userId) {
+      throw new ForbiddenException('You do not have access to this deposit');
+    }
+
+    const status = transaction?.status?.toLowerCase();
+    const provider = String(metadata.provider ?? deposit?.provider ?? '').toLowerCase();
+    if (provider === 'paystack' && ['pending', 'processing'].includes(status ?? '')) {
+      const verified = await this.paystack.verifyTransaction(reference);
+      const verifiedReference = verified?.reference?.toString();
+      if (verifiedReference && verifiedReference !== reference) {
+        throw new BadRequestException('Paystack verification returned a different transaction reference');
+      }
+      if (verified?.status?.toString().toLowerCase() === 'success') {
+        await this.finalizeSuccessfulDeposit(reference, verified);
+      }
+    }
+
+    return this.getDepositStatus(userId, reference);
   }
 
   async getDepositById(id: string, userId?: string) {
@@ -248,10 +329,12 @@ export class DepositService {
   }
 
   // Called ONLY from webhook
-  async finalizeSuccessfulDeposit(reference: string) {
+  async finalizeSuccessfulDeposit(reference: string, verifiedPaystackTransaction?: any) {
     this.logger.log(`finalizeSuccessfulDeposit: start for reference=${reference}`);
     let deposit = await this.prisma.deposit.findFirst({ where: { reference } });
-    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
 
     if (!transaction) {
       throw new BadRequestException(`Transaction not found for reference: ${reference}`);
@@ -260,29 +343,34 @@ export class DepositService {
     // Extra guard: verify provider's authoritative status for this reference
     try {
       const metadata = (transaction.metadata as any) ?? {};
-      const provider = (metadata?.provider?.toString()?.toLowerCase() || deposit?.provider?.toLowerCase() || 'unknown').trim();
+      const provider = (
+        metadata?.provider?.toString()?.toLowerCase() ||
+        deposit?.provider?.toLowerCase() ||
+        'unknown'
+      ).trim();
       if (provider === 'paystack') {
         try {
-          const verified = await this.paystack.verifyTransaction(reference);
+          const verified = verifiedPaystackTransaction ?? (await this.paystack.verifyTransaction(reference));
           if (!verified || (verified.status ?? '').toString().toLowerCase() !== 'success') {
-            this.logger.warn(`finalizeSuccessfulDeposit: paystack verify indicates non-success for ${reference} status=${verified?.status ?? 'unknown'} - aborting credit`);
+            this.logger.warn(
+              `finalizeSuccessfulDeposit: paystack verify indicates non-success for ${reference} status=${verified?.status ?? 'unknown'} - aborting credit`,
+            );
             return false;
           }
           const paymentChannel = verified.channel ?? verified.authorization?.channel;
           const paymentMethod = this.paystackPaymentMethod(paymentChannel);
           if (paymentMethod) {
             try {
-              const specificMethod = this.paystackMobileMoneyProvider({
-                ...verified,
-                channel: paymentChannel,
-              }) ?? paymentMethod;
+              const specificMethod =
+                this.paystackMobileMoneyProvider({
+                  ...verified,
+                  channel: paymentChannel,
+                }) ?? paymentMethod;
               const nextMetadata = {
                 ...metadata,
                 payment_method: specificMethod,
                 payment_channel: paymentChannel,
-                ...(verified.authorization
-                  ? { paystack_authorization: verified.authorization }
-                  : {}),
+                ...(verified.authorization ? { paystack_authorization: verified.authorization } : {}),
               };
               await this.prisma.$transaction(async (tx) => {
                 await tx.transactions.update({
@@ -306,7 +394,10 @@ export class DepositService {
             }
           }
         } catch (e) {
-          this.logger.warn(`finalizeSuccessfulDeposit: paystack verify failed for ${reference} - aborting credit`, e as any);
+          this.logger.warn(
+            `finalizeSuccessfulDeposit: paystack verify failed for ${reference} - aborting credit`,
+            e as any,
+          );
           return false;
         }
       }
@@ -344,41 +435,121 @@ export class DepositService {
     const txStatus = transaction.status?.toLowerCase();
     const txPending = isDeposit && ['pending', 'processing'].includes(txStatus ?? '');
     const txComplete = isDeposit && txStatus === 'completed';
-    const txFailed = isDeposit && ['failed', 'cancelled', 'reversed', 'abandoned', 'expired', 'incomplete', 'declined'].includes(txStatus ?? '');
-    const txUnknown = isDeposit && !['pending', 'processing', 'completed', 'failed', 'cancelled', 'reversed', 'abandoned', 'expired', 'incomplete', 'declined'].includes(txStatus ?? '');
+    const txFailed =
+      isDeposit &&
+      ['failed', 'cancelled', 'reversed', 'abandoned', 'expired', 'incomplete', 'declined'].includes(txStatus ?? '');
+    const txUnknown =
+      isDeposit &&
+      ![
+        'pending',
+        'processing',
+        'completed',
+        'failed',
+        'cancelled',
+        'reversed',
+        'abandoned',
+        'expired',
+        'incomplete',
+        'declined',
+      ].includes(txStatus ?? '');
 
     if (txFailed || txUnknown) {
-      this.logger.warn(`finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} - not crediting wallet`);
+      this.logger.warn(
+        `finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} - not crediting wallet`,
+      );
       return false;
     }
 
     if (depositComplete && txComplete) {
       this.logger.log(`finalizeSuccessfulDeposit: already completed for ${reference}`);
+      await this.finalizeMerchantQrPayment(reference);
       return true;
     }
 
+    let finalized = false;
     if (depositPending && txPending) {
-      return this.finalizePendingDepositWithTransaction(reference, deposit!, transaction);
+      finalized = await this.finalizePendingDepositWithTransaction(reference, deposit!, transaction);
+    } else if (depositPending) {
+      finalized = await this.creditPendingDepositWithWallet(reference, deposit!, transaction);
+    } else if (depositComplete && txPending) {
+      finalized = await this.completePendingTransaction(reference, transaction);
+    } else if (txPending) {
+      finalized = await this.creditPendingTransactionDeposit(reference);
     }
 
-    if (depositPending) {
-      return this.creditPendingDepositWithWallet(reference, deposit!, transaction);
-    }
+    if (finalized) await this.finalizeMerchantQrPayment(reference);
+    if (finalized) return true;
 
-    if (depositComplete && txPending) {
-      return this.completePendingTransaction(reference, transaction);
-    }
-
-    if (txPending) {
-      return this.creditPendingTransactionDeposit(reference);
-    }
-
-    this.logger.warn(`finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} is not eligible for wallet credit`);
+    this.logger.warn(
+      `finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} is not eligible for wallet credit`,
+    );
     return false;
   }
 
+  async finalizeMerchantQrPayment(reference: string) {
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+      select: { id: true, amount: true, metadata: true },
+    });
+    const metadata = (transaction?.metadata as Record<string, unknown> | null) ?? {};
+    const merchantId = metadata.merchant_id;
+    if (!transaction || metadata.qr_guest_payment !== true || typeof merchantId !== 'string') {
+      return;
+    }
+
+    const markedComplete = await this.prisma.$transaction(async (tx) => {
+      const completed = await tx.qr_payments.updateMany({
+        where: {
+          transaction_id: transaction.id,
+          merchant_id: merchantId,
+          status: 'pending',
+        },
+        data: { status: 'completed' },
+      });
+      if (completed.count === 0) return false;
+
+      await tx.merchants.update({
+        where: { id: merchantId },
+        data: { total_sales: { increment: transaction.amount } },
+      });
+      await tx.transactions.update({
+        where: { id: transaction.id },
+        data: { transaction_type: 'merchant_payment' },
+      });
+      return true;
+    });
+
+    if (!markedComplete) return;
+
+    try {
+      await this.notificationsService.sendNotification(metadata.user_id as string, {
+        type: 'merchant',
+        title: 'Merchant payment received',
+        body: `Your business received ${Number(transaction.amount ?? 0)} FARM from a QR payment.`,
+        entityId: transaction.id,
+        metadata: {
+          event: 'merchant_payment_received',
+          merchant_id: merchantId,
+          amount: Number(transaction.amount ?? 0),
+          currency: 'FARM',
+          reference,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Could not notify merchant owner about QR payment ${reference}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
   private paystackPaymentMethod(channel: unknown): 'CARD' | 'MOBILE_MONEY' | 'BANK_TRANSFER' | null {
-    switch (String(channel ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_')) {
+    switch (
+      String(channel ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, '_')
+    ) {
       case 'card':
         return 'CARD';
       case 'mobile_money':
@@ -391,7 +562,11 @@ export class DepositService {
   }
 
   private paystackMobileMoneyProvider(verified: any): 'MPESA' | 'AIRTEL' | null {
-    if (String(verified?.channel ?? '').trim().toLowerCase() !== 'mobile_money') {
+    if (
+      String(verified?.channel ?? '')
+        .trim()
+        .toLowerCase() !== 'mobile_money'
+    ) {
       return null;
     }
 
@@ -412,7 +587,9 @@ export class DepositService {
     ];
 
     for (const candidate of candidates) {
-      const provider = String(candidate ?? '').trim().toLowerCase();
+      const provider = String(candidate ?? '')
+        .trim()
+        .toLowerCase();
       if (/m[\s_-]?pesa/.test(provider)) return 'MPESA';
       if (/\bairtel\b/.test(provider)) return 'AIRTEL';
     }
@@ -420,8 +597,12 @@ export class DepositService {
   }
 
   async failDeposit(reference: string, reason?: string) {
-    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
-    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const deposit = await this.prisma.deposit.findFirst({
+      where: { reference },
+    });
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
 
     if (!deposit && !transaction) {
       this.logger.warn(`failDeposit: no deposit or transaction found for reference=${reference}`);
@@ -436,7 +617,10 @@ export class DepositService {
 
     await this.prisma.$transaction(async (tx) => {
       if (deposit && deposit.status === 'PENDING') {
-        await tx.deposit.update({ where: { id: deposit.id }, data: { status: 'FAILED' } });
+        await tx.deposit.update({
+          where: { id: deposit.id },
+          data: { status: 'FAILED' },
+        });
       }
 
       if (transaction && !['failed', 'cancelled', 'completed'].includes(transaction.status?.toLowerCase() ?? '')) {
@@ -484,7 +668,9 @@ export class DepositService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
-      let wallet = await tx.wallets.findFirst({ where: { user_id: deposit.userId, is_active: true } });
+      let wallet = await tx.wallets.findFirst({
+        where: { user_id: deposit.userId, is_active: true },
+      });
       if (!wallet) {
         wallet = await tx.wallets.create({
           data: {
@@ -565,7 +751,9 @@ export class DepositService {
     }
 
     if (!['pending', 'processing'].includes(txStatus ?? '')) {
-      this.logger.warn(`completePendingTransaction: transaction ${reference} status=${transaction.status} cannot be completed automatically`);
+      this.logger.warn(
+        `completePendingTransaction: transaction ${reference} status=${transaction.status} cannot be completed automatically`,
+      );
       return false;
     }
 
@@ -575,9 +763,13 @@ export class DepositService {
     };
 
     if (!transaction.receiver_wallet_id) {
-      const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+      const deposit = await this.prisma.deposit.findFirst({
+        where: { reference },
+      });
       if (deposit) {
-        const wallet = await this.prisma.wallets.findFirst({ where: { user_id: deposit.userId, is_active: true } });
+        const wallet = await this.prisma.wallets.findFirst({
+          where: { user_id: deposit.userId, is_active: true },
+        });
         if (wallet) updates.receiver_wallet_id = wallet.id;
       }
     }
@@ -593,7 +785,9 @@ export class DepositService {
   }
 
   private async creditPendingTransactionDeposit(reference: string) {
-    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
     if (!transaction) {
       this.logger.warn(`Transaction not found for reference: ${reference}`);
       return false;
@@ -604,19 +798,25 @@ export class DepositService {
     const txStatus = transaction.status?.toLowerCase();
     if (txStatus === 'completed') return true;
     if (!['pending', 'processing'].includes(txStatus ?? '')) {
-      this.logger.warn(`creditPendingTransactionDeposit: transaction ${reference} status=${transaction.status} is not eligible for credit`);
+      this.logger.warn(
+        `creditPendingTransactionDeposit: transaction ${reference} status=${transaction.status} is not eligible for credit`,
+      );
       return false;
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
       let wallet: any = transaction.receiver_wallet_id
-        ? await tx.wallets.findUnique({ where: { id: transaction.receiver_wallet_id } })
+        ? await tx.wallets.findUnique({
+            where: { id: transaction.receiver_wallet_id },
+          })
         : null;
 
       const metadata = transaction.metadata as any;
       const userId = metadata?.user_id;
       if (!wallet && userId) {
-        wallet = await tx.wallets.findFirst({ where: { user_id: userId, is_active: true } });
+        wallet = await tx.wallets.findFirst({
+          where: { user_id: userId, is_active: true },
+        });
       }
 
       if (!wallet && userId) {
@@ -682,7 +882,11 @@ export class DepositService {
           title: 'Deposit completed',
           body: `Your deposit of ${Number(transaction.amount ?? 0)} ${transaction.currency || 'FARM'} has been credited to your wallet.`,
           entityId: transaction.id,
-          metadata: { reference, amount: Number(transaction.amount ?? 0), currency: transaction.currency || 'FARM' },
+          metadata: {
+            reference,
+            amount: Number(transaction.amount ?? 0),
+            currency: transaction.currency || 'FARM',
+          },
         });
       }
     }
@@ -697,13 +901,15 @@ export class DepositService {
     }
 
     if (!transaction) {
-      transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+      transaction = await this.prisma.transactions.findUnique({
+        where: { transaction_reference: reference },
+      });
     }
 
     if (!transaction || transaction.status?.toLowerCase() !== 'pending') {
       this.logger.warn(
         `creditPendingDepositWithWallet: invalid transaction state for ${reference}. ` +
-        `Transaction: ${transaction ? `exists, status=${transaction.status}` : 'missing'}`,
+          `Transaction: ${transaction ? `exists, status=${transaction.status}` : 'missing'}`,
       );
       return false;
     }
@@ -715,7 +921,9 @@ export class DepositService {
       });
       if (updated.count === 0) return { ok: false };
 
-      let wallet = await tx.wallets.findFirst({ where: { user_id: deposit.userId, is_active: true } });
+      let wallet = await tx.wallets.findFirst({
+        where: { user_id: deposit.userId, is_active: true },
+      });
       if (!wallet) {
         wallet = await tx.wallets.create({
           data: {
@@ -777,7 +985,10 @@ export class DepositService {
           title: 'Deposit completed',
           body: `Your deposit of ${Number(deposit.amount ?? 0)} ${deposit.currency || 'FARM'} has been credited to your wallet.`,
           entityId: deposit.id,
-          metadata: { amount: Number(deposit.amount ?? 0), currency: deposit.currency || 'FARM' },
+          metadata: {
+            amount: Number(deposit.amount ?? 0),
+            currency: deposit.currency || 'FARM',
+          },
         });
       }
     }
@@ -789,7 +1000,7 @@ export class DepositService {
     if (!userId) return;
 
     await Promise.all([
-      this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`),
+      this.cache.invalidateWallet(userId),
       this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
       this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
       this.cache.cacheDelete('admin:dashboard:stats'),

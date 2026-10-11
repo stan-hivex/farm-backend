@@ -36,6 +36,7 @@ export class PaymentsService {
       crypto?: string;
       chain?: string;
       walletAddress?: string;
+      callbackUrl?: string;
     },
     ctx?: { deviceRisk?: number; ip?: string; country?: string },
   ) {
@@ -59,6 +60,9 @@ export class PaymentsService {
 
     const reference =
       paymentMethod === 'CRYPTO' ? randomUUID() : generateTxReference();
+    const callbackUrl = dto.callbackUrl
+      ? `${dto.callbackUrl}${dto.callbackUrl.includes('?') ? '&' : '?'}reference=${encodeURIComponent(reference)}`
+      : undefined;
     const rate = await this.getExchangeRate(dto.currency, 'FARM');
     const amount_farm = dto.amount_fiat / rate;
     const fee_fiat = dto.amount_fiat * 0.02;
@@ -118,7 +122,7 @@ export class PaymentsService {
         currency: dto.currency,
         reference,
         channels: ['mobile_money'],
-        callback_url: 'https://farmapp.africa/payment-callback',
+        callback_url: callbackUrl || 'https://farmapp.africa/payment-callback',
         phone,
         metadata: {
           user_id: userId,
@@ -223,8 +227,9 @@ export class PaymentsService {
         lastName: user.last_name,
         description: `Farm deposit - ${farmAmount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
         crypto,
+        chain: dto.chain,
         baseFiat: 'USD',
-        redirect_url: 'https://farmapp.africa/payment-callback',
+        redirect_url: callbackUrl || 'https://farmapp.africa/payment-callback',
         metadata: {
           provider: 'ivorypay',
           amount_farm: farmAmount,
@@ -239,6 +244,7 @@ export class PaymentsService {
           ip: ctx?.ip ?? null,
           payment_method: 'CRYPTO',
           crypto,
+          chain: dto.chain ?? null,
         },
       });
 
@@ -274,6 +280,7 @@ export class PaymentsService {
             ip: ctx?.ip ?? null,
             payment_method: 'CRYPTO',
             crypto,
+            chain: dto.chain ?? null,
           },
         },
       });
@@ -324,7 +331,7 @@ export class PaymentsService {
         currency: dto.currency,
         reference,
         channels: ['card', 'mobile_money'],
-        callback_url: 'https://farmapp.africa/payment-callback',
+        callback_url: callbackUrl || 'https://farmapp.africa/payment-callback',
         phone: dto.phone || user.phone || undefined,
         metadata: {
           provider: 'paystack',
@@ -406,6 +413,7 @@ export class PaymentsService {
         currency: dto.currency,
         reference,
         channels: ['bank_transfer'],
+        callback_url: callbackUrl || 'https://farmapp.africa/payment-callback',
         metadata: {
           provider: 'paystack',
           amount_fiat: dto.amount_fiat,

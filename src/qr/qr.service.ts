@@ -35,11 +35,13 @@ export class QrService {
     const payloadStr = JSON.stringify(payload);
     const sig = this.sign(payloadStr, merchant.qr_secret || this.cfg.get('QR_HMAC_SECRET', ''));
     const signed = JSON.stringify({ ...payload, sig });
-    const qr_image = await QRCode.toDataURL(signed);
+    const checkoutUrl = this.checkoutUrl(signed);
+    const qr_image = await QRCode.toDataURL(checkoutUrl);
     await this.prisma.merchants.update({ where: { id: merchantId }, data: { qr_code: signed } });
     return {
       data: {
         qr_payload: signed,
+        checkout_url: checkoutUrl,
         qr_image_base64: qr_image,
         qr_image_data_url: qr_image,
       },
@@ -52,10 +54,12 @@ export class QrService {
     if (!merchant.qr_code) {
       return this.generateMerchantQr(merchantId);
     }
-    const qr_image = await QRCode.toDataURL(merchant.qr_code);
+    const checkoutUrl = this.checkoutUrl(merchant.qr_code);
+    const qr_image = await QRCode.toDataURL(checkoutUrl);
     return {
       data: {
         qr_payload: merchant.qr_code,
+        checkout_url: checkoutUrl,
         qr_image_base64: qr_image,
         qr_image_data_url: qr_image,
       },
@@ -334,5 +338,14 @@ export class QrService {
 
   private sign(data: string, secret: string) {
     return createHmac('sha256', secret || 'fallback').update(data).digest('hex');
+  }
+
+  private checkoutUrl(signedPayload: string) {
+    const baseUrl = this.cfg.get(
+      'PUBLIC_MERCHANT_CHECKOUT_URL',
+      'https://farmapp.africa/merchant-payment/',
+    );
+    const encodedPayload = Buffer.from(signedPayload, 'utf8').toString('base64url');
+    return `${baseUrl}?qr=${encodedPayload}`;
   }
 }

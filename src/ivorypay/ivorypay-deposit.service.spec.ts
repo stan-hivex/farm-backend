@@ -4,18 +4,22 @@ import { PrismaService } from '../database/prisma.service';
 import { IvorypayService } from './ivorypay.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { CacheService } from '../common/cache/cache.service';
 
 describe('IvorypayDepositService', () => {
   let service: IvorypayDepositService;
   let prisma: any;
   let notifications: any;
   let ivorypay: any;
+  let websocket: any;
+  let cache: any;
 
   beforeEach(async () => {
     prisma = {
       deposit: {
         findFirst: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         create: jest.fn(),
       },
       transactions: {
@@ -40,6 +44,15 @@ describe('IvorypayDepositService', () => {
     notifications = {
       sendNotification: jest.fn().mockResolvedValue({ id: 'n1' }),
     };
+    websocket = {
+      emitBalanceUpdate: jest.fn(),
+      emitTransactionUpdate: jest.fn(),
+    };
+    cache = {
+      cacheDelete: jest.fn().mockResolvedValue(undefined),
+      cacheInvalidatePattern: jest.fn().mockResolvedValue(undefined),
+      invalidateWallet: jest.fn().mockResolvedValue(undefined),
+    };
     ivorypay = {
       createPayment: jest.fn(),
       verifyTransaction: jest.fn(),
@@ -55,7 +68,8 @@ describe('IvorypayDepositService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: IvorypayService, useValue: ivorypay },
         { provide: NotificationsService, useValue: notifications },
-        { provide: WebsocketGateway, useValue: { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn() } },
+        { provide: WebsocketGateway, useValue: websocket },
+        { provide: CacheService, useValue: cache },
       ],
     }).compile();
 
@@ -184,6 +198,59 @@ describe('IvorypayDepositService', () => {
 
     expect(result).toEqual(expect.objectContaining({ processed: true, duplicate: true }));
     expect(prisma.wallets.update).not.toHaveBeenCalled();
+  });
+
+  it('credits the wallet once and invalidates its cache after a successful webhook', async () => {
+    const deposit = {
+      id: 'dep-2',
+      userId: 'user-2',
+      reference: 'ref-2',
+      status: 'PENDING',
+      amount: 100,
+      currency: 'FARM',
+      provider: 'ivorypay',
+    };
+    const transaction = {
+      id: 'tx-2',
+      transaction_reference: 'ref-2',
+      status: 'pending',
+      transaction_type: 'deposit',
+      amount: 100,
+      metadata: { provider: 'ivorypay' },
+    };
+    prisma.deposit.findFirst.mockResolvedValue(deposit);
+    prisma.transactions.findUnique.mockResolvedValue(transaction);
+    prisma.wallets.findFirst.mockResolvedValue({
+      id: 'wallet-2',
+      user_id: 'user-2',
+      balance: 50,
+      locked_balance: 0,
+    });
+    prisma.wallets.update.mockResolvedValue({
+      id: 'wallet-2',
+      balance: 150,
+      locked_balance: 0,
+    });
+
+    await service.handleWebhook(
+      {
+        reference: 'ref-2',
+        event: 'payment.success',
+        data: { status: 'success' },
+      },
+      true,
+    );
+
+    expect(prisma.deposit.updateMany).toHaveBeenCalledWith({
+      where: { id: 'dep-2', status: 'PENDING' },
+      data: { status: 'SUCCESS' },
+    });
+    expect(prisma.wallets.update).toHaveBeenCalledWith({
+      where: { id: 'wallet-2' },
+      data: { balance: { increment: 100 } },
+    });
+    expect(cache.invalidateWallet).toHaveBeenCalledWith('user-2');
+    expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('user-2', 150);
   });
 
   it('verifies the provider transaction before processing a successful deposit', async () => {

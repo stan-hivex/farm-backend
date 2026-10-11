@@ -13,9 +13,7 @@ export class CacheInterceptor implements NestInterceptor {
 
   private buildCacheKey(req: Request) {
     const authHeader = req.headers.authorization ?? '';
-    const authHash = authHeader
-      ? createHash('sha256').update(authHeader).digest('hex')
-      : 'anonymous';
+    const authHash = authHeader ? createHash('sha256').update(authHeader).digest('hex') : 'anonymous';
     return `http:${req.method}:${req.originalUrl}:${authHash}`;
   }
 
@@ -27,6 +25,17 @@ export class CacheInterceptor implements NestInterceptor {
       return next.handle();
     }
 
+    const path = req.originalUrl.split('?')[0].toLowerCase();
+    if (
+      path.includes('/wallet') ||
+      path.includes('/payments/deposits') ||
+      path.includes('/deposit/history') ||
+      path.includes('/deposit/status/') ||
+      path.includes('/crypto/status/')
+    ) {
+      return next.handle();
+    }
+
     if (!['GET', 'HEAD'].includes(req.method)) {
       return next.handle();
     }
@@ -34,38 +43,44 @@ export class CacheInterceptor implements NestInterceptor {
     const key = this.buildCacheKey(req);
 
     return new Observable((subscriber) => {
-      this.cacheService.get<{ status: number; body: any }>(key).then((cached) => {
-        if (cached) {
-          res.setHeader('X-Cache', 'HIT');
-          res.status(cached.status);
-          subscriber.next(cached.body);
-          subscriber.complete();
-          return;
-        }
+      this.cacheService
+        .get<{ status: number; body: any }>(key)
+        .then((cached) => {
+          if (cached) {
+            res.setHeader('X-Cache', 'HIT');
+            res.status(cached.status);
+            subscriber.next(cached.body);
+            subscriber.complete();
+            return;
+          }
 
-        next
-          .handle()
-          .pipe(
-            tap((payload) => {
-              if (res.statusCode >= 200 && res.statusCode < 300) {
-                void this.cacheService.set(key, { status: res.statusCode, body: payload });
-                res.setHeader('X-Cache', 'MISS');
-              }
-            }),
-          )
-          .subscribe({
+          next
+            .handle()
+            .pipe(
+              tap((payload) => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                  void this.cacheService.set(key, {
+                    status: res.statusCode,
+                    body: payload,
+                  });
+                  res.setHeader('X-Cache', 'MISS');
+                }
+              }),
+            )
+            .subscribe({
+              next: (value) => subscriber.next(value),
+              error: (err) => subscriber.error(err),
+              complete: () => subscriber.complete(),
+            });
+        })
+        .catch((error) => {
+          this.logger.warn(`Cache lookup failed for key ${key}: ${error}`);
+          next.handle().subscribe({
             next: (value) => subscriber.next(value),
             error: (err) => subscriber.error(err),
             complete: () => subscriber.complete(),
           });
-      }).catch((error) => {
-        this.logger.warn(`Cache lookup failed for key ${key}: ${error}`);
-        next.handle().subscribe({
-          next: (value) => subscriber.next(value),
-          error: (err) => subscriber.error(err),
-          complete: () => subscriber.complete(),
         });
-      });
     });
   }
 }

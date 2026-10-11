@@ -1,5 +1,150 @@
 import { WebhookService } from './webhook.service';
 
+describe('WebhookService Paystack deposit processing', () => {
+  const createService = () => {
+    const finalizeSuccessfulDeposit = jest.fn().mockResolvedValue(true);
+    const verifyTransaction = jest.fn();
+    const prisma = {
+      transactions: {
+        findUnique: jest.fn().mockResolvedValue({
+          transaction_type: 'deposit',
+          metadata: { amount_fiat: 50, provider: 'paystack' },
+        }),
+      },
+      deposit: { findFirst: jest.fn() },
+      withdrawal: { findUnique: jest.fn() },
+    };
+    const service = new WebhookService(
+      prisma as any,
+      { finalizeSuccessfulDeposit } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { get: jest.fn().mockReturnValue(60000) } as any,
+      { verifyTransaction } as any,
+      {} as any,
+      {} as any,
+    );
+
+    jest.spyOn(service as any, 'acquireLock').mockResolvedValue(true);
+    jest.spyOn(service as any, 'releaseLock').mockResolvedValue(undefined);
+
+    return { service, prisma, finalizeSuccessfulDeposit, verifyTransaction };
+  };
+
+  it('credits immediately from a signed success event after reference and amount validation', async () => {
+    const { service, finalizeSuccessfulDeposit, verifyTransaction } = createService();
+
+    await service.handlePaystackWebhookProcessing({
+      event: 'charge.success',
+      data: {
+        reference: 'deposit-reference',
+        amount: 5000,
+        status: 'success',
+        channel: 'card',
+      },
+    });
+
+    expect(finalizeSuccessfulDeposit).toHaveBeenCalledWith('deposit-reference', {
+      reference: 'deposit-reference',
+      amount: 5000,
+      status: 'success',
+      channel: 'card',
+    });
+    expect(verifyTransaction).not.toHaveBeenCalled();
+  });
+
+  it('tries synchronous processing before using the queue fallback', async () => {
+    const { service, prisma } = createService();
+    const processSynchronously = jest
+      .spyOn(service, 'handlePaystackWebhookProcessing')
+      .mockResolvedValue(undefined);
+    prisma.transactions.findUnique.mockResolvedValue({
+      transaction_type: 'deposit',
+      status: 'completed',
+    });
+
+    await expect(
+      (service as any).tryProcessWebhookSynchronously(
+        'paystack',
+        'charge.success',
+        'deposit-reference',
+        {
+          event: 'charge.success',
+          data: { reference: 'deposit-reference', status: 'success' },
+        },
+      ),
+    ).resolves.toBe(true);
+
+    expect(processSynchronously).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not credit when the signed success event amount differs from the deposit', async () => {
+    const { service, finalizeSuccessfulDeposit } = createService();
+
+    await service.handlePaystackWebhookProcessing({
+      event: 'charge.success',
+      data: {
+        reference: 'deposit-reference',
+        amount: 4999,
+        status: 'success',
+      },
+    });
+
+    expect(finalizeSuccessfulDeposit).not.toHaveBeenCalled();
+  });
+
+  it('does not credit when the reference belongs to another payment provider', async () => {
+    const { service, prisma, finalizeSuccessfulDeposit } = createService();
+    prisma.transactions.findUnique.mockResolvedValue({
+      transaction_type: 'deposit',
+      metadata: { amount_fiat: 50, provider: 'ivorypay' },
+    });
+
+    await service.handlePaystackWebhookProcessing({
+      event: 'charge.success',
+      data: {
+        reference: 'deposit-reference',
+        amount: 5000,
+        status: 'success',
+      },
+    });
+
+    expect(finalizeSuccessfulDeposit).not.toHaveBeenCalled();
+  });
+
+  it('does not credit a success event without a matching local deposit transaction', async () => {
+    const { service, prisma, finalizeSuccessfulDeposit } = createService();
+    prisma.transactions.findUnique.mockResolvedValue(null);
+
+    await service.handlePaystackWebhookProcessing({
+      event: 'charge.success',
+      data: {
+        reference: 'unknown-reference',
+        amount: 5000,
+        status: 'success',
+      },
+    });
+
+    expect(finalizeSuccessfulDeposit).not.toHaveBeenCalled();
+  });
+
+  it('does not credit a charge.success event with a non-success transaction status', async () => {
+    const { service, finalizeSuccessfulDeposit } = createService();
+
+    await service.handlePaystackWebhookProcessing({
+      event: 'charge.success',
+      data: {
+        reference: 'deposit-reference',
+        amount: 5000,
+        status: 'failed',
+      },
+    });
+
+    expect(finalizeSuccessfulDeposit).not.toHaveBeenCalled();
+  });
+});
+
 describe('WebhookService IvoryPay webhook processing', () => {
   it('validates crypto webhook amounts against USD metadata, not the FARM credit', () => {
     const service = Object.create(WebhookService.prototype) as WebhookService;

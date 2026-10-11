@@ -8,6 +8,7 @@ import { PrismaService } from '../database/prisma.service';
 import { IvorypayService } from './ivorypay.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { CacheService } from '../common/cache/cache.service';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -19,6 +20,7 @@ export class IvorypayDepositService {
     private readonly ivorypayService: IvorypayService,
     private readonly notificationsService: NotificationsService,
     private readonly websocket: WebsocketGateway,
+    private readonly cache: CacheService,
   ) {}
 
   async createDeposit(userId: string, dto: any) {
@@ -330,7 +332,15 @@ export class IvorypayDepositService {
       if (!currentDeposit) {
         throw new BadRequestException('Deposit missing during IvoryPay processing');
       }
-      if (currentDeposit.status === 'SUCCESS') {
+      if (currentDeposit.status !== 'PENDING') {
+        return { alreadyProcessed: true };
+      }
+
+      const claimedDeposit = await tx.deposit.updateMany({
+        where: { id: currentDeposit.id, status: 'PENDING' },
+        data: { status: 'SUCCESS' },
+      });
+      if (claimedDeposit.count !== 1) {
         return { alreadyProcessed: true };
       }
 
@@ -350,8 +360,10 @@ export class IvorypayDepositService {
       const previousBalance = Number(wallet.balance ?? 0);
       const creditAmount = Number(currentDeposit.amount ?? transaction.amount ?? 0);
 
-      await tx.deposit.update({ where: { id: currentDeposit.id }, data: { status: 'SUCCESS' } });
-      await tx.wallets.update({ where: { id: wallet.id }, data: { balance: { increment: creditAmount } } });
+      const updatedWallet = await tx.wallets.update({
+        where: { id: wallet.id },
+        data: { balance: { increment: creditAmount } },
+      });
       await tx.transactions.update({ where: { id: transaction.id }, data: { status: 'completed', receiver_wallet_id: wallet.id, processed_at: new Date() } });
       await tx.ledger_entries.create({
         data: {
@@ -374,13 +386,27 @@ export class IvorypayDepositService {
         },
       });
 
-      return { alreadyProcessed: false, wallet, previousBalance, creditAmount };
+      return {
+        alreadyProcessed: false,
+        balance: Number(updatedWallet.balance ?? previousBalance + creditAmount),
+        previousBalance,
+        creditAmount,
+      };
     });
 
     if ((result as any).alreadyProcessed) {
       this.logger.log(`IvoryPay duplicate webhook ignored for ${reference}`);
       return { processed: true, duplicate: true, reference };
     }
+
+    await Promise.all([
+      this.cache.invalidateWallet(deposit.userId),
+      this.cache.cacheInvalidatePattern(`dashboard:${deposit.userId}`),
+      this.cache.cacheInvalidatePattern(`transactions:${deposit.userId}:*`),
+    ]);
+
+    this.websocket.emitBalanceUpdate(deposit.userId, (result as any).balance);
+    this.websocket.emitTransactionUpdate(deposit.userId, { reference, status: 'SUCCESS' });
 
     await this.notificationsService.sendNotification(deposit.userId, {
       type: 'deposit_completed',
@@ -389,9 +415,6 @@ export class IvorypayDepositService {
       entityId: deposit.id,
       metadata: { provider: 'ivorypay', reference },
     });
-
-    this.websocket.emitBalanceUpdate(deposit.userId, ((result as any).previousBalance ?? 0) + ((result as any).creditAmount ?? 0));
-    this.websocket.emitTransactionUpdate(deposit.userId, { reference, status: 'SUCCESS' });
 
     this.logger.log(`IvoryPay wallet credited: reference=${reference} amount=${(result as any).creditAmount}`);
     return { processed: true, reference, status: 'completed' };

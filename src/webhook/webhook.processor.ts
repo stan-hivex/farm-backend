@@ -19,9 +19,10 @@ export class WebhookProcessor implements OnModuleInit {
     try {
       await this.queue.clean(7 * 24 * 60 * 60 * 1000, 'failed', 1000);
       await this.queue.clean(24 * 60 * 60 * 1000, 'completed', 1000);
-      this.logger.log('Cleaned aged webhook queue jobs');
+      this.logger.log('Webhook queue worker started; cleaned aged queue jobs');
     } catch (error) {
       this.logger.warn(`Failed to clean aged webhook queue jobs: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.log('Webhook queue worker started');
     }
   }
 

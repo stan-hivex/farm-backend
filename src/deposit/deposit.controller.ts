@@ -1,12 +1,4 @@
-﻿import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
+﻿import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -61,9 +53,7 @@ class CreateDepositDto {
 @Controller({ path: 'deposit', version: '1' })
 @UseGuards(JwtAuthGuard)
 export class DepositController {
-  constructor(
-    private readonly depositService: DepositService,
-  ) {}
+  constructor(private readonly depositService: DepositService) {}
 
   @Permissions('payments:write')
   @Throttle({
@@ -73,19 +63,13 @@ export class DepositController {
     },
   })
   @Post('create')
-  async create(
-    @Req() req: any,
-    @Body() dto: CreateDepositDto,
-  ) {
+  async create(@Req() req: any, @Body() dto: CreateDepositDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID not found in request');
     }
 
-    return this.depositService.createDeposit(
-      userId,
-      dto,
-    );
+    return this.depositService.createDeposit(userId, dto);
   }
 
   @Permissions('payments:read')
@@ -96,9 +80,7 @@ export class DepositController {
       throw new Error('User ID not found in request');
     }
 
-    return this.depositService.getUserDeposits(
-      userId,
-    );
+    return this.depositService.getUserDeposits(userId);
   }
 
   @Permissions('payments:read')
@@ -109,9 +91,35 @@ export class DepositController {
       throw new Error('User ID not found in request');
     }
 
-    return this.depositService.getWalletBalance(
-      userId,
-    );
+    return this.depositService.getWalletBalance(userId);
+  }
+
+  @Permissions('payments:read')
+  @Throttle({
+    default: {
+      limit: 10,
+      ttl: 60000,
+    },
+  })
+  @Post('verify/:reference')
+  async verify(@Param('reference') reference: string, @Req() req: any) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+
+    return this.depositService.verifyDepositStatus(userId, reference);
+  }
+
+  @Permissions('payments:read')
+  @Get('status/:reference')
+  async status(@Param('reference') reference: string, @Req() req: any) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+
+    return this.depositService.getDepositStatus(userId, reference);
   }
 
   @Permissions('payments:read')

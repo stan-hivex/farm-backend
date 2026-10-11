@@ -65,6 +65,8 @@ async function bootstrap() {
     configService.get<string>('CORS_ORIGINS'),
     configService.get<string>('FRONTEND_URL'),
     configService.get<string>('APP_URL'),
+    'https://farmapp.africa',
+    'https://www.farmapp.africa',
   ]
     .filter((value): value is string => Boolean(value))
     .flatMap((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean));

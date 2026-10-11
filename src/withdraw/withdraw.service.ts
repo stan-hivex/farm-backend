@@ -23,6 +23,13 @@ import { WebsocketGateway } from '../websocket/websocket.gateway';
 export class WithdrawService {
   private readonly logger = new Logger(WithdrawService.name);
 
+  private availableWalletBalance(wallet: any): number {
+    return Math.max(
+      0,
+      Number(wallet?.balance ?? 0) - Number(wallet?.locked_balance ?? 0),
+    );
+  }
+
   constructor(
     private prisma: PrismaService,
     private authService: AuthService,
@@ -145,8 +152,8 @@ export class WithdrawService {
       };
     }
 
-    const withdrawal = await this.prisma.$transaction(async (tx) => {
-      await tx.wallets.update({
+    const { withdrawal, wallet: reservedWallet } = await this.prisma.$transaction(async (tx) => {
+      const updatedWallet = await tx.wallets.update({
         where: { id: wallet.id },
         data: { locked_balance: { increment: amount } },
       });
@@ -195,11 +202,22 @@ export class WithdrawService {
         },
       });
 
-      return created;
+      return { withdrawal: created, wallet: updatedWallet };
     });
 
     try {
-      this.websocket.emitBalanceUpdate(userId, Number(wallet.balance ?? 0));
+      const reservedLockedBalance =
+        reservedWallet?.locked_balance !== undefined
+          ? Number(reservedWallet.locked_balance)
+          : Number(wallet.locked_balance ?? 0) + amount;
+      this.websocket.emitBalanceUpdate(
+        userId,
+        Math.max(
+          0,
+          Number(reservedWallet?.balance ?? wallet.balance ?? 0) -
+            reservedLockedBalance,
+        ),
+      );
       this.websocket.emitTransactionUpdate(userId, {
         reference,
         status: 'PENDING',
@@ -210,7 +228,7 @@ export class WithdrawService {
 
     setImmediate(() => this.processWithdrawal(reference).catch((error) => this.logger.error(error?.message ?? error)));
 
-    await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
+    await this.cache.invalidateWallet(userId);
     await this.cache.cacheInvalidatePattern(`dashboard:${userId}`);
     await this.cache.cacheInvalidatePattern(`transactions:${userId}:*`);
 
@@ -358,7 +376,7 @@ export class WithdrawService {
       try {
         this.websocket.emitBalanceUpdate(
           withdrawal.userId,
-          Number(wallet?.balance ?? 0),
+          this.availableWalletBalance(wallet),
         );
         this.websocket.emitTransactionUpdate(withdrawal.userId, {
           reference,
@@ -455,7 +473,7 @@ export class WithdrawService {
     try {
       this.websocket.emitBalanceUpdate(
         withdrawal.userId,
-        Number(result.balance ?? 0),
+        this.availableWalletBalance(result),
       );
       this.websocket.emitTransactionUpdate(withdrawal.userId, {
         reference: withdrawal.reference,
@@ -763,7 +781,10 @@ export class WithdrawService {
     }
 
     try {
-      this.websocket.emitBalanceUpdate(withdrawal.userId, Number(updatedWallet.balance));
+      this.websocket.emitBalanceUpdate(
+        withdrawal.userId,
+        this.availableWalletBalance(updatedWallet),
+      );
       this.websocket.emitTransactionUpdate(withdrawal.userId, {
         reference,
         status: 'SUCCESS',
@@ -773,7 +794,7 @@ export class WithdrawService {
     }
 
     await Promise.all([
-      this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
+      this.cache.invalidateWallet(withdrawal.userId),
       this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
       this.cache.cacheInvalidatePattern(`transactions:${withdrawal.userId}:*`),
       this.cache.cacheDelete('admin:dashboard:stats'),
@@ -937,7 +958,10 @@ export class WithdrawService {
     }
 
     try {
-      this.websocket.emitBalanceUpdate(withdrawal.userId, Number(updatedWallet.balance));
+      this.websocket.emitBalanceUpdate(
+        withdrawal.userId,
+        this.availableWalletBalance(updatedWallet),
+      );
       this.websocket.emitTransactionUpdate(withdrawal.userId, {
         reference,
         status: 'FAILED',
@@ -947,7 +971,7 @@ export class WithdrawService {
     }
 
     await Promise.all([
-      this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
+      this.cache.invalidateWallet(withdrawal.userId),
       this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
       this.cache.cacheInvalidatePattern(`transactions:${withdrawal.userId}:*`),
       this.cache.cacheDelete('admin:dashboard:stats'),
