@@ -78,13 +78,53 @@ export class QrService {
     return { data: { qr_payload: payload, qr_image_base64: qr_image } };
   }
 
+  private unwrapQrPayload(scannedPayload: string): string {
+    let payload = scannedPayload.trim();
+    for (let depth = 0; depth < 3; depth += 1) {
+      try {
+        JSON.parse(payload);
+        return payload;
+      } catch {
+        // Continue only when the scanned text contains an encoded QR payload.
+      }
+
+      let qrValue: string | null = null;
+      try {
+        qrValue = new URL(payload).searchParams.get('qr');
+      } catch {
+        // Not a URL; peer identifiers are handled by validate().
+      }
+      if (!qrValue) return payload;
+
+      let decoded = qrValue;
+      try {
+        const base64Decoded = Buffer.from(qrValue, 'base64url').toString('utf8');
+        if (base64Decoded.trimStart().startsWith('{')) {
+          decoded = base64Decoded;
+        } else {
+          try {
+            decoded = decodeURIComponent(qrValue);
+          } catch {
+            return payload;
+          }
+        }
+      } catch {
+        return payload;
+      }
+      if (decoded === payload) return payload;
+      payload = decoded.trim();
+    }
+    return payload;
+  }
+
   async validate(scannedPayload: string, customerId: string) {
     let parsed: any;
+    const normalizedPayload = this.unwrapQrPayload(scannedPayload);
 
     try {
-      parsed = JSON.parse(scannedPayload);
+      parsed = JSON.parse(normalizedPayload);
     } catch {
-      const identifier = scannedPayload.trim();
+      const identifier = normalizedPayload;
       if (!identifier) throw new BadRequestException('Invalid QR payload');
 
       const normalizedUsername = identifier.startsWith('@')
@@ -185,11 +225,15 @@ export class QrService {
       throw new ForbiddenException('Merchant is not approved to accept payments');
     }
 
+    if (!merchant.user_id || merchant.user_id === customerId) {
+      throw new BadRequestException('You cannot pay your own merchant account');
+    }
+
     const customerWallet = await this.prisma.wallets.findFirst({
-      where: { user_id: customerId, is_active: true },
+      where: { user_id: customerId, wallet_type: 'user', is_active: true },
     });
     const merchantWallet = await this.prisma.wallets.findFirst({
-      where: { user_id: merchant.user_id! },
+      where: { user_id: merchant.user_id, wallet_type: 'user', is_active: true },
     });
     if (!customerWallet || !merchantWallet) throw new NotFoundException('Wallet not found');
 
