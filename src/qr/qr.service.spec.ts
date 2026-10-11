@@ -2,6 +2,21 @@ import { QrService } from './qr.service';
 import { createHmac } from 'crypto';
 
 describe('QrService merchant QR validation', () => {
+  it('uses the Firebase HTTPS checkout host by default', () => {
+    const service = new QrService(
+      {} as any,
+      {} as any,
+      {} as any,
+      { get: (_key: string, defaultValue: string) => defaultValue } as any,
+      {} as any,
+      {} as any,
+    );
+
+    const url = (service as any).checkoutUrl('{"merchant_id":"merchant-1"}');
+
+    expect(url).toMatch(/^https:\/\/farmapp-e2145\.web\.app\/merchant-payment\/\?qr=/);
+  });
+
   it('validates a signed merchant QR scanned from its hosted checkout URL', async () => {
     const secret = 'merchant-secret';
     const payload = {

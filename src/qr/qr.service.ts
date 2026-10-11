@@ -387,7 +387,7 @@ export class QrService {
   private checkoutUrl(signedPayload: string) {
     const baseUrl = this.cfg.get(
       'PUBLIC_MERCHANT_CHECKOUT_URL',
-      'https://farmapp.africa/merchant-payment/',
+      'https://farmapp-e2145.web.app/merchant-payment/',
     );
     const encodedPayload = Buffer.from(signedPayload, 'utf8').toString('base64url');
     return `${baseUrl}?qr=${encodedPayload}`;

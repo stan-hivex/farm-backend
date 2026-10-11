@@ -190,7 +190,7 @@ export class MerchantCheckoutController {
         chain: dto.chain,
         callbackUrl: this.config.get(
           'PUBLIC_MERCHANT_CHECKOUT_URL',
-          'https://farmapp.africa/merchant-payment/',
+          'https://farmapp-e2145.web.app/merchant-payment/',
         ),
       },
       { ip },

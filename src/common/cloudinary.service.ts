@@ -30,34 +30,29 @@ export class CloudinaryService {
     base64: string,
     ticketId: string,
   ): Promise<string> {
-    const bytes = Buffer.from(base64, 'base64');
-    return new Promise((resolve, reject) => {
-      const upload = cloudinary.uploader.upload_stream(
+    try {
+      const response = await cloudinary.uploader.upload(
+        `data:${mimeType};base64,${base64}`,
         {
           folder: `support/${ticketId}`,
-          resource_type: mimeType.startsWith('video/') ? 'video' : 'image',
-        },
-        (error, result) => {
-          if (error || !result?.secure_url) {
-            const cause =
-              error ?? new Error('Cloudinary returned no secure URL');
-            this.logger.error(
-              `Support attachment upload failed for ticket ${ticketId}: ${cause.message}`,
-              cause.stack,
-            );
-            reject(
-              new ServiceUnavailableException(
-                'Could not store the attachment. Please try again.',
-              ),
-            );
-            return;
-          }
-          resolve(result.secure_url);
+          resource_type: 'auto',
         },
       );
-
-      upload.end(bytes);
-    });
+      if (!response.secure_url) {
+        throw new Error('Cloudinary returned no secure URL');
+      }
+      return response.secure_url;
+    } catch (error) {
+      this.logger.error(
+        `Support attachment upload failed for ticket ${ticketId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new ServiceUnavailableException(
+        'Could not store the attachment. Please try again.',
+      );
+    }
   }
 
   async uploadEscrowEvidence(
