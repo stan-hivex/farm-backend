@@ -310,6 +310,8 @@ describe('EscrowService dispute evidence', () => {
         escrow_id: 'escrow-1',
         sender_id: 'buyer-1',
         message: 'DISPUTE RAISED: The item arrived damaged',
+        attachment_url:
+          'https://res.cloudinary.com/example/image/upload/evidence.jpg',
       },
     });
   });

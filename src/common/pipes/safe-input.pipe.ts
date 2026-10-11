@@ -23,6 +23,7 @@ export class SafeInputValidationPipe implements PipeTransform {
     'back_image_url',
     'selfieImageUrl',
     'selfie_image_url',
+    'address_document_url',
     'attachmentBase64',
     'paymentMethod',
     'payment_method',
@@ -54,7 +55,10 @@ export class SafeInputValidationPipe implements PipeTransform {
         // or URLs (e.g. device fingerprints, Cloudinary URLs), skip the
         // aggressive suspicious payload checks for that value and accept
         // it as-is when it's a string.
-        if (typeof entryValue === 'string' && this.allowRawStringFields.has(key)) {
+        if (
+          typeof entryValue === 'string' &&
+          this.allowRawStringFields.has(key)
+        ) {
           result[key] = entryValue;
           continue;
         }

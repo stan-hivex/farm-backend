@@ -421,6 +421,7 @@ export class EscrowService {
           escrow_id: escrowId,
           sender_id: userId,
           message: `DISPUTE RAISED: ${reason}`,
+          ...(attachmentUrl ? { attachment_url: attachmentUrl } : {}),
         },
       });
     });
