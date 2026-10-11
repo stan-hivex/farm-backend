@@ -634,6 +634,12 @@ describe('AuthService', () => {
 
     expect(result.message).toContain('Admin account created');
     expect(createdUserRole).toBe('admin');
+    expect(service.sendOtp).toHaveBeenCalledWith(
+      'admin-2',
+      '+254700123456',
+      'phone_verification',
+      true,
+    );
   });
 
   it('does not allow an admin to create another admin account', async () => {

@@ -19,13 +19,13 @@ export class KycService {
     const first_name = this.normalizeValue(data.first_name);
     const last_name = this.normalizeValue(data.last_name);
     const date_of_birth = this.normalizeValue(data.date_of_birth || data.dob);
-    const phone = this.normalizeValue(data.phone);
+    const phone = this.normalizeValue(data.phone || data.phone_number);
     const email = this.normalizeValue(data.email);
     const document_type = this.normalizeValue(data.document_type);
     const document_number = this.normalizeValue(data.document_number);
-    const front_image = this.normalizeValue(data.front_image);
-    const back_image = this.normalizeValue(data.back_image);
-    const selfie_image = this.normalizeValue(data.selfie_image);
+    const front_image = this.normalizeValue(data.front_image_url || data.front_image);
+    const back_image = this.normalizeValue(data.back_image_url || data.back_image);
+    const selfie_image = this.normalizeValue(data.selfie_image_url || data.selfie_image);
     const country = this.normalizeValue(data.country);
     const county = this.normalizeValue(data.county || data.state);
     const city = this.normalizeValue(data.city);
@@ -45,21 +45,25 @@ export class KycService {
   }
 
   private buildKycDocumentPayload(existing: any, dto: any, urls: { front?: string | null; back?: string | null; selfie?: string | null }) {
+    const frontImage = urls.front ?? this.normalizeValue(dto.front_image_url) ?? existing?.front_image_url ?? existing?.front_image ?? null;
+    const backImage = urls.back ?? this.normalizeValue(dto.back_image_url) ?? existing?.back_image_url ?? existing?.back_image ?? null;
+    const selfieImage = urls.selfie ?? this.normalizeValue(dto.selfie_image_url) ?? existing?.selfie_image_url ?? existing?.selfie_image ?? null;
+
     return {
       document_type: dto.document_type ?? existing?.document_type,
       document_number: dto.document_number ?? existing?.document_number,
-      front_image: dto.front_image ?? existing?.front_image,
-      back_image: dto.back_image ?? existing?.back_image,
-      selfie_image: dto.selfie_image ?? existing?.selfie_image,
-      front_image_url: dto.front_image ? urls.front : existing?.front_image_url ?? null,
-      back_image_url: dto.back_image ? urls.back : existing?.back_image_url ?? null,
-      selfie_image_url: dto.selfie_image ? urls.selfie : existing?.selfie_image_url ?? null,
+      front_image: frontImage,
+      back_image: backImage,
+      selfie_image: selfieImage,
+      front_image_url: frontImage,
+      back_image_url: backImage,
+      selfie_image_url: selfieImage,
       first_name: dto.first_name ?? existing?.first_name,
       last_name: dto.last_name ?? existing?.last_name,
-      date_of_birth: dto.dob ?? existing?.date_of_birth,
+      date_of_birth: dto.date_of_birth ?? dto.dob ?? existing?.date_of_birth,
       gender: dto.gender ?? existing?.gender,
       nationality: dto.nationality ?? existing?.nationality,
-      phone: dto.phone ?? existing?.phone,
+      phone: dto.phone ?? dto.phone_number ?? existing?.phone,
       email: dto.email ?? existing?.email,
       country: dto.country ?? existing?.country,
       county: dto.state ?? existing?.county,
@@ -74,14 +78,19 @@ export class KycService {
     document_type?: string;
     document_number?: string;
     front_image?: string;
+    front_image_url?: string;
     back_image?: string;
+    back_image_url?: string;
     selfie_image?: string;
+    selfie_image_url?: string;
     first_name?: string;
     last_name?: string;
     dob?: string;
+    date_of_birth?: string;
     gender?: string;
     nationality?: string;
     phone?: string;
+    phone_number?: string;
     email?: string;
     country?: string;
     state?: string;
@@ -111,6 +120,7 @@ export class KycService {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('KYC Cloudinary upload failed:', e instanceof Error ? e.stack || e.message : String(e));
+      throw new InternalServerErrorException('Failed to upload KYC images');
     }
 
     let doc;
@@ -146,9 +156,12 @@ export class KycService {
     const mergedDocData = {
       ...existingSubmission,
       ...dto,
+      front_image_url: frontUrl ?? dto.front_image_url ?? existingSubmission?.front_image_url,
+      back_image_url: backUrl ?? dto.back_image_url ?? existingSubmission?.back_image_url,
+      selfie_image_url: selfieUrl ?? dto.selfie_image_url ?? existingSubmission?.selfie_image_url,
       state: dto.state ?? existingSubmission?.county,
       address: dto.address ?? existingSubmission?.physical_address,
-      date_of_birth: dto.dob ?? existingSubmission?.date_of_birth,
+      date_of_birth: dto.date_of_birth ?? dto.dob ?? existingSubmission?.date_of_birth,
     };
     const kycLevel = this.computeKycLevel(mergedDocData);
 
@@ -203,6 +216,9 @@ export class KycService {
           front_image: true,
           back_image: true,
           selfie_image: true,
+          front_image_url: true,
+          back_image_url: true,
+          selfie_image_url: true,
           first_name: true,
           last_name: true,
           date_of_birth: true,

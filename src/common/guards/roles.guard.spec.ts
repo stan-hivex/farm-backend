@@ -7,6 +7,38 @@ import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
 import { PrismaService } from '../../database/prisma.service';
 
 describe('RolesGuard', () => {
+  it('denies an admin role on a superadmin-only route', async () => {
+    const reflector = {
+      getAllAndOverride: jest.fn((key: string) => {
+        if (key === 'roles') return ['super_admin'];
+        return undefined;
+      }),
+    } as unknown as Reflector;
+    const jwtService = {
+      verifyAsync: jest.fn().mockResolvedValue({ sub: 'admin-1', role: 'admin' }),
+    } as unknown as JwtService;
+    const configService = {
+      get: jest.fn().mockReturnValue('test-secret'),
+    } as unknown as ConfigService;
+    const guard = new RolesGuard(reflector, jwtService, configService);
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          headers: { authorization: 'Bearer token' },
+          body: {},
+          params: {},
+          query: {},
+        }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'Insufficient role permissions',
+    );
+  });
+
   it('allows merchant-read access for a regular user who already has a merchant account', async () => {
     const reflector = {
       getAllAndOverride: jest.fn((key: string) => {

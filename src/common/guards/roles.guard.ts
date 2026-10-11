@@ -62,7 +62,10 @@ export class RolesGuard implements CanActivate {
     if (requiredRoles && requiredRoles.length > 0) {
       const role = String(user?.role || 'user').toLowerCase();
       const allowed = requiredRoles.map((item) => String(item).toLowerCase());
-      if (role !== UserRole.ADMIN && role !== UserRole.SUPER_ADMIN && !allowed.includes(role)) {
+      const privilegedRoleBypass =
+        (role === UserRole.ADMIN || role === UserRole.SUPER_ADMIN) &&
+        !allowed.includes(UserRole.SUPER_ADMIN);
+      if (!allowed.includes(role) && !privilegedRoleBypass) {
         throw new ForbiddenException('Insufficient role permissions');
       }
     }

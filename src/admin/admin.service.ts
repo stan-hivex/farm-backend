@@ -6,6 +6,14 @@ import { WithdrawService } from '../withdraw/withdraw.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { enrichAdminListItem } from './admin-response-utils';
+import { UserRole } from '../common/enums';
+
+const nonStaffRoleFilter = () => ({
+  OR: [
+    { role: { notIn: [UserRole.ADMIN, UserRole.SUPER_ADMIN] } },
+    { role: null },
+  ],
+});
 
 @Injectable()
 export class AdminService {
@@ -28,7 +36,9 @@ export class AdminService {
       pendingDisputes,
     ] =
       await Promise.all([
-        this.prisma.users.count({ where: { is_deleted: false } }),
+        this.prisma.users.count({
+          where: { is_deleted: false, ...nonStaffRoleFilter() },
+        }),
         this.prisma.merchants.count({ where: { status: 'approved' } }),
         this.prisma.escrow_contracts.count({ where: { status: 'active' } }),
         this.prisma.transactions.aggregate({
@@ -54,13 +64,20 @@ export class AdminService {
 
   async listUsers(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
-    const where: any = { is_deleted: false };
+    const where: any = {
+      is_deleted: false,
+      AND: [
+        nonStaffRoleFilter(),
+      ],
+    };
     if (query.search)
-      where.OR = [
+      where.AND.push({
+        OR: [
         { username: { contains: query.search, mode: 'insensitive' } },
         { phone: { contains: query.search } },
         { email: { contains: query.search, mode: 'insensitive' } },
-      ];
+        ],
+      });
     if (query.role) where.role = query.role;
     if (query.kyc_status) where.kyc_status = query.kyc_status;
 
@@ -182,7 +199,14 @@ export class AdminService {
         merchants_merchants_user_idTousers: true,
       },
     });
-    if (!user) throw new NotFoundException('User not found');
+    if (
+      !user ||
+      user.is_deleted ||
+      user.role === UserRole.ADMIN ||
+      user.role === UserRole.SUPER_ADMIN
+    ) {
+      throw new NotFoundException('User not found');
+    }
     return { data: user };
   }
 
@@ -191,7 +215,23 @@ export class AdminService {
     dto: { is_active?: boolean; is_suspended?: boolean },
     adminId: string,
   ) {
-    const user = await this.prisma.users.update({ where: { id: userId }, data: dto });
+    const existingUser = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { role: true, is_deleted: true },
+    });
+    if (
+      !existingUser ||
+      existingUser.is_deleted ||
+      existingUser.role === UserRole.ADMIN ||
+      existingUser.role === UserRole.SUPER_ADMIN
+    ) {
+      throw new NotFoundException('User not found');
+    }
+
+    const user = await this.prisma.users.update({
+      where: { id: userId },
+      data: dto,
+    });
     await this.prisma.audit_logs.create({
       data: {
         user_id: adminId, action: 'UPDATE_USER_STATUS',
@@ -200,6 +240,138 @@ export class AdminService {
       },
     });
     return { data: user, message: 'User status updated' };
+  }
+
+  async listAdmins(query: any) {
+    const { skip, take, page, limit } = paginationParams(
+      query.page,
+      query.limit,
+    );
+    const where: any = { role: 'admin', is_deleted: false };
+    if (query.search) {
+      where.OR = [
+        { username: { contains: query.search, mode: 'insensitive' } },
+        { email: { contains: query.search, mode: 'insensitive' } },
+        { first_name: { contains: query.search, mode: 'insensitive' } },
+        { last_name: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.users.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
+        select: {
+          id: true,
+          first_name: true,
+          last_name: true,
+          username: true,
+          email: true,
+          phone: true,
+          role: true,
+          is_active: true,
+          is_suspended: true,
+          created_at: true,
+        },
+      }),
+      this.prisma.users.count({ where }),
+    ]);
+
+    return { data, total, page, limit };
+  }
+
+  async setAdminStatus(
+    userId: string,
+    status: 'suspend' | 'approve',
+    actorId: string,
+  ) {
+    const admin = await this.prisma.users.findFirst({
+      where: { id: userId, role: 'admin', is_deleted: false },
+      select: { id: true },
+    });
+    if (!admin) throw new NotFoundException('Admin not found');
+
+    const data =
+      status === 'suspend'
+        ? { is_suspended: true }
+        : { is_active: true, is_suspended: false };
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.users.update({
+        where: { id: userId },
+        data,
+        select: {
+          id: true,
+          first_name: true,
+          last_name: true,
+          username: true,
+          email: true,
+          phone: true,
+          role: true,
+          is_active: true,
+          is_suspended: true,
+        },
+      });
+      await tx.user_sessions.updateMany({
+        where: {
+          user_id: userId,
+          OR: [{ is_revoked: false }, { is_revoked: null }],
+        },
+        data: { is_revoked: true },
+      });
+      await tx.audit_logs.create({
+        data: {
+          user_id: actorId,
+          action: status === 'suspend' ? 'SUSPEND_ADMIN' : 'APPROVE_ADMIN',
+          entity_type: 'users',
+          entity_id: userId,
+          new_values: data as any,
+        },
+      });
+      return user;
+    });
+
+    return {
+      data: updated,
+      message:
+        status === 'suspend'
+          ? 'Admin suspended successfully'
+          : 'Admin approved successfully',
+    };
+  }
+
+  async deleteAdmin(userId: string, actorId: string) {
+    const admin = await this.prisma.users.findFirst({
+      where: { id: userId, role: 'admin', is_deleted: false },
+      select: { id: true },
+    });
+    if (!admin) throw new NotFoundException('Admin not found');
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.users.update({
+        where: { id: userId },
+        data: { is_deleted: true },
+      });
+      await tx.user_sessions.updateMany({
+        where: {
+          user_id: userId,
+          OR: [{ is_revoked: false }, { is_revoked: null }],
+        },
+        data: { is_revoked: true },
+      });
+      await tx.audit_logs.create({
+        data: {
+          user_id: actorId,
+          action: 'DELETE_ADMIN',
+          entity_type: 'users',
+          entity_id: userId,
+        },
+      });
+    });
+
+    return { message: 'Admin deleted successfully' };
   }
 
   async listAllEscrows(query: any) {
@@ -617,7 +789,9 @@ export class AdminService {
 
     const [totalUsers, totalEscrows, totalTransactions, pendingKyc, pendingPayouts, totalSecurityEvents] =
       await Promise.all([
-        this.prisma.users.count({ where: { is_deleted: false } }),
+        this.prisma.users.count({
+          where: { is_deleted: false, ...nonStaffRoleFilter() },
+        }),
         this.prisma.escrow_contracts.count({ where: {} }),
         this.prisma.transactions.count({ where: {} }),
         this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
@@ -975,20 +1149,16 @@ export class AdminService {
         skip,
         take,
         orderBy: { created_at: 'asc' },
-        select: {
-          id: true,
-          user_id: true,
-          document_type: true,
-          document_number: true,
-          first_name: true,
-          last_name: true,
-          status: true,
-          created_at: true,
-          front_image_url: true,
-          back_image_url: true,
-          selfie_image_url: true,
+        include: {
           users_kyc_documents_user_idTousers: {
-            select: { id: true, username: true, email: true, phone: true },
+            select: {
+              id: true,
+              username: true,
+              first_name: true,
+              last_name: true,
+              email: true,
+              phone: true,
+            },
           },
         },
       }),
@@ -996,22 +1166,40 @@ export class AdminService {
     ]);
     return {
       data: items.map((d) => ({
-        id: d.id,
-        user_id: d.user_id,
-        username: d.users_kyc_documents_user_idTousers?.username,
-        email: d.users_kyc_documents_user_idTousers?.email,
-        phone: d.users_kyc_documents_user_idTousers?.phone,
-        first_name: d.first_name,
-        last_name: d.last_name,
-        document_type: d.document_type,
-        document_number: d.document_number,
-        status: d.status,
-        created_at: d.created_at,
-        front_image_url: d.front_image_url,
-        back_image_url: d.back_image_url,
-        selfie_image_url: d.selfie_image_url,
+        ...d,
+        front_image: d.front_image_url ?? d.front_image,
+        back_image: d.back_image_url ?? d.back_image,
+        selfie_image: d.selfie_image_url ?? d.selfie_image,
       })),
       meta: paginate(total, page, limit),
+    };
+  }
+
+  async getKycDocument(kycDocId: string) {
+    const document = await this.prisma.kyc_documents.findUnique({
+      where: { id: kycDocId },
+      include: {
+        users_kyc_documents_user_idTousers: {
+          select: {
+            id: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+    if (!document) throw new NotFoundException('KYC document not found');
+
+    return {
+      data: {
+        ...document,
+        front_image: document.front_image_url ?? document.front_image,
+        back_image: document.back_image_url ?? document.back_image,
+        selfie_image: document.selfie_image_url ?? document.selfie_image,
+      },
     };
   }
 
@@ -1145,7 +1333,14 @@ export class AdminService {
 
   async updateUser(userId: string, dto: any, adminId: string) {
     const user = await this.prisma.users.findUnique({ where: { id: userId } });
-    if (!user || user.is_deleted) throw new NotFoundException('User not found');
+    if (
+      !user ||
+      user.is_deleted ||
+      user.role === UserRole.ADMIN ||
+      user.role === UserRole.SUPER_ADMIN
+    ) {
+      throw new NotFoundException('User not found');
+    }
 
     const updateData: any = {};
     if (dto.first_name) updateData.first_name = dto.first_name;
@@ -1154,7 +1349,15 @@ export class AdminService {
     if (dto.phone) updateData.phone = dto.phone;
     if (dto.email) updateData.email = dto.email;
     if (dto.country) updateData.country = dto.country;
-    if (dto.role) updateData.role = dto.role;
+    if (dto.role) {
+      const role = String(dto.role).toLowerCase();
+      if (role === UserRole.ADMIN || role === UserRole.SUPER_ADMIN) {
+        throw new ForbiddenException(
+          'Staff roles can only be managed by superadmins',
+        );
+      }
+      updateData.role = role;
+    }
     if (dto.is_active !== undefined) updateData.is_active = dto.is_active;
     if (dto.is_suspended !== undefined) updateData.is_suspended = dto.is_suspended;
 
@@ -1173,7 +1376,14 @@ export class AdminService {
 
   async deleteUser(userId: string, adminId: string) {
     const user = await this.prisma.users.findUnique({ where: { id: userId } });
-    if (!user || user.is_deleted) throw new NotFoundException('User not found');
+    if (
+      !user ||
+      user.is_deleted ||
+      user.role === UserRole.ADMIN ||
+      user.role === UserRole.SUPER_ADMIN
+    ) {
+      throw new NotFoundException('User not found');
+    }
 
     const deleted = await this.prisma.users.update({
       where: { id: userId },
@@ -1308,7 +1518,9 @@ export class AdminService {
   async getSuperadminDashboard() {
     const [totalUsers, totalTransactions, totalRevenue, activeTransactions, flaggedTx, supportTickets, pendingDisputes, pendingKyc] =
       await Promise.all([
-        this.prisma.users.count({ where: { is_deleted: false } }),
+        this.prisma.users.count({
+          where: { is_deleted: false, ...nonStaffRoleFilter() },
+        }),
         this.prisma.transactions.count({ where: { status: 'completed' } }),
         this.prisma.transactions.aggregate({
           where: { status: 'completed' },

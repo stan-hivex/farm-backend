@@ -16,6 +16,7 @@ import {
 } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { CloudinaryService } from '../common/cloudinary.service';
 
 @Injectable()
 export class EscrowService {
@@ -28,6 +29,7 @@ export class EscrowService {
     private notificationsService: NotificationsService,
     private securityService: SecurityService,
     private websocket: WebsocketGateway,
+    private cloudinaryService?: CloudinaryService,
   ) {}
 
   private async getSuperadminWallet() {
@@ -356,31 +358,72 @@ export class EscrowService {
     return { message: 'Escrow released to seller' };
   }
 
-  async dispute(escrowId: string, userId: string, dto: { reason: string }) {
+  async dispute(
+    escrowId: string,
+    userId: string,
+    dto: {
+      reason: string;
+      attachmentBase64?: string;
+      attachmentMimeType?: string;
+    },
+  ) {
+    const reason = dto.reason?.trim();
+    if (!reason) throw new BadRequestException('Dispute reason is required');
+    if (reason.length > 2000) {
+      throw new BadRequestException('Dispute reason must be 2000 characters or fewer');
+    }
+    if (Boolean(dto.attachmentBase64) !== Boolean(dto.attachmentMimeType)) {
+      throw new BadRequestException(
+        'Both attachment data and media type are required',
+      );
+    }
+
     const escrow = await this.getEscrowOrFail(escrowId);
     if (escrow.buyer_id !== userId && escrow.seller_id !== userId)
       throw new ForbiddenException('Not a party to this escrow');
     if (escrow.status !== 'active')
       throw new BadRequestException('Can only dispute an active escrow');
+    const attachmentUrl = dto.attachmentBase64
+      ? await this.uploadDisputeAttachment(
+          escrowId,
+          dto.attachmentMimeType!,
+          dto.attachmentBase64,
+        )
+      : null;
     const otherPartyId =
       escrow.buyer_id === userId ? escrow.seller_id : escrow.buyer_id;
-    await this.prisma.escrow_contracts.update({
-      where: { id: escrowId },
-      data: {
-        status: 'disputed',
-        disputed_at: new Date(),
-        evidence: { reason: dto.reason, disputed_by: userId },
-      },
-    });
-    await this.prisma.escrow_messages.create({
-      data: {
-        escrow_id: escrowId,
-        sender_id: userId,
-        message: `DISPUTE RAISED: ${dto.reason}`,
-      },
-    });
     if (!otherPartyId)
       throw new BadRequestException('Escrow has no other party');
+
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.escrow_contracts.updateMany({
+        where: { id: escrowId, status: 'active' },
+        data: {
+          status: 'disputed',
+          disputed_at: new Date(),
+          evidence: {
+            reason,
+            disputed_by: userId,
+            ...(attachmentUrl
+              ? {
+                  attachment_url: attachmentUrl,
+                  attachment_mime_type: dto.attachmentMimeType,
+                }
+              : {}),
+          },
+        },
+      });
+      if (updated.count !== 1) {
+        throw new BadRequestException('Can only dispute an active escrow');
+      }
+      await tx.escrow_messages.create({
+        data: {
+          escrow_id: escrowId,
+          sender_id: userId,
+          message: `DISPUTE RAISED: ${reason}`,
+        },
+      });
+    });
 
     await Promise.all([
       this.notificationsService.sendNotification(userId, {
@@ -390,7 +433,7 @@ export class EscrowService {
         body: `You have raised a dispute for escrow: ${escrow.title}. Our admin team will review within 24 hours.`,
         metadata: {
           escrow_id: escrow.id,
-          reason: dto.reason,
+          reason,
           amount: Number(escrow.amount),
         },
       }),
@@ -402,6 +445,7 @@ export class EscrowService {
         metadata: {
           escrow_id: escrow.id,
           disputed_by: userId,
+          reason,
           amount: Number(escrow.amount),
         },
       }),
@@ -410,6 +454,54 @@ export class EscrowService {
     );
 
     return { message: 'Dispute raised. Admin will review within 24 hours.' };
+  }
+
+  private async uploadDisputeAttachment(
+    escrowId: string,
+    mimeType: string,
+    base64: string,
+  ): Promise<string> {
+    const allowedMimeTypes = new Set([
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+      'image/heic',
+      'image/heif',
+      'video/mp4',
+      'video/quicktime',
+      'video/webm',
+      'video/x-m4v',
+    ]);
+    if (!allowedMimeTypes.has(mimeType)) {
+      throw new BadRequestException('Only photos and videos are supported');
+    }
+    if (
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+        base64,
+      )
+    ) {
+      throw new BadRequestException('Invalid attachment data');
+    }
+
+    const bytes = Buffer.from(base64, 'base64');
+    const maxAttachmentBytes = 20 * 1024 * 1024;
+    if (
+      bytes.length === 0 ||
+      bytes.length > maxAttachmentBytes ||
+      bytes.toString('base64') !== base64
+    ) {
+      throw new BadRequestException('Attachments must be smaller than 20 MB');
+    }
+
+    if (!this.cloudinaryService) {
+      throw new Error('Escrow evidence storage is not configured');
+    }
+    return this.cloudinaryService.uploadEscrowEvidence(
+      mimeType,
+      base64,
+      escrowId,
+    );
   }
 
   async cancel(escrowId: string, userId: string) {

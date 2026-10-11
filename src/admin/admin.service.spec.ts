@@ -47,6 +47,217 @@ describe('AdminService.broadcastNotification', () => {
     );
   });
 
+});
+
+describe('AdminService admin management', () => {
+    it('lists only non-deleted admin accounts', async () => {
+      const prisma = {
+        users: {
+          findMany: jest.fn().mockResolvedValue([]),
+          count: jest.fn().mockResolvedValue(0),
+        },
+      };
+      const service = new AdminService(
+        prisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await service.listAdmins({ page: 1, limit: 20 });
+
+      expect(prisma.users.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { role: 'admin', is_deleted: false },
+        }),
+      );
+      expect(prisma.users.count).toHaveBeenCalledWith({
+        where: { role: 'admin', is_deleted: false },
+      });
+    });
+
+    it('keeps admin and superadmin accounts out of ordinary user lists', async () => {
+      const prisma = {
+        users: {
+          findMany: jest.fn().mockResolvedValue([]),
+          count: jest.fn().mockResolvedValue(0),
+        },
+      };
+      const service = new AdminService(
+        prisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await service.listUsers({ page: 1, limit: 20 });
+
+      expect(prisma.users.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            is_deleted: false,
+            AND: [
+              {
+                OR: [
+                  { role: { notIn: ['admin', 'super_admin'] } },
+                  { role: null },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+    });
+
+    it('revokes admin sessions when suspending an account', async () => {
+      const tx = {
+        users: {
+          update: jest.fn().mockResolvedValue({
+            id: 'admin-1',
+            role: 'admin',
+            is_suspended: true,
+          }),
+        },
+        user_sessions: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        audit_logs: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const prisma = {
+        users: { findFirst: jest.fn().mockResolvedValue({ id: 'admin-1' }) },
+        $transaction: jest.fn((callback: (client: any) => unknown) =>
+          callback(tx),
+        ),
+      };
+      const service = new AdminService(
+        prisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await service.setAdminStatus('admin-1', 'suspend', 'superadmin-1');
+
+      expect(tx.users.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'admin-1' },
+          data: { is_suspended: true },
+        }),
+      );
+      expect(tx.user_sessions.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            user_id: 'admin-1',
+            OR: [{ is_revoked: false }, { is_revoked: null }],
+          },
+          data: { is_revoked: true },
+        }),
+      );
+      expect(tx.audit_logs.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ action: 'SUSPEND_ADMIN' }),
+        }),
+      );
+    });
+
+    it('does not allow the ordinary user editor to assign staff roles', async () => {
+      const prisma = {
+        users: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'user-1',
+            role: 'user',
+            is_deleted: false,
+          }),
+          update: jest.fn(),
+        },
+      };
+      const service = new AdminService(
+        prisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await expect(
+        service.updateUser('user-1', { role: 'admin' }, 'admin-1'),
+      ).rejects.toThrow('Staff roles can only be managed by superadmins');
+      expect(prisma.users.update).not.toHaveBeenCalled();
+    });
+
+    it('excludes admin and superadmin roles from ordinary user counts', async () => {
+      const prisma = {
+        users: { count: jest.fn().mockResolvedValue(0) },
+        merchants: { count: jest.fn().mockResolvedValue(0) },
+        escrow_contracts: { count: jest.fn().mockResolvedValue(0) },
+        transactions: {
+          aggregate: jest.fn().mockResolvedValue({
+            _sum: { amount: 0 },
+            _count: 0,
+          }),
+        },
+        kyc_documents: { count: jest.fn().mockResolvedValue(0) },
+        merchant_payouts: { count: jest.fn().mockResolvedValue(0) },
+      };
+      const service = new AdminService(
+        prisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await service.getDashboardStats();
+
+      expect(prisma.users.count).toHaveBeenCalledWith({
+        where: {
+          is_deleted: false,
+          OR: [
+            { role: { notIn: ['admin', 'super_admin'] } },
+            { role: null },
+          ],
+        },
+      });
+    });
+
+    it('excludes admin and superadmin roles from the superadmin dashboard total', async () => {
+      const prisma = {
+        users: { count: jest.fn().mockResolvedValue(0) },
+        transactions: {
+          count: jest.fn().mockResolvedValue(0),
+          aggregate: jest.fn().mockResolvedValue({
+            _sum: { amount: 0, fee: 0 },
+            _count: { id: 0 },
+          }),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        support_tickets: { count: jest.fn().mockResolvedValue(0) },
+        escrow_contracts: { count: jest.fn().mockResolvedValue(0) },
+        kyc_documents: { count: jest.fn().mockResolvedValue(0) },
+      };
+      const service = new AdminService(
+        prisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await service.getSuperadminDashboard();
+
+      expect(prisma.users.count).toHaveBeenCalledWith({
+        where: {
+          is_deleted: false,
+          OR: [
+            { role: { notIn: ['admin', 'super_admin'] } },
+            { role: null },
+          ],
+        },
+      });
+    });
+  });
+
   describe('AdminService.resolveDispute', () => {
     const makeService = (escrow: any) => {
       const prisma = {
@@ -123,6 +334,7 @@ describe('AdminService.broadcastNotification', () => {
     });
   });
 
+describe('AdminService.broadcastNotification recipient targeting', () => {
   it('sends to explicitly supplied recipients when recipient IDs are provided', async () => {
     const prisma = {
       users: {

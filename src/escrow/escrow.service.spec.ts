@@ -233,6 +233,111 @@ describe('EscrowService dispute resolution', () => {
   });
 });
 
+describe('EscrowService dispute evidence', () => {
+  const buildService = () => {
+    const tx: any = {
+      escrow_contracts: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      escrow_messages: {
+        create: jest.fn().mockResolvedValue({ id: 'message-1' }),
+      },
+    };
+    const prisma: any = {
+      escrow_contracts: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'escrow-1',
+          buyer_id: 'buyer-1',
+          seller_id: 'seller-1',
+          status: 'active',
+          title: 'Order',
+          amount: 20,
+        }),
+      },
+      $transaction: jest.fn((work) => work(tx)),
+    };
+    const cloudinary = {
+      uploadEscrowEvidence: jest.fn().mockResolvedValue(
+        'https://res.cloudinary.com/example/image/upload/evidence.jpg',
+      ),
+    };
+    const notifications = {
+      sendNotification: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new EscrowService(
+      prisma,
+      {} as any,
+      {} as any,
+      notifications as any,
+      {} as any,
+      {} as any,
+      cloudinary as any,
+    );
+
+    return { service, tx, cloudinary };
+  };
+
+  it('uploads attachment and stores its URL and MIME type with the dispute', async () => {
+    const { service, tx, cloudinary } = buildService();
+
+    await service.dispute('escrow-1', 'buyer-1', {
+      reason: 'The item arrived damaged',
+      attachmentBase64: Buffer.from('photo').toString('base64'),
+      attachmentMimeType: 'image/jpeg',
+    });
+
+    expect(cloudinary.uploadEscrowEvidence).toHaveBeenCalledWith(
+      'image/jpeg',
+      Buffer.from('photo').toString('base64'),
+      'escrow-1',
+    );
+    expect(tx.escrow_contracts.updateMany).toHaveBeenCalledWith({
+      where: { id: 'escrow-1', status: 'active' },
+      data: {
+        status: 'disputed',
+        disputed_at: expect.any(Date),
+        evidence: {
+          reason: 'The item arrived damaged',
+          disputed_by: 'buyer-1',
+          attachment_url:
+            'https://res.cloudinary.com/example/image/upload/evidence.jpg',
+          attachment_mime_type: 'image/jpeg',
+        },
+      },
+    });
+    expect(tx.escrow_messages.create).toHaveBeenCalledWith({
+      data: {
+        escrow_id: 'escrow-1',
+        sender_id: 'buyer-1',
+        message: 'DISPUTE RAISED: The item arrived damaged',
+      },
+    });
+  });
+
+  it('rejects unsupported media and malformed attachment data', async () => {
+    const { service, cloudinary } = buildService();
+    const attachmentBase64 = Buffer.from('photo').toString('base64');
+
+    await expect(
+      service.dispute('escrow-1', 'buyer-1', {
+        reason: 'Dispute',
+        attachmentBase64,
+        attachmentMimeType: 'application/pdf',
+      }),
+    ).rejects.toThrow('Only photos and videos are supported');
+
+    await expect(
+      service.dispute('escrow-1', 'buyer-1', {
+        reason: 'Dispute',
+        attachmentBase64: 'not base64!',
+        attachmentMimeType: 'image/jpeg',
+      }),
+    ).rejects.toThrow('Invalid attachment data');
+
+    expect(cloudinary.uploadEscrowEvidence).not.toHaveBeenCalled();
+  });
+});
+
 describe('EscrowService creation fee', () => {
   it('requires enough available balance for both principal and the 1.5% fee', async () => {
     const prisma: any = {

@@ -23,6 +23,7 @@ export class SafeInputValidationPipe implements PipeTransform {
     'back_image_url',
     'selfieImageUrl',
     'selfie_image_url',
+    'attachmentBase64',
     'paymentMethod',
     'payment_method',
     'method',

@@ -22,7 +22,11 @@ class CreateEscrowDto extends EscrowAuthDto {
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsInt() @Min(1) @Max(90) auto_release_days?: number;
 }
-class DisputeDto { @IsNotEmpty() @IsString() reason!: string; }
+class DisputeDto {
+  @IsNotEmpty() @IsString() @MaxLength(2000) reason!: string;
+  @IsOptional() @IsString() attachmentBase64?: string;
+  @IsOptional() @IsString() attachmentMimeType?: string;
+}
 class MessageDto { @IsNotEmpty() @IsString() message!: string; }
 
 @ApiTags('Escrow')

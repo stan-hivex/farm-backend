@@ -2,6 +2,58 @@ import { NotFoundException } from '@nestjs/common';
 import { SupportService } from './support.service';
 
 describe('SupportService', () => {
+  it('creates an enquiry with an uploaded attachment', async () => {
+    const ticket = { id: 'ticket-1', subject: 'Broken item' };
+    const tx: any = {
+      support_tickets: {
+        create: jest.fn().mockResolvedValue(ticket),
+      },
+      support_messages: {
+        create: jest.fn().mockResolvedValue({ id: 'attachment-1' }),
+      },
+    };
+    const prisma: any = {
+      $transaction: jest.fn((work) => work(tx)),
+    };
+    const cloudinary = {
+      uploadSupportAttachment: jest
+        .fn()
+        .mockResolvedValue('https://res.cloudinary.com/demo/image/upload/photo.jpg'),
+    };
+    const service = new SupportService(
+      prisma,
+      { sendNotification: jest.fn() } as any,
+      cloudinary as any,
+    );
+
+    await expect(
+      service.createTicket('user-1', 'Broken item', '', {
+        attachmentBase64: Buffer.from('photo').toString('base64'),
+        attachmentMimeType: 'image/jpeg',
+      }),
+    ).resolves.toEqual({
+      data: ticket,
+      message: 'Your enquiry has been sent to support.',
+    });
+    expect(tx.support_tickets.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          user_id: 'user-1',
+          message: null,
+        }),
+      }),
+    );
+    expect(tx.support_messages.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          sender_id: 'user-1',
+          attachment_url:
+            'https://res.cloudinary.com/demo/image/upload/photo.jpg',
+        }),
+      }),
+    );
+  });
+
   it('lists admin enquiries with customer details and conversation history', async () => {
     const tickets = [{ id: 'ticket-1', support_messages: [] }];
     const prisma: any = {
@@ -10,7 +62,7 @@ describe('SupportService', () => {
       },
     };
     const notifications = { sendNotification: jest.fn() };
-    const service = new SupportService(prisma, notifications as any);
+    const service = new SupportService(prisma, notifications as any, {} as any);
 
     await expect(service.listAdminTickets()).resolves.toEqual({
       data: tickets,
@@ -58,7 +110,7 @@ describe('SupportService', () => {
     const notifications = {
       sendNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
     };
-    const service = new SupportService(prisma, notifications as any);
+    const service = new SupportService(prisma, notifications as any, {} as any);
 
     await service.replyToTicketAsAdmin(
       'ticket-1',
@@ -71,6 +123,7 @@ describe('SupportService', () => {
         ticket_id: 'ticket-1',
         sender_id: 'admin-1',
         message: 'We can help.',
+        attachment_url: null,
       },
       include: {
         users: {
@@ -136,7 +189,7 @@ describe('SupportService', () => {
     const notifications = {
       sendNotification: jest.fn().mockRejectedValue(new Error('Push failed')),
     };
-    const service = new SupportService(prisma, notifications as any);
+    const service = new SupportService(prisma, notifications as any, {} as any);
 
     await expect(
       service.replyToTicketAsAdmin('ticket-1', 'admin-1', 'We can help.'),
@@ -165,7 +218,7 @@ describe('SupportService', () => {
       $transaction: jest.fn((work) => work(tx)),
     };
     const notifications = { sendNotification: jest.fn() };
-    const service = new SupportService(prisma, notifications as any);
+    const service = new SupportService(prisma, notifications as any, {} as any);
 
     await service.replyToTicketAsUser('ticket-1', 'user-1', 'More details');
 
@@ -174,6 +227,7 @@ describe('SupportService', () => {
         ticket_id: 'ticket-1',
         sender_id: 'user-1',
         message: 'More details',
+        attachment_url: null,
       },
       include: {
         users: {
@@ -197,6 +251,58 @@ describe('SupportService', () => {
     expect(notifications.sendNotification).not.toHaveBeenCalled();
   });
 
+  it('uploads and saves a support attachment with a message reply', async () => {
+    const tx: any = {
+      support_messages: {
+        create: jest.fn().mockResolvedValue({ id: 'reply-with-media' }),
+      },
+      support_tickets: {
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const prisma: any = {
+      support_tickets: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ticket-1',
+          user_id: 'user-1',
+          subject: 'Help',
+        }),
+      },
+      $transaction: jest.fn((work) => work(tx)),
+    };
+    const cloudinary = {
+      uploadSupportAttachment: jest
+        .fn()
+        .mockResolvedValue('https://res.cloudinary.com/demo/image/upload/photo.jpg'),
+    };
+    const service = new SupportService(
+      prisma,
+      { sendNotification: jest.fn() } as any,
+      cloudinary as any,
+    );
+
+    await service.replyToTicketAsUser('ticket-1', 'user-1', 'See attached', {
+      attachmentBase64: Buffer.from('photo').toString('base64'),
+      attachmentMimeType: 'image/jpeg',
+    });
+
+    expect(cloudinary.uploadSupportAttachment).toHaveBeenCalledWith(
+      'image/jpeg',
+      Buffer.from('photo').toString('base64'),
+      'ticket-1',
+    );
+    expect(tx.support_messages.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          ticket_id: 'ticket-1',
+          message: 'See attached',
+          attachment_url:
+            'https://res.cloudinary.com/demo/image/upload/photo.jpg',
+        }),
+      }),
+    );
+  });
+
   it('does not allow users to reply to another user’s ticket', async () => {
     const tx: any = {
       support_messages: { create: jest.fn() },
@@ -211,9 +317,11 @@ describe('SupportService', () => {
       },
       $transaction: jest.fn((work) => work(tx)),
     };
-    const service = new SupportService(prisma, {
-      sendNotification: jest.fn(),
-    } as any);
+    const service = new SupportService(
+      prisma,
+      { sendNotification: jest.fn() } as any,
+      {} as any,
+    );
 
     await expect(
       service.replyToTicketAsUser('ticket-1', 'other-user', 'Reply'),

@@ -13,7 +13,7 @@ async function bootstrap() {
   // SECURITY FIRST: Validate all security-critical environment variables
   // This runs BEFORE creating the app to fail fast if secrets are missing
   validateSecurityEnvironment();
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
 
   const rawBodySaver = (req: express.Request, res: express.Response, buf: Buffer, encoding: string) => {
     if (buf && buf.length) {
@@ -22,8 +22,8 @@ async function bootstrap() {
     }
   };
 
-  app.use(express.json({ verify: rawBodySaver }));
-  app.use(express.urlencoded({ extended: true, verify: rawBodySaver }));
+  app.use(express.json({ limit: '29mb', verify: rawBodySaver }));
+  app.use(express.urlencoded({ extended: true, limit: '29mb', verify: rawBodySaver }));
 
   const isProduction = process.env.NODE_ENV === 'production';
 

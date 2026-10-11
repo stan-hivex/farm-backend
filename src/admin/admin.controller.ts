@@ -112,6 +112,28 @@ export class AdminController {
   @Permissions('admin:read')
   @Get('users')                   users(@Query() q: any) { return this.svc.listUsers(q); }
   @Permissions('admin:read')
+  @Roles(UserRole.SUPER_ADMIN)
+  @Get('admins')
+  admins(@Query() q: any) { return this.svc.listAdmins(q); }
+  @Permissions('admin:write')
+  @Roles(UserRole.SUPER_ADMIN)
+  @Patch('admins/:id/suspend')
+  suspendAdmin(@Param('id') id: string, @CurrentUser() u: any) {
+    return this.svc.setAdminStatus(id, 'suspend', u.id);
+  }
+  @Permissions('admin:write')
+  @Roles(UserRole.SUPER_ADMIN)
+  @Patch('admins/:id/approve')
+  approveAdmin(@Param('id') id: string, @CurrentUser() u: any) {
+    return this.svc.setAdminStatus(id, 'approve', u.id);
+  }
+  @Permissions('admin:write')
+  @Roles(UserRole.SUPER_ADMIN)
+  @Delete('admins/:id')
+  deleteAdmin(@Param('id') id: string, @CurrentUser() u: any) {
+    return this.svc.deleteAdmin(id, u.id);
+  }
+  @Permissions('admin:read')
   @Get('users/:id')               user(@Param('id') id: string) { return this.svc.getUserDetail(id); }
   @Permissions('admin:write')
   @Patch('users/:id/status')      userStatus(@Param('id') id: string, @Body() dto: UserStatusDto, @CurrentUser() u: any) { return this.svc.updateUserStatus(id, dto, u.id); }
@@ -145,6 +167,8 @@ export class AdminController {
   @Post('notifications/broadcast') broadcastNotification(@CurrentUser() u: any, @Body() dto: BroadcastNotificationDto) { return this.svc.broadcastNotification(u.id, dto); }
   @Permissions('admin:read')
   @Get('kyc/queue')               kycQueue(@Query() q: any) { return this.svc.listKycQueue(q); }
+  @Permissions('admin:read')
+  @Get('kyc/:id')                 kycDetail(@Param('id') id: string) { return this.svc.getKycDocument(id); }
   @Permissions('admin:write')
   @Post('kyc/:id/review')         reviewKyc(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: KycReviewDto) { return this.svc.reviewKyc(id, u.id, dto as any); }
   @Permissions('admin:read')

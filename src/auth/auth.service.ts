@@ -303,7 +303,7 @@ export class AuthService {
       return created;
     });
 
-    await this.sendOtp(admin.id, admin.phone, 'phone_verification');
+    await this.sendOtp(admin.id, admin.phone, 'phone_verification', true);
     return { message: 'Admin account created successfully' };
   }
 
