@@ -26,6 +26,7 @@ import { PaymentsService } from '../payments/payments.service';
 import { QrService } from './qr.service';
 import { Throttle } from '@nestjs/throttler';
 import { DepositService } from '../deposit/deposit.service';
+import { MERCHANT_CHECKOUT_URL } from './merchant-checkout.constants';
 
 class MerchantCheckoutPaymentDto {
   @IsString()
@@ -188,10 +189,7 @@ export class MerchantCheckoutController {
         email: dto.email,
         crypto: dto.crypto,
         chain: dto.chain,
-        callbackUrl: this.config.get(
-          'PUBLIC_MERCHANT_CHECKOUT_URL',
-          'https://farmapp-e2145.web.app/merchant-payment/',
-        ),
+        callbackUrl: MERCHANT_CHECKOUT_URL,
       },
       { ip },
     );

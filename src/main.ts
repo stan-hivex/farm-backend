@@ -8,12 +8,19 @@ import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { validateSecurityEnvironment } from './config/environment-validation';
 import { SafeInputValidationPipe } from './common/pipes/safe-input.pipe';
+import { MERCHANT_CHECKOUT_URL } from './qr/merchant-checkout.constants';
 
 async function bootstrap() {
   // SECURITY FIRST: Validate all security-critical environment variables
   // This runs BEFORE creating the app to fail fast if secrets are missing
   validateSecurityEnvironment();
   const app = await NestFactory.create(AppModule, { bodyParser: false });
+  const expressApp = app.getHttpAdapter().getInstance() as express.Express;
+  expressApp.get('/merchant-payment', (req, res) => {
+    const queryIndex = req.originalUrl.indexOf('?');
+    const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : '';
+    return res.redirect(302, `${MERCHANT_CHECKOUT_URL}${query}`);
+  });
 
   const rawBodySaver = (req: express.Request, res: express.Response, buf: Buffer, encoding: string) => {
     if (buf && buf.length) {
@@ -28,7 +35,6 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (isProduction) {
-    const expressApp = app.getHttpAdapter().getInstance() as express.Express;
     expressApp.set('trust proxy', true);
     app.use(
       helmet({

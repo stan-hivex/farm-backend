@@ -1,6 +1,26 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional, Length, IsInt, Min, Max, IsBoolean, MaxLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsNumber,
+  IsPositive,
+  IsOptional,
+  Length,
+  IsInt,
+  Min,
+  Max,
+  IsBoolean,
+  MaxLength,
+} from 'class-validator';
 import { EscrowService } from './escrow.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -26,8 +46,11 @@ class DisputeDto {
   @IsNotEmpty() @IsString() @MaxLength(2000) reason!: string;
   @IsOptional() @IsString() attachmentBase64?: string;
   @IsOptional() @IsString() attachmentMimeType?: string;
+  @IsOptional() @IsString() @MaxLength(2048) attachmentUrl?: string;
 }
-class MessageDto { @IsNotEmpty() @IsString() message!: string; }
+class MessageDto {
+  @IsNotEmpty() @IsString() message!: string;
+}
 
 @ApiTags('Escrow')
 @ApiBearerAuth('JWT')
@@ -37,25 +60,57 @@ export class EscrowController {
   constructor(private readonly svc: EscrowService) {}
 
   @Permissions('escrow:read')
-  @Get()                   list(@CurrentUser() u: any, @Query() q: any) { return this.svc.list(u.id, q); }
+  @Get()
+  list(@CurrentUser() u: any, @Query() q: any) {
+    return this.svc.list(u.id, q);
+  }
 
   @Permissions('escrow:write')
   @Post()
   @UseGuards(JwtGuard, KycGuard)
-  create(@CurrentUser() u: any, @Body() dto: CreateEscrowDto) { return this.svc.create(u.id, dto); }
+  create(@CurrentUser() u: any, @Body() dto: CreateEscrowDto) {
+    return this.svc.create(u.id, dto);
+  }
 
   @Permissions('escrow:read')
-  @Get(':id')              getOne(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.getOne(id, u.id); }
+  @Get(':id')
+  getOne(@CurrentUser() u: any, @Param('id') id: string) {
+    return this.svc.getOne(id, u.id);
+  }
 
   @Permissions('escrow:write')
-  @Post(':id/release')     release(@CurrentUser() u: any, @Param('id') id: string, @Body() dto: EscrowAuthDto) { return this.svc.release(id, u.id, dto); }
+  @Post(':id/release')
+  release(
+    @CurrentUser() u: any,
+    @Param('id') id: string,
+    @Body() dto: EscrowAuthDto,
+  ) {
+    return this.svc.release(id, u.id, dto);
+  }
 
   @Permissions('escrow:write')
-  @Post(':id/dispute')     dispute(@CurrentUser() u: any, @Param('id') id: string, @Body() dto: DisputeDto) { return this.svc.dispute(id, u.id, dto); }
+  @Post(':id/dispute')
+  dispute(
+    @CurrentUser() u: any,
+    @Param('id') id: string,
+    @Body() dto: DisputeDto,
+  ) {
+    return this.svc.dispute(id, u.id, dto);
+  }
 
   @Permissions('escrow:write')
-  @Post(':id/cancel')      cancel(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.cancel(id, u.id); }
+  @Post(':id/cancel')
+  cancel(@CurrentUser() u: any, @Param('id') id: string) {
+    return this.svc.cancel(id, u.id);
+  }
 
   @Permissions('escrow:write')
-  @Post(':id/message')     message(@CurrentUser() u: any, @Param('id') id: string, @Body() dto: MessageDto) { return this.svc.addMessage(id, u.id, dto.message); }
+  @Post(':id/message')
+  message(
+    @CurrentUser() u: any,
+    @Param('id') id: string,
+    @Body() dto: MessageDto,
+  ) {
+    return this.svc.addMessage(id, u.id, dto.message);
+  }
 }

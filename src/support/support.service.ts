@@ -18,10 +18,34 @@ export class SupportService {
 
   private async uploadAttachment(
     ticketId: string,
-    attachment?: { attachmentBase64?: string; attachmentMimeType?: string },
+    attachment?: {
+      attachmentBase64?: string;
+      attachmentMimeType?: string;
+      attachmentUrl?: string;
+    },
   ): Promise<string | null> {
     const base64 = attachment?.attachmentBase64;
     const mimeType = attachment?.attachmentMimeType;
+    const uploadedUrl = attachment?.attachmentUrl;
+    if (uploadedUrl) {
+      let url: URL;
+      try {
+        url = new URL(uploadedUrl);
+      } catch {
+        throw new BadRequestException('Uploaded image URL is invalid');
+      }
+      if (
+        base64 ||
+        !mimeType ||
+        !['image/jpeg', 'image/png', 'image/webp'].includes(mimeType) ||
+        url.protocol !== 'https:' ||
+        url.hostname !== 'res.cloudinary.com' ||
+        !url.pathname.includes('/image/upload/')
+      ) {
+        throw new BadRequestException('Uploaded image URL is invalid');
+      }
+      return uploadedUrl;
+    }
     if (!base64 && !mimeType) return null;
     if (!base64 || !mimeType) {
       throw new BadRequestException(
@@ -44,7 +68,11 @@ export class SupportService {
     if (!allowedMimeTypes.has(mimeType)) {
       throw new BadRequestException('Only photos and videos are supported');
     }
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) {
+    if (
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+        base64,
+      )
+    ) {
       throw new BadRequestException('Invalid attachment data');
     }
 
@@ -54,9 +82,7 @@ export class SupportService {
       bytes.length > this.maxAttachmentBytes ||
       bytes.toString('base64') !== base64
     ) {
-      throw new BadRequestException(
-        'Attachments must be smaller than 20 MB',
-      );
+      throw new BadRequestException('Attachments must be smaller than 20 MB');
     }
 
     return this.cloudinaryService.uploadSupportAttachment(
@@ -70,15 +96,27 @@ export class SupportService {
     userId: string,
     subject: string,
     message: string,
-    attachment?: { attachmentBase64?: string; attachmentMimeType?: string },
+    attachment?: {
+      attachmentBase64?: string;
+      attachmentMimeType?: string;
+      attachmentUrl?: string;
+    },
   ) {
     const normalizedMessage = message?.trim() ?? '';
-    if (!normalizedMessage && !attachment?.attachmentBase64) {
+    if (
+      !normalizedMessage &&
+      !attachment?.attachmentBase64 &&
+      !attachment?.attachmentUrl
+    ) {
       throw new BadRequestException('Add a message or attach a photo or video');
     }
 
     let ticket;
-    if (attachment?.attachmentBase64 || attachment?.attachmentMimeType) {
+    if (
+      attachment?.attachmentBase64 ||
+      attachment?.attachmentMimeType ||
+      attachment?.attachmentUrl
+    ) {
       const ticketId = randomUUID();
       const attachmentUrl = await this.uploadAttachment(ticketId, attachment);
       ticket = await this.prisma.$transaction(async (tx) => {
@@ -182,7 +220,11 @@ export class SupportService {
     senderId: string,
     message: string,
     isAdmin: boolean,
-    attachment?: { attachmentBase64?: string; attachmentMimeType?: string },
+    attachment?: {
+      attachmentBase64?: string;
+      attachmentMimeType?: string;
+      attachmentUrl?: string;
+    },
   ) {
     const ticket = await this.prisma.support_tickets.findUnique({
       where: { id: ticketId },
@@ -193,8 +235,14 @@ export class SupportService {
       throw new NotFoundException('Support enquiry not found');
     }
     const normalizedMessage = message?.trim() ?? '';
-    if (!normalizedMessage && !attachment?.attachmentBase64) {
-      throw new BadRequestException('Enter a message or attach a photo or video');
+    if (
+      !normalizedMessage &&
+      !attachment?.attachmentBase64 &&
+      !attachment?.attachmentUrl
+    ) {
+      throw new BadRequestException(
+        'Enter a message or attach a photo or video',
+      );
     }
     const attachmentUrl = await this.uploadAttachment(ticketId, attachment);
 
@@ -264,7 +312,11 @@ export class SupportService {
     ticketId: string,
     adminId: string,
     message: string,
-    attachment?: { attachmentBase64?: string; attachmentMimeType?: string },
+    attachment?: {
+      attachmentBase64?: string;
+      attachmentMimeType?: string;
+      attachmentUrl?: string;
+    },
   ) {
     return this.replyToTicket(ticketId, adminId, message, true, attachment);
   }
@@ -273,7 +325,11 @@ export class SupportService {
     ticketId: string,
     userId: string,
     message: string,
-    attachment?: { attachmentBase64?: string; attachmentMimeType?: string },
+    attachment?: {
+      attachmentBase64?: string;
+      attachmentMimeType?: string;
+      attachmentUrl?: string;
+    },
   ) {
     return this.replyToTicket(ticketId, userId, message, false, attachment);
   }

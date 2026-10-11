@@ -7,7 +7,13 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -46,6 +52,11 @@ class CreateSupportTicketDto {
   attachmentBase64?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  attachmentUrl?: string;
+
+  @IsOptional()
   @IsIn(SUPPORT_ATTACHMENT_MIME_TYPES)
   attachmentMimeType?: string;
 }
@@ -62,6 +73,11 @@ class ReplyToSupportTicketDto {
   attachmentBase64?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  attachmentUrl?: string;
+
+  @IsOptional()
   @IsIn(SUPPORT_ATTACHMENT_MIME_TYPES)
   attachmentMimeType?: string;
 }
@@ -73,10 +89,7 @@ export class UserSupportController {
 
   @Post()
   @Permissions('profile:write')
-  createTicket(
-    @CurrentUser() user: any,
-    @Body() dto: CreateSupportTicketDto,
-  ) {
+  createTicket(@CurrentUser() user: any, @Body() dto: CreateSupportTicketDto) {
     return this.supportService.createTicket(
       user.id,
       dto.subject,

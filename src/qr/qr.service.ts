@@ -14,6 +14,7 @@ import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { MERCHANT_CHECKOUT_URL } from './merchant-checkout.constants';
 
 @Injectable()
 export class QrService {
@@ -385,11 +386,7 @@ export class QrService {
   }
 
   private checkoutUrl(signedPayload: string) {
-    const baseUrl = this.cfg.get(
-      'PUBLIC_MERCHANT_CHECKOUT_URL',
-      'https://farmapp-e2145.web.app/merchant-payment/',
-    );
     const encodedPayload = Buffer.from(signedPayload, 'utf8').toString('base64url');
-    return `${baseUrl}?qr=${encodedPayload}`;
+    return `${MERCHANT_CHECKOUT_URL}?qr=${encodedPayload}`;
   }
 }

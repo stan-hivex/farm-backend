@@ -365,17 +365,43 @@ export class EscrowService {
       reason: string;
       attachmentBase64?: string;
       attachmentMimeType?: string;
+      attachmentUrl?: string;
     },
   ) {
     const reason = dto.reason?.trim();
     if (!reason) throw new BadRequestException('Dispute reason is required');
     if (reason.length > 2000) {
-      throw new BadRequestException('Dispute reason must be 2000 characters or fewer');
-    }
-    if (Boolean(dto.attachmentBase64) !== Boolean(dto.attachmentMimeType)) {
       throw new BadRequestException(
-        'Both attachment data and media type are required',
+        'Dispute reason must be 2000 characters or fewer',
       );
+    }
+    if (
+      dto.attachmentUrl
+        ? Boolean(dto.attachmentBase64)
+        : Boolean(dto.attachmentBase64) !== Boolean(dto.attachmentMimeType)
+    ) {
+      throw new BadRequestException(
+        'Provide either uploaded image URL or attachment data with its media type',
+      );
+    }
+    if (dto.attachmentUrl) {
+      let attachmentUrl: URL;
+      try {
+        attachmentUrl = new URL(dto.attachmentUrl);
+      } catch {
+        throw new BadRequestException('Uploaded image URL is invalid');
+      }
+      if (
+        !dto.attachmentMimeType ||
+        !['image/jpeg', 'image/png', 'image/webp'].includes(
+          dto.attachmentMimeType,
+        ) ||
+        attachmentUrl.protocol !== 'https:' ||
+        attachmentUrl.hostname !== 'res.cloudinary.com' ||
+        !attachmentUrl.pathname.includes('/image/upload/')
+      ) {
+        throw new BadRequestException('Uploaded image URL is invalid');
+      }
     }
 
     const escrow = await this.getEscrowOrFail(escrowId);
@@ -383,13 +409,15 @@ export class EscrowService {
       throw new ForbiddenException('Not a party to this escrow');
     if (escrow.status !== 'active')
       throw new BadRequestException('Can only dispute an active escrow');
-    const attachmentUrl = dto.attachmentBase64
-      ? await this.uploadDisputeAttachment(
-          escrowId,
-          dto.attachmentMimeType!,
-          dto.attachmentBase64,
-        )
-      : null;
+    const attachmentUrl =
+      dto.attachmentUrl ??
+      (dto.attachmentBase64
+        ? await this.uploadDisputeAttachment(
+            escrowId,
+            dto.attachmentMimeType!,
+            dto.attachmentBase64,
+          )
+        : null);
     const otherPartyId =
       escrow.buyer_id === userId ? escrow.seller_id : escrow.buyer_id;
     if (!otherPartyId)

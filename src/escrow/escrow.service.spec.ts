@@ -316,6 +316,59 @@ describe('EscrowService dispute evidence', () => {
     });
   });
 
+  it('stores an authenticated Cloudinary image URL without re-uploading it', async () => {
+    const { service, tx, cloudinary } = buildService();
+    const attachmentUrl =
+      'https://res.cloudinary.com/example/image/upload/evidence.jpg';
+
+    await service.dispute('escrow-1', 'buyer-1', {
+      reason: 'The item arrived damaged',
+      attachmentUrl,
+      attachmentMimeType: 'image/jpeg',
+    });
+
+    expect(cloudinary.uploadEscrowEvidence).not.toHaveBeenCalled();
+    expect(tx.escrow_contracts.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          evidence: expect.objectContaining({
+            attachment_url: attachmentUrl,
+            attachment_mime_type: 'image/jpeg',
+          }),
+        }),
+      }),
+    );
+    expect(tx.escrow_messages.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ attachment_url: attachmentUrl }),
+    });
+  });
+
+  it('rejects untrusted uploaded URLs and mixed URL/base64 attachment data', async () => {
+    const { service, cloudinary } = buildService();
+
+    await expect(
+      service.dispute('escrow-1', 'buyer-1', {
+        reason: 'Dispute',
+        attachmentUrl: 'https://example.com/image/upload/evidence.jpg',
+        attachmentMimeType: 'image/jpeg',
+      }),
+    ).rejects.toThrow('Uploaded image URL is invalid');
+
+    await expect(
+      service.dispute('escrow-1', 'buyer-1', {
+        reason: 'Dispute',
+        attachmentUrl:
+          'https://res.cloudinary.com/example/image/upload/evidence.jpg',
+        attachmentBase64: Buffer.from('photo').toString('base64'),
+        attachmentMimeType: 'image/jpeg',
+      }),
+    ).rejects.toThrow(
+      'Provide either uploaded image URL or attachment data with its media type',
+    );
+
+    expect(cloudinary.uploadEscrowEvidence).not.toHaveBeenCalled();
+  });
+
   it('rejects unsupported media and malformed attachment data', async () => {
     const { service, cloudinary } = buildService();
     const attachmentBase64 = Buffer.from('photo').toString('base64');

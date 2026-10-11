@@ -2,12 +2,12 @@ import { QrService } from './qr.service';
 import { createHmac } from 'crypto';
 
 describe('QrService merchant QR validation', () => {
-  it('uses the Firebase HTTPS checkout host by default', () => {
+  it('uses the Firebase checkout host when a backend URL is configured', () => {
     const service = new QrService(
       {} as any,
       {} as any,
       {} as any,
-      { get: (_key: string, defaultValue: string) => defaultValue } as any,
+      { get: () => 'https://farmapp.africa/merchant-payment/' } as any,
       {} as any,
       {} as any,
     );

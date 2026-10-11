@@ -38,10 +38,9 @@ import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 import { SupportModule } from './support/support.module';
+import { UploadsModule } from './uploads/uploads.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
-
-
 @Module({
   imports: [
     EncryptionModule,
@@ -114,6 +113,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     TransferRequestsModule,
     PaymentRequestsModule,
     SupportModule,
+    UploadsModule,
   ],
   providers: [
     ExpiryTasksService,
