@@ -14,7 +14,24 @@ describe('QrService merchant QR validation', () => {
 
     const url = (service as any).checkoutUrl('{"merchant_id":"merchant-1"}');
 
-    expect(url).toBe('https://farmapp.africa/pay/merchant-1');
+    expect(url).toBe('https://farmapp-e2145.web.app/pay/merchant-1');
+  });
+
+  it('trims merchant IDs and removes stray braces from public pay links', () => {
+    const service = new QrService(
+      {} as any,
+      {} as any,
+      {} as any,
+      { get: () => 'https://farmapp.africa/merchant-payment/' } as any,
+      {} as any,
+      {} as any,
+    );
+
+    const url = (service as any).checkoutUrl(
+      '{"merchant_id":" {merchant-1} "}',
+    );
+
+    expect(url).toBe('https://farmapp-e2145.web.app/pay/merchant-1');
   });
 
   it('validates a signed merchant QR scanned from its hosted checkout URL', async () => {

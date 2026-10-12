@@ -506,7 +506,10 @@ export class QrService {
     try {
       const payload = JSON.parse(signedPayload) as { merchant_id?: string };
       if (payload.merchant_id) {
-        return `https://farmapp.africa/pay/${encodeURIComponent(payload.merchant_id)}`;
+        const merchantId = payload.merchant_id.replace(/[{}]/g, '').trim();
+        if (merchantId) {
+          return `https://farmapp-e2145.web.app/pay/${encodeURIComponent(merchantId)}`;
+        }
       }
     } catch {
       // Older non-JSON QR payloads remain available through the legacy checkout.
