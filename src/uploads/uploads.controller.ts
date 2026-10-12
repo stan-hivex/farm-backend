@@ -8,6 +8,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import type { Express } from 'express';
 import { memoryStorage } from 'multer';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { UploadsService } from './uploads.service';
