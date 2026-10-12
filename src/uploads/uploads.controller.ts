@@ -36,7 +36,7 @@ const imageUploadOptions = {
 };
 
 @UseGuards(JwtGuard)
-@Controller('uploads')
+@Controller({ path: 'uploads', version: '1' })
 export class UploadsController {
   constructor(private readonly uploadsService: UploadsService) {}
 
