@@ -3,6 +3,44 @@ import { QrPaymentsService } from './qr-payments.service';
 describe('QrPaymentsService settlement', () => {
   const reference = 'QR-123-payment';
 
+  it.each(['ANYID', 'f.'])(
+    'rejects invalid public merchant ID %s without querying Prisma',
+    async (merchantId) => {
+      const findUnique = jest.fn();
+      const service = new QrPaymentsService(
+        { merchants: { findUnique } } as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await expect(service.getPublicMerchant(merchantId)).rejects.toThrow(
+        'Invalid merchant ID from QR',
+      );
+      expect(findUnique).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns not found for a valid but unknown public merchant ID', async () => {
+    const findUnique = jest.fn().mockResolvedValue(null);
+    const service = new QrPaymentsService(
+      { merchants: { findUnique } } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    await expect(
+      service.getPublicMerchant('00000000-0000-4000-8000-000000000000'),
+    ).rejects.toThrow('Merchant not found or unable to accept payments');
+  });
+
   it('credits the merchant wallet once for a verified Paystack payment', async () => {
     const transaction = {
       id: 'transaction-1',
