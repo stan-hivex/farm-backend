@@ -30,15 +30,27 @@ export class QrService {
   ) {}
 
   async generateMerchantQr(merchantId: string) {
-    const merchant = await this.prisma.merchants.findUnique({ where: { id: merchantId } });
+    const merchant = await this.prisma.merchants.findUnique({
+      where: { id: merchantId },
+    });
     if (!merchant) throw new NotFoundException('Merchant not found');
-    const payload = { merchant_id: merchantId, business_name: merchant.business_name, v: 1 };
+    const payload = {
+      merchant_id: merchantId,
+      business_name: merchant.business_name,
+      v: 1,
+    };
     const payloadStr = JSON.stringify(payload);
-    const sig = this.sign(payloadStr, merchant.qr_secret || this.cfg.get('QR_HMAC_SECRET', ''));
+    const sig = this.sign(
+      payloadStr,
+      merchant.qr_secret || this.cfg.get('QR_HMAC_SECRET', ''),
+    );
     const signed = JSON.stringify({ ...payload, sig });
     const checkoutUrl = this.checkoutUrl(signed);
     const qr_image = await QRCode.toDataURL(checkoutUrl);
-    await this.prisma.merchants.update({ where: { id: merchantId }, data: { qr_code: signed } });
+    await this.prisma.merchants.update({
+      where: { id: merchantId },
+      data: { qr_code: signed },
+    });
     return {
       data: {
         qr_payload: signed,
@@ -50,7 +62,9 @@ export class QrService {
   }
 
   async getMerchantQr(merchantId: string) {
-    const merchant = await this.prisma.merchants.findUnique({ where: { id: merchantId } });
+    const merchant = await this.prisma.merchants.findUnique({
+      where: { id: merchantId },
+    });
     if (!merchant) throw new NotFoundException('Merchant not found');
     if (!merchant.qr_code) {
       return this.generateMerchantQr(merchantId);
@@ -73,7 +87,9 @@ export class QrService {
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const payload = JSON.stringify({
-      wallet_address: wallet.wallet_address, amount: amount || null, v: 1,
+      wallet_address: wallet.wallet_address,
+      amount: amount || null,
+      v: 1,
     });
     const qr_image = await QRCode.toDataURL(payload);
     return { data: { qr_payload: payload, qr_image_base64: qr_image } };
@@ -99,7 +115,9 @@ export class QrService {
 
       let decoded = qrValue;
       try {
-        const base64Decoded = Buffer.from(qrValue, 'base64url').toString('utf8');
+        const base64Decoded = Buffer.from(qrValue, 'base64url').toString(
+          'utf8',
+        );
         if (base64Decoded.trimStart().startsWith('{')) {
           decoded = base64Decoded;
         } else {
@@ -123,6 +141,34 @@ export class QrService {
     const normalizedPayload = this.unwrapQrPayload(scannedPayload);
 
     try {
+      const url = new URL(normalizedPayload);
+      const directPayPath = url.pathname.match(/\/pay\/([^/]+)\/?$/);
+      if (directPayPath) {
+        const merchant = await this.prisma.merchants.findUnique({
+          where: { id: decodeURIComponent(directPayPath[1]) },
+        });
+        if (!merchant || merchant.status !== 'approved') {
+          throw new BadRequestException(
+            'Merchant is not approved to accept payments',
+          );
+        }
+        return {
+          data: {
+            valid: true,
+            type: 'merchant',
+            merchant_id: merchant.id,
+            business_name: merchant.business_name,
+            fee_percent: Number(merchant.transaction_fee_percent || 0),
+            daily_limit: Number(merchant.daily_limit || 0),
+          },
+        };
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      // Non-URL payloads continue through the existing signed QR validation.
+    }
+
+    try {
       parsed = JSON.parse(normalizedPayload);
     } catch {
       const identifier = normalizedPayload;
@@ -134,10 +180,7 @@ export class QrService {
 
       const user = await this.prisma.users.findFirst({
         where: {
-          OR: [
-            { username: normalizedUsername },
-            { phone: identifier },
-          ],
+          OR: [{ username: normalizedUsername }, { phone: identifier }],
         },
         include: {
           wallets: {
@@ -162,12 +205,16 @@ export class QrService {
     }
 
     if (parsed.merchant_id) {
-      const merchant = await this.prisma.merchants.findUnique({ where: { id: parsed.merchant_id } });
+      const merchant = await this.prisma.merchants.findUnique({
+        where: { id: parsed.merchant_id },
+      });
       if (!merchant) {
         throw new BadRequestException('Merchant not found');
       }
       if (merchant.status !== 'approved') {
-        throw new ForbiddenException('Merchant is not approved to accept payments');
+        throw new ForbiddenException(
+          'Merchant is not approved to accept payments',
+        );
       }
 
       const { sig, ...data } = parsed;
@@ -175,14 +222,16 @@ export class QrService {
         JSON.stringify(data),
         merchant.qr_secret || this.cfg.get('QR_HMAC_SECRET', ''),
       );
-      if (sig !== expected) throw new BadRequestException('QR signature invalid');
+      if (sig !== expected)
+        throw new BadRequestException('QR signature invalid');
 
       return {
         data: {
           valid: true,
           type: 'merchant',
           merchant_id: merchant.id,
-          business_name: merchant.business_name || parsed.business_name || 'Merchant',
+          business_name:
+            merchant.business_name || parsed.business_name || 'Merchant',
           fee_percent: Number(merchant.transaction_fee_percent || 0),
           daily_limit: Number(merchant.daily_limit || 0),
         },
@@ -194,18 +243,42 @@ export class QrService {
         where: { wallet_address: parsed.wallet_address },
       });
       if (!wallet) throw new BadRequestException('Invalid wallet address');
-      return { data: { valid: true, type: 'peer', wallet_address: parsed.wallet_address, suggested_amount: parsed.amount } };
+      return {
+        data: {
+          valid: true,
+          type: 'peer',
+          wallet_address: parsed.wallet_address,
+          suggested_amount: parsed.amount,
+        },
+      };
     }
 
     throw new BadRequestException('Unknown QR type');
   }
 
-  async merchantPay(customerId: string, dto: { qr_payload: string; amount: number; pin?: string; biometric_auth?: boolean; device_fingerprint?: string }) {
-    if (dto.amount <= 0) throw new BadRequestException('Amount must be positive');
+  async merchantPay(
+    customerId: string,
+    dto: {
+      qr_payload: string;
+      amount: number;
+      pin?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
+    },
+  ) {
+    if (dto.amount <= 0)
+      throw new BadRequestException('Amount must be positive');
     if (dto.biometric_auth) {
-      const deviceFingerprint = dto.device_fingerprint || (dto as any).deviceFingerprint;
-      if (!deviceFingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
-      const verified = await this.securityService.verifyDevice(customerId, deviceFingerprint);
+      const deviceFingerprint =
+        dto.device_fingerprint || (dto as any).deviceFingerprint;
+      if (!deviceFingerprint)
+        throw new BadRequestException(
+          'Device fingerprint required for biometric authorization',
+        );
+      const verified = await this.securityService.verifyDevice(
+        customerId,
+        deviceFingerprint,
+      );
       if (!verified || (verified as any).trusted !== true) {
         throw new BadRequestException('Biometric device verification failed');
       }
@@ -223,7 +296,9 @@ export class QrService {
     });
     if (!merchant) throw new NotFoundException('Merchant not found');
     if (merchant.status !== 'approved') {
-      throw new ForbiddenException('Merchant is not approved to accept payments');
+      throw new ForbiddenException(
+        'Merchant is not approved to accept payments',
+      );
     }
 
     if (!merchant.user_id || merchant.user_id === customerId) {
@@ -234,15 +309,23 @@ export class QrService {
       where: { user_id: customerId, wallet_type: 'user', is_active: true },
     });
     const merchantWallet = await this.prisma.wallets.findFirst({
-      where: { user_id: merchant.user_id, wallet_type: 'user', is_active: true },
+      where: {
+        user_id: merchant.user_id,
+        wallet_type: 'user',
+        is_active: true,
+      },
     });
-    if (!customerWallet || !merchantWallet) throw new NotFoundException('Wallet not found');
+    if (!customerWallet || !merchantWallet)
+      throw new NotFoundException('Wallet not found');
 
     const fee = dto.amount * (Number(merchant.transaction_fee_percent) / 100);
     const totalOut = dto.amount + fee;
-    const available = Number(customerWallet.balance) - Number(customerWallet.locked_balance);
+    const available =
+      Number(customerWallet.balance) - Number(customerWallet.locked_balance);
     if (available < totalOut)
-      throw new BadRequestException(`Insufficient balance. Available: ${available.toFixed(2)} FARM`);
+      throw new BadRequestException(
+        `Insufficient balance. Available: ${available.toFixed(2)} FARM`,
+      );
 
     const result = await this.prisma.$transaction(async (tx) => {
       const reference = generateTxReference();
@@ -253,7 +336,9 @@ export class QrService {
           receiver_wallet_id: merchantWallet.id,
           transaction_type: 'merchant_payment',
           status: 'completed',
-          amount: dto.amount, fee, net_amount: dto.amount - fee,
+          amount: dto.amount,
+          fee,
+          net_amount: dto.amount - fee,
           currency: 'FARM',
           description: `Payment to ${merchant.business_name}`,
           metadata: { user_id: customerId, merchant_id: merchant.id },
@@ -261,10 +346,12 @@ export class QrService {
         },
       });
       const updatedCustomerWallet = await tx.wallets.update({
-        where: { id: customerWallet.id }, data: { balance: { decrement: totalOut } },
+        where: { id: customerWallet.id },
+        data: { balance: { decrement: totalOut } },
       });
       const updatedMerchantWallet = await tx.wallets.update({
-        where: { id: merchantWallet.id }, data: { balance: { increment: dto.amount } },
+        where: { id: merchantWallet.id },
+        data: { balance: { increment: dto.amount } },
       });
       // Also credit the platform/main wallet so the application's
       // aggregate/main balance reflects incoming merchant payments.
@@ -286,33 +373,48 @@ export class QrService {
         });
       }
       await tx.merchants.update({
-        where: { id: merchant.id }, data: { total_sales: { increment: dto.amount } },
+        where: { id: merchant.id },
+        data: { total_sales: { increment: dto.amount } },
       });
       await tx.qr_payments.create({
         data: {
-          merchant_id: merchant.id, customer_id: customerId,
-          transaction_id: txn.id, qr_payload: dto.qr_payload,
-          amount: dto.amount, status: 'completed', scanned_at: new Date(),
+          merchant_id: merchant.id,
+          customer_id: customerId,
+          transaction_id: txn.id,
+          qr_payload: dto.qr_payload,
+          amount: dto.amount,
+          status: 'completed',
+          scanned_at: new Date(),
         },
       });
       await tx.ledger_entries.createMany({
         data: [
           {
-            transaction_id: txn.id, wallet_id: customerWallet.id,
-            entry_type: 'debit', amount: totalOut,
+            transaction_id: txn.id,
+            wallet_id: customerWallet.id,
+            entry_type: 'debit',
+            amount: totalOut,
             description: `QR payment to ${merchant.business_name}`,
           },
           {
-            transaction_id: txn.id, wallet_id: merchantWallet.id,
-            entry_type: 'credit', amount: dto.amount,
+            transaction_id: txn.id,
+            wallet_id: merchantWallet.id,
+            entry_type: 'credit',
+            amount: dto.amount,
             description: 'QR payment received',
           },
           // ledger entry for platform/main wallet credit (if present)
-          ...(platformWallet ? [{
-            transaction_id: txn.id, wallet_id: platformWallet.id,
-            entry_type: 'credit', amount: fee,
-            description: 'Platform fee from merchant QR payment',
-          }] : []),
+          ...(platformWallet
+            ? [
+                {
+                  transaction_id: txn.id,
+                  wallet_id: platformWallet.id,
+                  entry_type: 'credit',
+                  amount: fee,
+                  description: 'Platform fee from merchant QR payment',
+                },
+              ]
+            : []),
         ],
       });
       return {
@@ -329,21 +431,27 @@ export class QrService {
         status: 'SUCCESS',
       });
       if (merchant.user_id) {
-        this.websocket.emitBalanceUpdate(merchant.user_id, result.merchantBalance);
+        this.websocket.emitBalanceUpdate(
+          merchant.user_id,
+          result.merchantBalance,
+        );
         this.websocket.emitTransactionUpdate(merchant.user_id, {
           reference: result.transaction.transaction_reference,
           status: 'SUCCESS',
         });
       }
     } catch (error) {
-      this.logger.warn(`Merchant payment realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Merchant payment realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     const customer = await this.prisma.users.findUnique({
       where: { id: customerId },
       select: { username: true },
     });
-    const payerName = customer?.username != null ? `@${customer.username}` : 'A customer';
+    const payerName =
+      customer?.username != null ? `@${customer.username}` : 'A customer';
 
     await Promise.all([
       this.notificationsService.sendNotification(customerId, {
@@ -373,20 +481,39 @@ export class QrService {
             },
           })
         : Promise.resolve(null),
-    ]).catch((error) => this.logger.error('Merchant payment notification failed', error));
+    ]).catch((error) =>
+      this.logger.error('Merchant payment notification failed', error),
+    );
 
     return {
-      data: { reference: result.transaction.transaction_reference, amount: dto.amount, fee, status: 'completed' },
+      data: {
+        reference: result.transaction.transaction_reference,
+        amount: dto.amount,
+        fee,
+        status: 'completed',
+      },
       message: `Payment to ${merchant.business_name} successful`,
     };
   }
 
   private sign(data: string, secret: string) {
-    return createHmac('sha256', secret || 'fallback').update(data).digest('hex');
+    return createHmac('sha256', secret || 'fallback')
+      .update(data)
+      .digest('hex');
   }
 
   private checkoutUrl(signedPayload: string) {
-    const encodedPayload = Buffer.from(signedPayload, 'utf8').toString('base64url');
+    try {
+      const payload = JSON.parse(signedPayload) as { merchant_id?: string };
+      if (payload.merchant_id) {
+        return `https://farmapp.africa/pay/${encodeURIComponent(payload.merchant_id)}`;
+      }
+    } catch {
+      // Older non-JSON QR payloads remain available through the legacy checkout.
+    }
+    const encodedPayload = Buffer.from(signedPayload, 'utf8').toString(
+      'base64url',
+    );
     return `${MERCHANT_CHECKOUT_URL}?qr=${encodedPayload}`;
   }
 }

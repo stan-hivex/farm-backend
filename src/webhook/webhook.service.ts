@@ -1,4 +1,10 @@
-import { Injectable, Logger, Inject, BadRequestException, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Inject,
+  BadRequestException,
+  Optional,
+} from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
@@ -23,6 +29,7 @@ import type { Queue } from 'bull';
 import type { Redis } from 'ioredis';
 import { verifyPaystackSignature } from '../payments/utils/paystack-webhook.util';
 import { resolveDepositCreditAmount } from '../deposit/deposit.utils';
+import { QrPaymentsService } from '../qr-payments/qr-payments.service';
 
 @Injectable()
 export class WebhookService {
@@ -37,6 +44,7 @@ export class WebhookService {
     private readonly cfg: ConfigService,
     private readonly paystackService: PaystackService,
     private readonly ivorypayService: IvorypayService,
+    private readonly qrPaymentsService: QrPaymentsService,
     @InjectQueue(QUEUES.WEBHOOKS) private readonly webhookQueue: Queue,
     @Optional() private readonly redisService?: RedisService,
   ) {}
@@ -51,9 +59,18 @@ export class WebhookService {
     }
   }
 
-  async handlePaystackWebhook(payload: any, verified = false, rawBody?: string, signature?: string) {
+  async handlePaystackWebhook(
+    payload: any,
+    verified = false,
+    rawBody?: string,
+    signature?: string,
+  ) {
     const event = payload.event;
-    const status = payload.data?.status ?? payload.data?.gateway_response ?? payload.data?.failure_message ?? 'unknown';
+    const status =
+      payload.data?.status ??
+      payload.data?.gateway_response ??
+      payload.data?.failure_message ??
+      'unknown';
     const receivedReference = payload?.data?.reference ?? 'missing';
     this.logger.log(
       `Paystack webhook received ref=${receivedReference} event=${event ?? 'unknown'} status=${status}`,
@@ -61,7 +78,12 @@ export class WebhookService {
     const eventId = this.getEventId('paystack', payload);
     if (eventId && (await this.isReplay('paystack', eventId))) {
       this.logger.warn(`Replay detected for paystack:${eventId}`);
-      await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Replay detected');
+      await this.rejectWebhook(
+        'paystack',
+        event ?? 'unknown',
+        payload,
+        'Replay detected',
+      );
       return { received: true };
     }
     // Paystack: attempt verification if raw body + signature provided, otherwise
@@ -72,21 +94,46 @@ export class WebhookService {
         const ok = verifyPaystackSignature(rawBody, signature, paystackSecret);
         verified = ok;
         if (!ok) {
-          this.logger.warn('Paystack signature verification failed during processing');
-          await this.fallbackAlert('paystack', 'Signature verification failed during processing', payload);
+          this.logger.warn(
+            'Paystack signature verification failed during processing',
+          );
+          await this.fallbackAlert(
+            'paystack',
+            'Signature verification failed during processing',
+            payload,
+          );
           // Include signature presence and a short sample for debugging (do not log full secret)
-          await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Invalid signature', {
-            signaturePresent: !!signature,
-            signatureSample: signature ? signature.slice(0, 12) : null,
-          });
+          await this.rejectWebhook(
+            'paystack',
+            event ?? 'unknown',
+            payload,
+            'Invalid signature',
+            {
+              signaturePresent: !!signature,
+              signatureSample: signature ? signature.slice(0, 12) : null,
+            },
+          );
           return { received: true };
         }
       } catch (e) {
-        this.logger.error('Error verifying Paystack signature during processing', e as any);
-        await this.fallbackAlert('paystack', 'Error verifying signature during processing', payload);
-        await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Signature verification error', {
-          signaturePresent: !!signature,
-        });
+        this.logger.error(
+          'Error verifying Paystack signature during processing',
+          e as any,
+        );
+        await this.fallbackAlert(
+          'paystack',
+          'Error verifying signature during processing',
+          payload,
+        );
+        await this.rejectWebhook(
+          'paystack',
+          event ?? 'unknown',
+          payload,
+          'Signature verification error',
+          {
+            signaturePresent: !!signature,
+          },
+        );
         return { received: true };
       }
     }
@@ -112,7 +159,12 @@ export class WebhookService {
       this.logger.warn(
         `Paystack webhook rejected: invalid payload event=${event ?? 'unknown'} reference=${payload?.data?.reference ?? 'missing'} status=${payload?.data?.status ?? 'unknown'}`,
       );
-      await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Invalid Paystack payload');
+      await this.rejectWebhook(
+        'paystack',
+        event ?? 'unknown',
+        payload,
+        'Invalid Paystack payload',
+      );
       return { received: true };
     }
 
@@ -128,7 +180,12 @@ export class WebhookService {
     }
 
     if (this.detectPotentialFraud('paystack', payload)) {
-      await this.rejectWebhook('paystack', event ?? 'unknown', payload, 'Suspected fraud on Paystack payload');
+      await this.rejectWebhook(
+        'paystack',
+        event ?? 'unknown',
+        payload,
+        'Suspected fraud on Paystack payload',
+      );
       return { received: true };
     }
 
@@ -151,31 +208,69 @@ export class WebhookService {
         const transaction = await this.prisma.transactions.findUnique({
           where: { transaction_reference: reference },
         });
-        if (!transaction || transaction.transaction_type?.toLowerCase() !== 'deposit') {
-          this.logger.warn(`Paystack charge.success has no matching deposit transaction: ${reference}`);
+        const metadata =
+          (transaction?.metadata as Record<string, unknown> | null) ?? {};
+        if (metadata.type === 'qr_sale' && metadata.isQrSale === true) {
+          const webhookAmount = Number(payload.data?.amount);
+          const expectedKobo = Math.round(Number(metadata.amount_fiat) * 100);
+          if (
+            metadata.provider !== 'paystack' ||
+            (payload.data?.status !== undefined &&
+              payload.data.status.toString().toLowerCase() !== 'success') ||
+            !Number.isFinite(webhookAmount) ||
+            !Number.isFinite(expectedKobo) ||
+            webhookAmount !== expectedKobo
+          ) {
+            this.logger.warn(
+              `Paystack QR webhook validation failed ref=${reference}`,
+            );
+            await this.prisma.webhook_logs.update({
+              where: { id: log.id },
+              data: {
+                status: 'rejected',
+                response: 'QR payment amount or provider mismatch',
+              },
+            });
+            return { received: true };
+          }
+        } else if (
+          !transaction ||
+          transaction.transaction_type?.toLowerCase() !== 'deposit'
+        ) {
+          this.logger.warn(
+            `Paystack charge.success has no matching deposit transaction: ${reference}`,
+          );
           return;
         }
         if (
           payload.data?.status !== undefined &&
           payload.data.status.toString().toLowerCase() !== 'success'
         ) {
-          this.logger.warn(`Paystack charge.success has non-success status for ${reference}`);
+          this.logger.warn(
+            `Paystack charge.success has non-success status for ${reference}`,
+          );
           return;
         }
-        if (transaction) {
-          const metadata = (transaction.metadata as any) ?? {};
+        if (transaction && metadata.type !== 'qr_sale') {
           // Paystack webhook amount is sent in kobo (integer). Prefer comparing against original fiat amount
           // stored in metadata (amount_fiat), otherwise fall back to transaction.amount * 100.
           const webhookAmount = Number(payload.data?.amount);
           let expectedKobo: number | null = null;
-          if (metadata?.amount_fiat !== undefined && metadata?.amount_fiat !== null) {
+          if (
+            metadata?.amount_fiat !== undefined &&
+            metadata?.amount_fiat !== null
+          ) {
             expectedKobo = Math.round(Number(metadata.amount_fiat) * 100);
           } else {
             // Prefer the deposit base amount when available (avoid comparing against total)
             const deposit = await this.prisma.deposit.findFirst({
               where: { reference },
             });
-            if (deposit && deposit.amount !== undefined && deposit.amount !== null) {
+            if (
+              deposit &&
+              deposit.amount !== undefined &&
+              deposit.amount !== null
+            ) {
               expectedKobo = Math.round(Number(deposit.amount) * 100);
             } else {
               expectedKobo = Number.isFinite(Number(transaction.amount))
@@ -185,7 +280,9 @@ export class WebhookService {
           }
 
           if (expectedKobo === null || isNaN(webhookAmount)) {
-            this.logger.warn(`Paystack amount validation skipped for ${reference} due to missing data`);
+            this.logger.warn(
+              `Paystack amount validation skipped for ${reference} due to missing data`,
+            );
           } else if (Math.abs(webhookAmount - expectedKobo) !== 0) {
             // Log difference for audit, but accept—real money was received
             this.logger.warn(
@@ -195,7 +292,11 @@ export class WebhookService {
         }
       } catch (e) {
         this.logger.error('Error validating Paystack amount', e as any);
-        await this.fallbackAlert('paystack', 'Error during amount validation', payload);
+        await this.fallbackAlert(
+          'paystack',
+          'Error during amount validation',
+          payload,
+        );
         await this.prisma.webhook_logs.update({
           where: { id: log.id },
           data: { status: 'rejected', response: 'Amount validation error' },
@@ -239,12 +340,17 @@ export class WebhookService {
         const client = this.getRedisClient();
         if (client) {
           try {
-            await client.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+            await client.lpush(
+              'payment:webhook:queue',
+              JSON.stringify(queueEntry),
+            );
             await this.prisma.webhook_logs.update({
               where: { id: log.id },
               data: { status: 'queued' },
             });
-            this.logger.log(`Paystack webhook queued ref=${reference} queue=fallback-redis`);
+            this.logger.log(
+              `Paystack webhook queued ref=${reference} queue=fallback-redis`,
+            );
             queued = true;
           } catch (fallbackError) {
             this.logger.error(
@@ -255,21 +361,34 @@ export class WebhookService {
               where: { id: log.id },
               data: { status: 'failed', response: 'enqueue_error' },
             });
-            await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
+            await this.fallbackAlert(
+              'paystack',
+              'Failed to enqueue webhook for processing',
+              payload,
+            );
           }
         } else {
-          this.logger.error(`Failed to enqueue Paystack webhook ref=${reference} to Bull queue`, e as any);
+          this.logger.error(
+            `Failed to enqueue Paystack webhook ref=${reference} to Bull queue`,
+            e as any,
+          );
           await this.prisma.webhook_logs.update({
             where: { id: log.id },
             data: { status: 'failed', response: 'enqueue_error' },
           });
-          await this.fallbackAlert('paystack', 'Failed to enqueue webhook for processing', payload);
+          await this.fallbackAlert(
+            'paystack',
+            'Failed to enqueue webhook for processing',
+            payload,
+          );
         }
       }
     }
 
     if (!processedSynchronously && !queued) {
-      this.logger.warn('Paystack webhook queue failed, processing directly to finalize deposit');
+      this.logger.warn(
+        'Paystack webhook queue failed, processing directly to finalize deposit',
+      );
       try {
         await this.handlePaystackWebhookProcessing(payload);
         await this.prisma.webhook_logs.update({
@@ -277,15 +396,23 @@ export class WebhookService {
           data: { status: 'processed', response: 'direct_processed' },
         });
       } catch (directError) {
-        this.logger.error('Direct processing fallback failed for Paystack webhook', directError as any);
+        this.logger.error(
+          'Direct processing fallback failed for Paystack webhook',
+          directError as any,
+        );
       }
     } else if (!processedSynchronously) {
-      this.logger.log(`Paystack webhook queued ref=${reference}; scheduling in-process fallback`);
+      this.logger.log(
+        `Paystack webhook queued ref=${reference}; scheduling in-process fallback`,
+      );
       setImmediate(async () => {
         try {
           await this.handlePaystackWebhookProcessing(payload);
         } catch (directError) {
-          this.logger.error('In-process fallback processing failed for Paystack webhook', directError as any);
+          this.logger.error(
+            'In-process fallback processing failed for Paystack webhook',
+            directError as any,
+          );
         }
       });
     }
@@ -296,7 +423,11 @@ export class WebhookService {
 
   async handleIvorypayWebhook(payload: any, verified = false) {
     const event = payload.event ?? payload.status;
-    const status = payload.data?.status ?? payload.status ?? payload.data?.state ?? 'unknown';
+    const status =
+      payload.data?.status ??
+      payload.status ??
+      payload.data?.state ??
+      'unknown';
     const candidateRefs = {
       topLevelReference: payload?.reference ?? null,
       topLevelId: payload?.id ?? null,
@@ -311,12 +442,21 @@ export class WebhookService {
     this.logger.log(
       `Ivorypay webhook received ref=${foundReference ?? 'missing'} event=${event ?? 'unknown'} status=${status}`,
     );
-    this.logger.log(`Ivorypay webhook signature verified: reference=${foundReference ?? 'missing'}`);
-    this.logger.debug(`Ivorypay webhook candidate refs: ${JSON.stringify(candidateRefs)}`);
+    this.logger.log(
+      `Ivorypay webhook signature verified: reference=${foundReference ?? 'missing'}`,
+    );
+    this.logger.debug(
+      `Ivorypay webhook candidate refs: ${JSON.stringify(candidateRefs)}`,
+    );
     const eventId = this.getEventId('ivorypay', payload);
     if (eventId && (await this.isReplay('ivorypay', eventId))) {
       this.logger.warn(`Replay detected for ivorypay:${eventId}`);
-      await this.rejectWebhook('ivorypay', event ?? 'unknown', payload, 'Replay detected');
+      await this.rejectWebhook(
+        'ivorypay',
+        event ?? 'unknown',
+        payload,
+        'Replay detected',
+      );
       return { received: true };
     }
     const ivorySecret = this.cfg.get<string>('IVORYPAY_WEBHOOK_SECRET');
@@ -336,12 +476,19 @@ export class WebhookService {
     }
 
     if (!this.verifyProviderPayload('ivorypay', payload)) {
-      await this.rejectWebhook('ivorypay', event ?? 'unknown', payload, 'Invalid Ivorypay payload');
+      await this.rejectWebhook(
+        'ivorypay',
+        event ?? 'unknown',
+        payload,
+        'Invalid Ivorypay payload',
+      );
       return { received: true };
     }
 
     // Strict routing: Ivorypay webhooks should be for crypto channel, but allow nested data.channel.
-    const channel = (payload.channel ?? payload.data?.channel)?.toString?.().toLowerCase?.();
+    const channel = (payload.channel ?? payload.data?.channel)
+      ?.toString?.()
+      .toLowerCase?.();
     if (channel && channel !== 'crypto') {
       await this.rejectWebhook(
         'ivorypay',
@@ -353,7 +500,12 @@ export class WebhookService {
     }
 
     if (this.detectPotentialFraud('ivorypay', payload)) {
-      await this.rejectWebhook('ivorypay', event ?? 'unknown', payload, 'Suspected fraud on Ivorypay payload');
+      await this.rejectWebhook(
+        'ivorypay',
+        event ?? 'unknown',
+        payload,
+        'Suspected fraud on Ivorypay payload',
+      );
       return { received: true };
     }
 
@@ -364,7 +516,10 @@ export class WebhookService {
     if (!reference) {
       const fallbackCandidates = this.buildIvorypayReferenceCandidates(payload);
       if (fallbackCandidates.length) {
-        resolvedContext = await this.resolveIvorypayDepositAndTransaction(payload, fallbackCandidates[0]);
+        resolvedContext = await this.resolveIvorypayDepositAndTransaction(
+          payload,
+          fallbackCandidates[0],
+        );
         reference = resolvedContext.resolvedReference ?? fallbackCandidates[0];
       }
     }
@@ -379,7 +534,10 @@ export class WebhookService {
     }
 
     if (!resolvedContext) {
-      resolvedContext = await this.resolveIvorypayDepositAndTransaction(payload, reference);
+      resolvedContext = await this.resolveIvorypayDepositAndTransaction(
+        payload,
+        reference,
+      );
     }
     const resolvedReference = resolvedContext.resolvedReference ?? reference;
     if (resolvedReference !== reference) {
@@ -388,7 +546,11 @@ export class WebhookService {
       );
     }
 
-    const successWithdrawalEvents = ['withdrawal.success', 'transfer.success', 'payout.success'];
+    const successWithdrawalEvents = [
+      'withdrawal.success',
+      'transfer.success',
+      'payout.success',
+    ];
     const failureWithdrawalEvents = ['withdrawal.failed'];
     const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);
     const isFailureEvent = this.isIvorypayFailureEvent(event, status);
@@ -406,7 +568,9 @@ export class WebhookService {
           const expected = this.getExpectedIvorypayWebhookAmount(transaction);
 
           if (!isFinite(expected) || isNaN(webhookAmount)) {
-            this.logger.warn(`Ivorypay amount validation skipped for ${reference} due to missing data`);
+            this.logger.warn(
+              `Ivorypay amount validation skipped for ${reference} due to missing data`,
+            );
           } else if (Math.abs(webhookAmount - expected) > 0.01) {
             // allow small floating-point differences
             this.logger.warn(
@@ -426,7 +590,11 @@ export class WebhookService {
         }
       } catch (e) {
         this.logger.error('Error validating Ivorypay amount', e as any);
-        await this.fallbackAlert('ivorypay', 'Error during amount validation', payload);
+        await this.fallbackAlert(
+          'ivorypay',
+          'Error during amount validation',
+          payload,
+        );
         await this.prisma.webhook_logs.update({
           where: { id: log.id },
           data: { status: 'rejected', response: 'Amount validation error' },
@@ -470,12 +638,17 @@ export class WebhookService {
         const client = this.getRedisClient();
         if (client) {
           try {
-            await client.lpush('payment:webhook:queue', JSON.stringify(queueEntry));
+            await client.lpush(
+              'payment:webhook:queue',
+              JSON.stringify(queueEntry),
+            );
             await this.prisma.webhook_logs.update({
               where: { id: log.id },
               data: { status: 'queued' },
             });
-            this.logger.log(`Ivorypay webhook queued ref=${resolvedReference} queue=fallback-redis`);
+            this.logger.log(
+              `Ivorypay webhook queued ref=${resolvedReference} queue=fallback-redis`,
+            );
             queued = true;
           } catch (fallbackError) {
             this.logger.error(
@@ -486,21 +659,34 @@ export class WebhookService {
               where: { id: log.id },
               data: { status: 'failed', response: 'enqueue_error' },
             });
-            await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
+            await this.fallbackAlert(
+              'ivorypay',
+              'Failed to enqueue webhook for processing',
+              payload,
+            );
           }
         } else {
-          this.logger.error(`Failed to enqueue Ivorypay webhook ref=${resolvedReference} to Bull queue`, e as any);
+          this.logger.error(
+            `Failed to enqueue Ivorypay webhook ref=${resolvedReference} to Bull queue`,
+            e as any,
+          );
           await this.prisma.webhook_logs.update({
             where: { id: log.id },
             data: { status: 'failed', response: 'enqueue_error' },
           });
-          await this.fallbackAlert('ivorypay', 'Failed to enqueue webhook for processing', payload);
+          await this.fallbackAlert(
+            'ivorypay',
+            'Failed to enqueue webhook for processing',
+            payload,
+          );
         }
       }
     }
 
     if (!processedSynchronously && !queued) {
-      this.logger.warn('Ivorypay webhook queue failed, processing directly to finalize deposit or withdrawal');
+      this.logger.warn(
+        'Ivorypay webhook queue failed, processing directly to finalize deposit or withdrawal',
+      );
       try {
         await this.handleIvorypayWebhookProcessing(payload);
         await this.prisma.webhook_logs.update({
@@ -508,15 +694,23 @@ export class WebhookService {
           data: { status: 'processed', response: 'direct_processed' },
         });
       } catch (directError) {
-        this.logger.error('Direct processing fallback failed for Ivorypay webhook', directError as any);
+        this.logger.error(
+          'Direct processing fallback failed for Ivorypay webhook',
+          directError as any,
+        );
       }
     } else if (!processedSynchronously) {
-      this.logger.log(`Ivorypay webhook queued ref=${resolvedReference}; scheduling in-process fallback`);
+      this.logger.log(
+        `Ivorypay webhook queued ref=${resolvedReference}; scheduling in-process fallback`,
+      );
       setImmediate(async () => {
         try {
           await this.handleIvorypayWebhookProcessing(payload);
         } catch (directError) {
-          this.logger.error('In-process fallback processing failed for Ivorypay webhook', directError as any);
+          this.logger.error(
+            'In-process fallback processing failed for Ivorypay webhook',
+            directError as any,
+          );
         }
       });
     }
@@ -531,7 +725,9 @@ export class WebhookService {
     reference: string,
     payload: any,
   ): Promise<boolean> {
-    this.logger.log(`${provider} webhook synchronous verification attempt ref=${reference}`);
+    this.logger.log(
+      `${provider} webhook synchronous verification attempt ref=${reference}`,
+    );
 
     try {
       if (provider === 'paystack') {
@@ -555,13 +751,24 @@ export class WebhookService {
       ]);
 
       const eventName = (event ?? '').toLowerCase();
-      const eventStatus = (payload?.data?.status ?? payload?.status ?? '').toString().toLowerCase();
+      const eventStatus = (payload?.data?.status ?? payload?.status ?? '')
+        .toString()
+        .toLowerCase();
       const isSuccess =
         /(?:success|completed)$/i.test(eventName) ||
         ['success', 'completed'].includes(eventStatus);
       const isFailure =
-        /(?:failed|failure|cancelled|canceled|expired|reversed)$/i.test(eventName) ||
-        ['failed', 'failure', 'cancelled', 'canceled', 'expired', 'reversed'].includes(eventStatus);
+        /(?:failed|failure|cancelled|canceled|expired|reversed)$/i.test(
+          eventName,
+        ) ||
+        [
+          'failed',
+          'failure',
+          'cancelled',
+          'canceled',
+          'expired',
+          'reversed',
+        ].includes(eventStatus);
       const isWithdrawal =
         transaction?.transaction_type?.toLowerCase() === 'withdrawal' ||
         /(?:transfer|payout|withdrawal)/i.test(eventName);
@@ -575,7 +782,9 @@ export class WebhookService {
       } else if (isFailure) {
         finalized = isWithdrawal
           ? withdrawal?.status?.toUpperCase() === 'FAILED'
-          : ['FAILED', 'CANCELLED', 'EXPIRED'].includes(deposit?.status?.toUpperCase() ?? '') ||
+          : ['FAILED', 'CANCELLED', 'EXPIRED'].includes(
+              deposit?.status?.toUpperCase() ?? '',
+            ) ||
             ['failed', 'cancelled', 'expired', 'reversed'].includes(
               transaction?.status?.toLowerCase() ?? '',
             );
@@ -595,7 +804,13 @@ export class WebhookService {
     }
   }
 
-  private async logWebhook(provider: string, event: string, payload: any, status = 'received', response?: string) {
+  private async logWebhook(
+    provider: string,
+    event: string,
+    payload: any,
+    status = 'received',
+    response?: string,
+  ) {
     return this.prisma.webhook_logs.create({
       data: {
         provider,
@@ -607,9 +822,18 @@ export class WebhookService {
     });
   }
 
-  private async rejectWebhook(provider: string, event: string, payload: any, reason: string, meta?: any) {
+  private async rejectWebhook(
+    provider: string,
+    event: string,
+    payload: any,
+    reason: string,
+    meta?: any,
+  ) {
     this.logger.warn(`Rejecting webhook from ${provider}: ${reason}`);
-    const response = typeof meta === 'object' && meta ? `${reason} | meta=${JSON.stringify(meta)}` : reason;
+    const response =
+      typeof meta === 'object' && meta
+        ? `${reason} | meta=${JSON.stringify(meta)}`
+        : reason;
     return this.logWebhook(provider, event, payload, 'rejected', response);
   }
   private verifyProviderPayload(provider: string, payload: any) {
@@ -618,11 +842,18 @@ export class WebhookService {
       // For success events, require a numeric amount. For failure/cancel/expired
       // events, the reference is enough to allow processing of the failure path.
       const hasEvent = !!payload?.event;
-      const hasRef = !!payload?.data?.reference && typeof payload.data.reference === 'string';
+      const hasRef =
+        !!payload?.data?.reference &&
+        typeof payload.data.reference === 'string';
       const amount = payload?.data?.amount ?? payload?.amount;
-      const hasAmount = amount !== undefined && amount !== null && !isNaN(Number(amount));
+      const hasAmount =
+        amount !== undefined && amount !== null && !isNaN(Number(amount));
 
-      const successEvents = ['charge.success', 'payment.success', 'transaction.success'];
+      const successEvents = [
+        'charge.success',
+        'payment.success',
+        'transaction.success',
+      ];
       if (successEvents.includes(payload.event)) {
         return hasEvent && hasRef && hasAmount;
       }
@@ -653,18 +884,25 @@ export class WebhookService {
       payload?.data?.id ??
       payload?.reference ??
       payload?.id;
-    return typeof ref === 'string' && ref.trim() ? ref.trim() : ref?.toString?.().trim() || null;
+    return typeof ref === 'string' && ref.trim()
+      ? ref.trim()
+      : ref?.toString?.().trim() || null;
   }
 
   private extractUuidFromString(value: any): string | null {
     if (typeof value !== 'string' || !value.trim()) {
       return null;
     }
-    const match = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+    const match = value.match(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
+    );
     return match ? match[0] : null;
   }
 
-  private buildIvorypayReferenceCandidates(payload: any, metadata: any = {}): string[] {
+  private buildIvorypayReferenceCandidates(
+    payload: any,
+    metadata: any = {},
+  ): string[] {
     const urlCandidates = [
       payload?.data?.checkoutUrl,
       payload?.data?.payment_link,
@@ -727,14 +965,17 @@ export class WebhookService {
         providerReference,
         candidateRefs,
       );
-      const status = verifiedTransaction?.status?.toString().toLowerCase() ?? '';
+      const status =
+        verifiedTransaction?.status?.toString().toLowerCase() ?? '';
       if (!['success', 'completed'].includes(status)) {
         this.logger.log(
           `Ivorypay verification result ref=${reference} status=${status || 'unknown'}`,
         );
         return null;
       }
-      this.logger.log(`Ivorypay verification result ref=${reference} status=${status}`);
+      this.logger.log(
+        `Ivorypay verification result ref=${reference} status=${status}`,
+      );
       return verifiedTransaction;
     } catch (error) {
       this.logger.warn(
@@ -746,13 +987,22 @@ export class WebhookService {
 
   private getExpectedIvorypayWebhookAmount(transaction: any): number {
     const metadata = (transaction?.metadata as any) ?? {};
-    return Number(metadata.amount_usd ?? metadata.amount_fiat ?? transaction?.amount);
+    return Number(
+      metadata.amount_usd ?? metadata.amount_fiat ?? transaction?.amount,
+    );
   }
 
-  private isIvorypayVerifiedAmountAcceptable(transaction: any, verifiedTransaction: any): boolean {
+  private isIvorypayVerifiedAmountAcceptable(
+    transaction: any,
+    verifiedTransaction: any,
+  ): boolean {
     const transactionMetadata = (transaction?.metadata as any) ?? {};
-    const expectedUsd = Number(transactionMetadata.amount_usd ?? transactionMetadata.amount_fiat ?? NaN);
-    const expectedFarm = Number(transactionMetadata.amount_farm ?? transaction?.amount ?? NaN);
+    const expectedUsd = Number(
+      transactionMetadata.amount_usd ?? transactionMetadata.amount_fiat ?? NaN,
+    );
+    const expectedFarm = Number(
+      transactionMetadata.amount_farm ?? transaction?.amount ?? NaN,
+    );
 
     const verifiedUsd = Number(
       verifiedTransaction?.amount_usd ??
@@ -769,18 +1019,30 @@ export class WebhookService {
         NaN,
     );
 
-    if (Number.isFinite(expectedUsd) && Number.isFinite(verifiedUsd) && expectedUsd > 0 && verifiedUsd > 0) {
+    if (
+      Number.isFinite(expectedUsd) &&
+      Number.isFinite(verifiedUsd) &&
+      expectedUsd > 0 &&
+      verifiedUsd > 0
+    ) {
       return Math.abs(expectedUsd - verifiedUsd) <= 0.5;
     }
 
-    if (Number.isFinite(expectedFarm) && Number.isFinite(verifiedFarm) && expectedFarm > 0 && verifiedFarm > 0) {
+    if (
+      Number.isFinite(expectedFarm) &&
+      Number.isFinite(verifiedFarm) &&
+      expectedFarm > 0 &&
+      verifiedFarm > 0
+    ) {
       return Math.abs(expectedFarm - verifiedFarm) <= 0.01;
     }
 
     return true;
   }
 
-  private async resolveIvorypayInternalReference(reference: string): Promise<string | null> {
+  private async resolveIvorypayInternalReference(
+    reference: string,
+  ): Promise<string | null> {
     const deposit = await this.prisma.deposit.findFirst({
       where: {
         OR: [
@@ -866,7 +1128,8 @@ export class WebhookService {
     payload: any,
     fallbackReference?: string,
   ): Promise<IvorypayResolveContext> {
-    const payloadIdentifiers = this.ivorypayService.extractProviderIdentifiers(payload);
+    const payloadIdentifiers =
+      this.ivorypayService.extractProviderIdentifiers(payload);
     const identifierCandidates = Object.values(payloadIdentifiers)
       .filter((value) => value !== undefined && value !== null && value !== '')
       .map((value) => value?.toString?.().trim())
@@ -878,7 +1141,10 @@ export class WebhookService {
       ...this.buildIvorypayReferenceCandidates(payload),
       ...identifierCandidates,
     ]
-      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .filter(
+        (value): value is string =>
+          typeof value === 'string' && value.trim().length > 0,
+      )
       .map((value) => value.trim())
       .filter((value, index, self) => self.indexOf(value) === index);
 
@@ -1027,7 +1293,10 @@ export class WebhookService {
       'success',
     ];
     const successStatuses = ['success', 'completed'];
-    return successEvents.includes(normalizedEvent) || successStatuses.includes(normalizedStatus);
+    return (
+      successEvents.includes(normalizedEvent) ||
+      successStatuses.includes(normalizedStatus)
+    );
   }
 
   private isIvorypayFailureEvent(event: string, status: string) {
@@ -1048,8 +1317,19 @@ export class WebhookService {
       'transfer.failed',
       'payout.failed',
     ];
-    const failureStatuses = ['failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'];
-    return failureEvents.includes(normalizedEvent) || failureStatuses.includes(normalizedStatus);
+    const failureStatuses = [
+      'failed',
+      'cancelled',
+      'expired',
+      'abandoned',
+      'declined',
+      'reversed',
+      'incomplete',
+    ];
+    return (
+      failureEvents.includes(normalizedEvent) ||
+      failureStatuses.includes(normalizedStatus)
+    );
   }
 
   private async fallbackAlert(provider: string, reason: string, payload: any) {
@@ -1074,7 +1354,13 @@ export class WebhookService {
   }
 
   private getEventId(provider: string, payload: any) {
-    return payload.id ?? payload.data?.id ?? payload.data?.reference ?? payload.reference ?? null;
+    return (
+      payload.id ??
+      payload.data?.id ??
+      payload.data?.reference ??
+      payload.reference ??
+      null
+    );
   }
 
   private async isReplay(provider: string, eventId: string) {
@@ -1085,7 +1371,10 @@ export class WebhookService {
       const v = await client.get(key);
       return !!v;
     } catch (e) {
-      this.logger.error('Failed to access Redis for webhook replay check', e as any);
+      this.logger.error(
+        'Failed to access Redis for webhook replay check',
+        e as any,
+      );
       return false;
     }
   }
@@ -1107,10 +1396,16 @@ export class WebhookService {
   }
 
   private detectPotentialFraud(provider: string, payload: any) {
-    const amount = this.normalizeAmount(payload?.data?.amount ?? payload?.amount ?? 0);
-    const maxAmount = Number(this.cfg.get<number>('FRAUD_MAX_WEBHOOK_AMOUNT', 5000000));
+    const amount = this.normalizeAmount(
+      payload?.data?.amount ?? payload?.amount ?? 0,
+    );
+    const maxAmount = Number(
+      this.cfg.get<number>('FRAUD_MAX_WEBHOOK_AMOUNT', 5000000),
+    );
     if (amount > maxAmount) {
-      this.logger.warn(`Potential fraud detected: ${provider} amount ${amount} exceeds threshold ${maxAmount}`);
+      this.logger.warn(
+        `Potential fraud detected: ${provider} amount ${amount} exceeds threshold ${maxAmount}`,
+      );
       return true;
     }
 
@@ -1120,7 +1415,9 @@ export class WebhookService {
       payload.data.status !== 'success' &&
       payload.event === 'charge.success'
     ) {
-      this.logger.warn('Paystack webhook contains inconsistent status for charge.success');
+      this.logger.warn(
+        'Paystack webhook contains inconsistent status for charge.success',
+      );
       return true;
     }
 
@@ -1130,7 +1427,9 @@ export class WebhookService {
   private async finalizeDeposit(reference: string) {
     this.logger.log(`finalizeDeposit: start for reference=${reference}`);
     let deposit = await this.prisma.deposit.findFirst({ where: { reference } });
-    this.logger.log(`finalizeDeposit: deposit lookup returned ${deposit ? 'FOUND' : 'NOT_FOUND'}`);
+    this.logger.log(
+      `finalizeDeposit: deposit lookup returned ${deposit ? 'FOUND' : 'NOT_FOUND'}`,
+    );
     const transaction = await this.prisma.transactions.findUnique({
       where: { transaction_reference: reference },
     });
@@ -1140,17 +1439,26 @@ export class WebhookService {
 
     // Reference validation: require either deposit or valid transaction
     if (!transaction) {
-      throw new BadRequestException(`Transaction not found for reference: ${reference}`);
+      throw new BadRequestException(
+        `Transaction not found for reference: ${reference}`,
+      );
     }
 
     if (!deposit && transaction?.amount) {
       const metadata = transaction.metadata as any;
       const userId = metadata?.user_id;
-      const paymentMethod = metadata?.provider?.toString()?.toLowerCase() === 'ivorypay' ? 'CRYPTO' : 'CARD';
+      const paymentMethod =
+        metadata?.provider?.toString()?.toLowerCase() === 'ivorypay'
+          ? 'CRYPTO'
+          : 'CARD';
       if (!userId) {
-        this.logger.warn(`Deposit missing for reference ${reference} but transaction metadata.user_id is unavailable`);
+        this.logger.warn(
+          `Deposit missing for reference ${reference} but transaction metadata.user_id is unavailable`,
+        );
       } else {
-        this.logger.warn(`Deposit missing for reference ${reference}, reconstructing from transaction`);
+        this.logger.warn(
+          `Deposit missing for reference ${reference}, reconstructing from transaction`,
+        );
         deposit = await this.prisma.deposit.create({
           data: {
             reference,
@@ -1159,24 +1467,40 @@ export class WebhookService {
             total: Number(transaction.amount),
             currency: transaction.currency || 'FARM',
             paymentMethod,
-            provider: metadata?.provider?.toString()?.toLowerCase() === 'ivorypay' ? 'ivorypay' : 'paystack',
+            provider:
+              metadata?.provider?.toString()?.toLowerCase() === 'ivorypay'
+                ? 'ivorypay'
+                : 'paystack',
             status: 'PENDING',
             userId,
           },
         });
-        this.logger.log(`finalizeDeposit: reconstructed deposit id=${deposit.id} reference=${deposit.reference}`);
+        this.logger.log(
+          `finalizeDeposit: reconstructed deposit id=${deposit.id} reference=${deposit.reference}`,
+        );
       }
     }
 
     const depositPending = !!deposit && deposit.status === 'PENDING';
     const depositComplete = !!deposit && deposit.status === 'SUCCESS';
-    const isDeposit = !!transaction && transaction.transaction_type?.toLowerCase() === 'deposit';
+    const isDeposit =
+      !!transaction &&
+      transaction.transaction_type?.toLowerCase() === 'deposit';
     const txStatus = transaction?.status?.toLowerCase();
-    const txPending = isDeposit && ['pending', 'processing'].includes(txStatus ?? '');
+    const txPending =
+      isDeposit && ['pending', 'processing'].includes(txStatus ?? '');
     const txComplete = isDeposit && txStatus === 'completed';
     const txFailed =
       isDeposit &&
-      ['failed', 'cancelled', 'reversed', 'abandoned', 'expired', 'incomplete', 'declined'].includes(txStatus ?? '');
+      [
+        'failed',
+        'cancelled',
+        'reversed',
+        'abandoned',
+        'expired',
+        'incomplete',
+        'declined',
+      ].includes(txStatus ?? '');
     const txUnknown =
       isDeposit &&
       ![
@@ -1208,14 +1532,24 @@ export class WebhookService {
       this.logger.log(
         `finalizeDeposit: pending deposit and pending transaction for ${reference} - finalizing with transaction`,
       );
-      return this.finalizePendingDepositWithTransaction(reference, deposit, transaction);
+      return this.finalizePendingDepositWithTransaction(
+        reference,
+        deposit,
+        transaction,
+      );
     }
 
     if (depositPending) {
       // Directly handle pending deposit with wallet credit here (no delegation).
       // This is the ONLY authorized path for crediting wallets on deposit success.
-      this.logger.log(`finalizeDeposit: deposit is pending for ${reference}, crediting wallet directly`);
-      return this.creditPendingDepositWithWallet(reference, deposit, transaction);
+      this.logger.log(
+        `finalizeDeposit: deposit is pending for ${reference}, crediting wallet directly`,
+      );
+      return this.creditPendingDepositWithWallet(
+        reference,
+        deposit,
+        transaction,
+      );
     }
 
     if (depositComplete && txPending) {
@@ -1223,7 +1557,9 @@ export class WebhookService {
     }
 
     if (txPending) {
-      this.logger.log(`finalizeDeposit: transaction pending for ${reference}, crediting pending transaction deposit`);
+      this.logger.log(
+        `finalizeDeposit: transaction pending for ${reference}, crediting pending transaction deposit`,
+      );
       return this.creditPendingTransactionDeposit(reference);
     }
 
@@ -1232,7 +1568,9 @@ export class WebhookService {
     );
     return false;
 
-    this.logger.log(`finalizeDeposit: end for ${reference} returning ${depositComplete || txComplete}`);
+    this.logger.log(
+      `finalizeDeposit: end for ${reference} returning ${depositComplete || txComplete}`,
+    );
     return depositComplete || txComplete;
   }
 
@@ -1247,7 +1585,9 @@ export class WebhookService {
       },
     });
 
-    this.logger.log(`fixStuckDeposits: found ${stuck.length} stuck deposit transaction(s)`);
+    this.logger.log(
+      `fixStuckDeposits: found ${stuck.length} stuck deposit transaction(s)`,
+    );
 
     for (const tx of stuck) {
       try {
@@ -1255,9 +1595,15 @@ export class WebhookService {
           where: { reference: tx.transaction_reference },
         });
         const metadata = (tx.metadata as any) ?? {};
-        const metaProvider = (metadata.provider?.toString()?.toLowerCase() || '').trim();
-        const depositProvider = (deposit?.provider?.toString()?.toLowerCase() || '').trim();
-        const paymentMethod = (deposit?.paymentMethod?.toString()?.toUpperCase() || '').trim();
+        const metaProvider = (
+          metadata.provider?.toString()?.toLowerCase() || ''
+        ).trim();
+        const depositProvider = (
+          deposit?.provider?.toString()?.toLowerCase() || ''
+        ).trim();
+        const paymentMethod = (
+          deposit?.paymentMethod?.toString()?.toUpperCase() || ''
+        ).trim();
 
         let provider = 'unknown';
         if (paymentMethod === 'CRYPTO') {
@@ -1300,28 +1646,49 @@ export class WebhookService {
           .map((v) => v?.toString())
           // Exclude our internal transaction_reference — do not query the provider with our UUID
           .filter((v) => v?.toString().trim() !== tx.transaction_reference)
-          .filter((value, index, self) => !!value && self.indexOf(value) === index)
+          .filter(
+            (value, index, self) => !!value && self.indexOf(value) === index,
+          )
           // Keep the first candidate even if it looks like a UUID, because it may be
           // the provider reference recorded at checkout creation.
           .filter(
             (v, index) =>
-              index === 0 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v),
+              index === 0 ||
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+                v,
+              ),
           );
 
         if (!rawProviderIds.length) {
-          const payloadCandidates = this.buildIvorypayReferenceCandidates(deposit?.providerPayload ?? {}, metadata);
-          const payloadIdentifiers = this.ivorypayService.extractProviderIdentifiers(deposit?.providerPayload ?? {});
-          const payloadIdentifierValues = Object.values(payloadIdentifiers ?? {})
+          const payloadCandidates = this.buildIvorypayReferenceCandidates(
+            deposit?.providerPayload ?? {},
+            metadata,
+          );
+          const payloadIdentifiers =
+            this.ivorypayService.extractProviderIdentifiers(
+              deposit?.providerPayload ?? {},
+            );
+          const payloadIdentifierValues = Object.values(
+            payloadIdentifiers ?? {},
+          )
             .filter((id) => !!id)
             .map((id) => id?.toString?.().trim())
             .filter((value) => !!value && value !== tx.transaction_reference);
 
-          rawProviderIds = Array.from(new Set([...rawProviderIds, ...payloadCandidates, ...payloadIdentifierValues]))
+          rawProviderIds = Array.from(
+            new Set([
+              ...rawProviderIds,
+              ...payloadCandidates,
+              ...payloadIdentifierValues,
+            ]),
+          )
             .filter((value, index, self) => self.indexOf(value) === index)
             .filter(
               (value, index) =>
                 index === 0 ||
-                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value),
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+                  value,
+                ),
             );
 
           if (rawProviderIds.length) {
@@ -1334,7 +1701,9 @@ export class WebhookService {
         // Ivorypay can also verify by the original transaction reference we supplied,
         // so do not skip stuck deposits simply because a provider-specific id is missing.
         const providerTransactionId =
-          provider === 'ivorypay' ? (rawProviderIds[0] ?? tx.transaction_reference) : tx.transaction_reference;
+          provider === 'ivorypay'
+            ? (rawProviderIds[0] ?? tx.transaction_reference)
+            : tx.transaction_reference;
 
         if (provider === 'ivorypay' && !providerTransactionId) {
           this.logger.warn(
@@ -1350,7 +1719,9 @@ export class WebhookService {
         let verifiedTransaction: any = null;
         try {
           if (provider === 'paystack') {
-            verifiedTransaction = await this.paystackService.verifyTransaction(tx.transaction_reference);
+            verifiedTransaction = await this.paystackService.verifyTransaction(
+              tx.transaction_reference,
+            );
           } else if (provider === 'ivorypay') {
             const candidates = rawProviderIds;
             verifiedTransaction = await this.ivorypayService.verifyTransaction(
@@ -1359,7 +1730,9 @@ export class WebhookService {
               candidates,
             );
           } else {
-            this.logger.log(`fixStuckDeposits: skipping ${tx.transaction_reference}, unsupported provider=${provider}`);
+            this.logger.log(
+              `fixStuckDeposits: skipping ${tx.transaction_reference}, unsupported provider=${provider}`,
+            );
             continue;
           }
 
@@ -1374,7 +1747,8 @@ export class WebhookService {
               null;
             if (lookupId && lookupId !== tx.transaction_reference) {
               const metadata = (tx.metadata as any) ?? {};
-              const providerIdentifiers = verifiedTransaction.providerIdentifiers ?? {};
+              const providerIdentifiers =
+                verifiedTransaction.providerIdentifiers ?? {};
               const updatedMetadata = {
                 ...metadata,
                 provider_ref: lookupId,
@@ -1383,26 +1757,49 @@ export class WebhookService {
                   providerIdentifiers.id ??
                   metadata.provider_transaction_id ??
                   null,
-                provider_payment_id: providerIdentifiers.payment_id ?? metadata.provider_payment_id ?? null,
-                provider_checkout_id: providerIdentifiers.checkout_id ?? metadata.provider_checkout_id ?? null,
-                provider_reference: providerIdentifiers.provider_reference ?? metadata.provider_reference ?? null,
-                payment_reference: providerIdentifiers.payment_reference ?? metadata.payment_reference ?? null,
-                merchant_reference: providerIdentifiers.merchant_reference ?? metadata.merchant_reference ?? null,
+                provider_payment_id:
+                  providerIdentifiers.payment_id ??
+                  metadata.provider_payment_id ??
+                  null,
+                provider_checkout_id:
+                  providerIdentifiers.checkout_id ??
+                  metadata.provider_checkout_id ??
+                  null,
+                provider_reference:
+                  providerIdentifiers.provider_reference ??
+                  metadata.provider_reference ??
+                  null,
+                payment_reference:
+                  providerIdentifiers.payment_reference ??
+                  metadata.payment_reference ??
+                  null,
+                merchant_reference:
+                  providerIdentifiers.merchant_reference ??
+                  metadata.merchant_reference ??
+                  null,
                 tx_ref: providerIdentifiers.tx_ref ?? metadata.tx_ref ?? null,
                 trxref: providerIdentifiers.trxref ?? metadata.trxref ?? null,
                 transaction_reference:
-                  providerIdentifiers.transaction_reference ?? metadata.transaction_reference ?? null,
+                  providerIdentifiers.transaction_reference ??
+                  metadata.transaction_reference ??
+                  null,
               };
               try {
                 await this.prisma.deposit.update({
                   where: { reference: tx.transaction_reference },
                   data: {
                     providerRef: lookupId,
-                    providerTransactionId: providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? null,
-                    providerReference: providerIdentifiers.provider_reference ?? null,
+                    providerTransactionId:
+                      providerIdentifiers.transaction_id ??
+                      providerIdentifiers.id ??
+                      null,
+                    providerReference:
+                      providerIdentifiers.provider_reference ?? null,
                     checkoutId: providerIdentifiers.checkout_id ?? null,
-                    paymentReference: providerIdentifiers.payment_reference ?? null,
-                    merchantReference: providerIdentifiers.merchant_reference ?? null,
+                    paymentReference:
+                      providerIdentifiers.payment_reference ?? null,
+                    merchantReference:
+                      providerIdentifiers.merchant_reference ?? null,
                     providerPayload: verifiedTransaction ?? null,
                   },
                 });
@@ -1429,13 +1826,24 @@ export class WebhookService {
           continue;
         }
 
-        const status = (verifiedTransaction?.status ?? '').toString().toLowerCase();
+        const status = (verifiedTransaction?.status ?? '')
+          .toString()
+          .toLowerCase();
         if (['success', 'completed'].includes(status)) {
           await this.finalizeDeposit(tx.transaction_reference);
         } else if (
-          ['failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'].includes(status)
+          [
+            'failed',
+            'cancelled',
+            'expired',
+            'abandoned',
+            'declined',
+            'reversed',
+            'incomplete',
+          ].includes(status)
         ) {
-          const providerLabel = provider === 'paystack' ? 'Paystack' : 'Ivorypay';
+          const providerLabel =
+            provider === 'paystack' ? 'Paystack' : 'Ivorypay';
           await this.depositService.failDeposit(
             tx.transaction_reference,
             `${providerLabel} verify indicates ${verifiedTransaction.status}`,
@@ -1446,7 +1854,10 @@ export class WebhookService {
           );
         }
       } catch (err) {
-        this.logger.error(`fixStuckDeposits: failed to process ${tx.transaction_reference}`, err as any);
+        this.logger.error(
+          `fixStuckDeposits: failed to process ${tx.transaction_reference}`,
+          err as any,
+        );
       }
     }
 
@@ -1468,7 +1879,9 @@ export class WebhookService {
     });
 
     if (staleTxs.length) {
-      this.logger.log(`cleanupStaleFailedDeposits: found ${staleTxs.length} stale failed deposit transaction(s)`);
+      this.logger.log(
+        `cleanupStaleFailedDeposits: found ${staleTxs.length} stale failed deposit transaction(s)`,
+      );
 
       for (const tx of staleTxs) {
         try {
@@ -1515,11 +1928,15 @@ export class WebhookService {
       return;
     }
 
-    this.logger.log(`cleanupStaleFailedDeposits: found ${staleFailedDeposits.length} stale FAILED deposit record(s)`);
+    this.logger.log(
+      `cleanupStaleFailedDeposits: found ${staleFailedDeposits.length} stale FAILED deposit record(s)`,
+    );
     for (const deposit of staleFailedDeposits) {
       try {
         await this.prisma.deposit.delete({ where: { id: deposit.id } });
-        this.logger.log(`cleanupStaleFailedDeposits: deleted stale FAILED deposit ${deposit.reference}`);
+        this.logger.log(
+          `cleanupStaleFailedDeposits: deleted stale FAILED deposit ${deposit.reference}`,
+        );
       } catch (err) {
         this.logger.error(
           `cleanupStaleFailedDeposits: failed to delete stale FAILED deposit ${deposit.reference}`,
@@ -1529,10 +1946,16 @@ export class WebhookService {
     }
   }
 
-  private async finalizePendingDepositWithTransaction(reference: string, deposit: any, transaction: any) {
+  private async finalizePendingDepositWithTransaction(
+    reference: string,
+    deposit: any,
+    transaction: any,
+  ) {
     // Validate transaction reference before proceeding with wallet operations
     if (!transaction || !transaction.id) {
-      throw new BadRequestException(`Invalid transaction for deposit finalization: reference=${reference}`);
+      throw new BadRequestException(
+        `Invalid transaction for deposit finalization: reference=${reference}`,
+      );
     }
 
     const result = await this.prisma.$transaction(
@@ -1560,8 +1983,12 @@ export class WebhookService {
           return { ok: false };
         }
 
-        const amount = this.normalizeAmount(resolveDepositCreditAmount(transaction, deposit));
-        const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
+        const amount = this.normalizeAmount(
+          resolveDepositCreditAmount(transaction, deposit),
+        );
+        const previousBalance = this.normalizeAmount(
+          Number(wallet.balance ?? 0),
+        );
 
         await tx.wallets.update({
           where: { id: wallet.id },
@@ -1580,8 +2007,13 @@ export class WebhookService {
           },
         });
 
-        const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
-        if (transaction && isDeposit && transaction.status?.toLowerCase() !== 'completed') {
+        const isDeposit =
+          transaction?.transaction_type?.toLowerCase() === 'deposit';
+        if (
+          transaction &&
+          isDeposit &&
+          transaction.status?.toLowerCase() !== 'completed'
+        ) {
           await tx.transactions.update({
             where: { id: transaction.id },
             data: {
@@ -1614,24 +2046,30 @@ export class WebhookService {
       amount: number;
       ledgerEntryId: string;
     };
-    const notification = await this.notificationsService.sendNotification(deposit.userId, {
-      type: 'deposit_completed',
-      title: 'Deposit completed',
-      body: `Your deposit of ${completed.amount} ${deposit.currency || 'FARM'} has been credited to your wallet.`,
-      entityId: deposit.id,
-      metadata: {
-        reference,
-        amount: completed.amount,
-        currency: deposit.currency || 'FARM',
-        ledgerEntryId: completed.ledgerEntryId,
+    const notification = await this.notificationsService.sendNotification(
+      deposit.userId,
+      {
+        type: 'deposit_completed',
+        title: 'Deposit completed',
+        body: `Your deposit of ${completed.amount} ${deposit.currency || 'FARM'} has been credited to your wallet.`,
+        entityId: deposit.id,
+        metadata: {
+          reference,
+          amount: completed.amount,
+          currency: deposit.currency || 'FARM',
+          ledgerEntryId: completed.ledgerEntryId,
+        },
       },
-    });
+    );
 
     this.logger.log(
       `Ivorypay webhook credit completed: reference=${reference} walletBefore=${completed.previousBalance} walletAfter=${completed.previousBalance + completed.amount} amount=${completed.amount} ledgerId=${completed.ledgerEntryId} notificationId=${notification?.id ?? 'none'}`,
     );
 
-    this.websocket.emitBalanceUpdate(completed.wallet.user_id ?? '', completed.previousBalance + completed.amount);
+    this.websocket.emitBalanceUpdate(
+      completed.wallet.user_id ?? '',
+      completed.previousBalance + completed.amount,
+    );
     this.websocket.emitTransactionUpdate(completed.wallet.user_id ?? '', {
       reference,
       status: 'SUCCESS',
@@ -1640,7 +2078,10 @@ export class WebhookService {
     return true;
   }
 
-  private async completePendingTransaction(reference: string, transaction?: any) {
+  private async completePendingTransaction(
+    reference: string,
+    transaction?: any,
+  ) {
     if (!transaction) {
       transaction = await this.prisma.transactions.findUnique({
         where: { transaction_reference: reference },
@@ -1653,7 +2094,8 @@ export class WebhookService {
       return false;
     }
 
-    const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
+    const isDeposit =
+      transaction?.transaction_type?.toLowerCase() === 'deposit';
     if (!isDeposit) {
       return false;
     }
@@ -1697,7 +2139,8 @@ export class WebhookService {
       return false;
     }
 
-    const isDeposit = transaction?.transaction_type?.toLowerCase() === 'deposit';
+    const isDeposit =
+      transaction?.transaction_type?.toLowerCase() === 'deposit';
     if (!isDeposit) return false;
     const txStatus = transaction.status?.toLowerCase();
     if (txStatus === 'completed') return true;
@@ -1778,7 +2221,10 @@ export class WebhookService {
     const previousBalance = (result as any).previousBalance;
     const amount = (result as any).amount;
 
-    this.websocket.emitBalanceUpdate(wallet.user_id ?? '', previousBalance + amount);
+    this.websocket.emitBalanceUpdate(
+      wallet.user_id ?? '',
+      previousBalance + amount,
+    );
     this.websocket.emitTransactionUpdate(wallet.user_id ?? '', {
       reference,
       status: 'SUCCESS',
@@ -1792,9 +2238,15 @@ export class WebhookService {
    * This is called when a deposit record exists and is PENDING, but we need to credit the wallet.
    * This is the ONLY authorized method for wallet credit on deposit success.
    */
-  private async creditPendingDepositWithWallet(reference: string, deposit: any, transaction?: any) {
+  private async creditPendingDepositWithWallet(
+    reference: string,
+    deposit: any,
+    transaction?: any,
+  ) {
     if (!deposit || deposit.status !== 'PENDING') {
-      this.logger.warn(`creditPendingDepositWithWallet: deposit not in PENDING state for ${reference}`);
+      this.logger.warn(
+        `creditPendingDepositWithWallet: deposit not in PENDING state for ${reference}`,
+      );
       return false;
     }
 
@@ -1821,7 +2273,9 @@ export class WebhookService {
       });
 
       if (updatedDeposits.count === 0) {
-        this.logger.warn(`creditPendingDepositWithWallet: deposit already updated or missing for ${reference}`);
+        this.logger.warn(
+          `creditPendingDepositWithWallet: deposit already updated or missing for ${reference}`,
+        );
         return { ok: false };
       }
 
@@ -1843,7 +2297,9 @@ export class WebhookService {
       }
 
       const previousBalance = this.normalizeAmount(Number(wallet.balance ?? 0));
-      const creditAmount = this.normalizeAmount(resolveDepositCreditAmount(transaction, deposit));
+      const creditAmount = this.normalizeAmount(
+        resolveDepositCreditAmount(transaction, deposit),
+      );
 
       // WALLET CREDIT: This is the ONLY authorized place to credit wallets on deposit success
       await tx.wallets.update({
@@ -1888,13 +2344,16 @@ export class WebhookService {
     const amount = (result as any).amount;
     const ledgerEntryId = (result as any).ledgerEntryId;
 
-    const notification = await this.notificationsService.sendNotification(deposit.userId, {
-      type: 'deposit_completed',
-      title: 'Deposit completed',
-      body: `Your deposit of ${amount} ${deposit.currency || 'FARM'} has been credited to your wallet.`,
-      entityId: deposit.id,
-      metadata: { reference, amount, currency: deposit.currency || 'FARM' },
-    });
+    const notification = await this.notificationsService.sendNotification(
+      deposit.userId,
+      {
+        type: 'deposit_completed',
+        title: 'Deposit completed',
+        body: `Your deposit of ${amount} ${deposit.currency || 'FARM'} has been credited to your wallet.`,
+        entityId: deposit.id,
+        metadata: { reference, amount, currency: deposit.currency || 'FARM' },
+      },
+    );
 
     this.logger.log(
       `Ivorypay deposit credited: reference=${reference} walletBefore=${previousBalance} walletAfter=${previousBalance + amount} amount=${amount} ledgerId=${ledgerEntryId} notificationId=${notification?.id ?? 'none'}`,
@@ -1909,13 +2368,23 @@ export class WebhookService {
     return true;
   }
 
-  private async finalizeWithdrawal(reference: string, success: boolean, reason?: string) {
+  private async finalizeWithdrawal(
+    reference: string,
+    success: boolean,
+    reason?: string,
+  ) {
     const handledByWithdrawService = success
       ? await this.withdrawService.markAsSuccess(reference)
-      : await this.withdrawService.rejectWithdrawal(reference, reason || 'Withdrawal failed');
+      : await this.withdrawService.rejectWithdrawal(
+          reference,
+          reason || 'Withdrawal failed',
+        );
 
     if (handledByWithdrawService) {
-      await this.emitWithdrawalUpdate(reference, success ? 'SUCCESS' : 'FAILED');
+      await this.emitWithdrawalUpdate(
+        reference,
+        success ? 'SUCCESS' : 'FAILED',
+      );
       return true;
     }
 
@@ -1936,7 +2405,9 @@ export class WebhookService {
   private async completeTransactionWithdrawal(transaction: any) {
     // Reference validation: require valid transaction
     if (!transaction || !transaction.id) {
-      throw new BadRequestException('Invalid transaction for withdrawal completion');
+      throw new BadRequestException(
+        'Invalid transaction for withdrawal completion',
+      );
     }
 
     if (transaction.status?.toLowerCase() === 'completed') {
@@ -1947,7 +2418,9 @@ export class WebhookService {
       where: { id: transaction.sender_wallet_id },
     });
     if (!wallet) {
-      throw new BadRequestException(`Wallet not found for withdrawal transaction: ${transaction.id}`);
+      throw new BadRequestException(
+        `Wallet not found for withdrawal transaction: ${transaction.id}`,
+      );
     }
 
     const previousBalance = Number(wallet.balance ?? 0);
@@ -1990,7 +2463,10 @@ export class WebhookService {
       );
     });
 
-    this.websocket.emitBalanceUpdate(wallet.user_id ?? '', previousBalance - withdrawAmount);
+    this.websocket.emitBalanceUpdate(
+      wallet.user_id ?? '',
+      previousBalance - withdrawAmount,
+    );
     this.websocket.emitTransactionUpdate(wallet.user_id ?? '', {
       reference: transaction.transaction_reference,
       status: 'SUCCESS',
@@ -2002,7 +2478,9 @@ export class WebhookService {
   private async failTransactionWithdrawal(transaction: any, reason?: string) {
     // Reference validation: require valid transaction
     if (!transaction || !transaction.id) {
-      throw new BadRequestException('Invalid transaction for withdrawal failure handling');
+      throw new BadRequestException(
+        'Invalid transaction for withdrawal failure handling',
+      );
     }
 
     if (transaction.status?.toLowerCase() === 'failed') {
@@ -2013,12 +2491,17 @@ export class WebhookService {
       where: { id: transaction.sender_wallet_id },
     });
     if (!wallet) {
-      this.logger.warn(`Wallet not found for withdrawal transaction: ${transaction.id}`);
+      this.logger.warn(
+        `Wallet not found for withdrawal transaction: ${transaction.id}`,
+      );
       return false;
     }
 
     const previousLocked = Number(wallet.locked_balance ?? 0);
-    const unlockAmount = Math.min(previousLocked, Number(transaction.amount ?? 0));
+    const unlockAmount = Math.min(
+      previousLocked,
+      Number(transaction.amount ?? 0),
+    );
 
     await this.prisma.$transaction(async (tx) => {
       await tx.wallets.update({
@@ -2032,7 +2515,10 @@ export class WebhookService {
       });
     });
 
-    this.websocket.emitBalanceUpdate(wallet.user_id ?? '', Number(wallet.balance ?? 0));
+    this.websocket.emitBalanceUpdate(
+      wallet.user_id ?? '',
+      Number(wallet.balance ?? 0),
+    );
     this.websocket.emitTransactionUpdate(wallet.user_id ?? '', {
       reference: transaction.transaction_reference,
       status: 'FAILED',
@@ -2056,7 +2542,10 @@ export class WebhookService {
       return;
     }
 
-    this.websocket.emitBalanceUpdate(wallet.user_id ?? '', Number(wallet.balance ?? 0));
+    this.websocket.emitBalanceUpdate(
+      wallet.user_id ?? '',
+      Number(wallet.balance ?? 0),
+    );
     this.websocket.emitTransactionUpdate(wallet.user_id ?? '', {
       reference,
       status,
@@ -2075,17 +2564,27 @@ export class WebhookService {
     for (let i = 0; i < attempts; i++) {
       try {
         await new Promise((r) => setTimeout(r, intervalMs));
-        const verified = await this.paystackService.verifyTransaction(reference);
-        if (verified && (verified.status ?? '').toString().toLowerCase() === 'success') {
-          this.logger.log(`retryVerifyTransaction: verified success for ${reference} on attempt ${i + 1}`);
+        const verified =
+          await this.paystackService.verifyTransaction(reference);
+        if (
+          verified &&
+          (verified.status ?? '').toString().toLowerCase() === 'success'
+        ) {
+          this.logger.log(
+            `retryVerifyTransaction: verified success for ${reference} on attempt ${i + 1}`,
+          );
           await this.depositService.finalizeSuccessfulDeposit(reference);
           return true;
         }
       } catch (e: any) {
-        this.logger.debug(`retryVerifyTransaction attempt ${i + 1} failed for ${reference}: ${e?.message ?? e}`);
+        this.logger.debug(
+          `retryVerifyTransaction attempt ${i + 1} failed for ${reference}: ${e?.message ?? e}`,
+        );
       }
     }
-    this.logger.log(`retryVerifyTransaction: no success for ${reference} after ${attempts} attempts`);
+    this.logger.log(
+      `retryVerifyTransaction: no success for ${reference} after ${attempts} attempts`,
+    );
     return false;
   }
 
@@ -2098,18 +2597,29 @@ export class WebhookService {
           depositMetadata?.farm_to_usd_rate ??
           this.cfg.get<string>('IVORYPAY_FARM_TO_USD_RATE', '130'),
       ) || 130;
-    const transactionCurrency = transaction?.currency?.toString?.().toUpperCase?.() ?? '';
-    const depositCurrency = deposit?.currency?.toString?.().toUpperCase?.() ?? '';
+    const transactionCurrency =
+      transaction?.currency?.toString?.().toUpperCase?.() ?? '';
+    const depositCurrency =
+      deposit?.currency?.toString?.().toUpperCase?.() ?? '';
 
-    if ((transactionCurrency === 'USD' || depositCurrency === 'USD') && metadata?.amount_usd !== undefined) {
+    if (
+      (transactionCurrency === 'USD' || depositCurrency === 'USD') &&
+      metadata?.amount_usd !== undefined
+    ) {
       return this.normalizeAmount(Number(metadata.amount_usd) * farmToUsdRate);
     }
 
-    if (metadata?.amount_farm !== undefined && isFinite(Number(metadata.amount_farm))) {
+    if (
+      metadata?.amount_farm !== undefined &&
+      isFinite(Number(metadata.amount_farm))
+    ) {
       return this.normalizeAmount(Number(metadata.amount_farm));
     }
 
-    if (transactionCurrency === 'USD' && isFinite(Number(transaction?.amount))) {
+    if (
+      transactionCurrency === 'USD' &&
+      isFinite(Number(transaction?.amount))
+    ) {
       return this.normalizeAmount(Number(transaction.amount) * farmToUsdRate);
     }
 
@@ -2136,7 +2646,11 @@ export class WebhookService {
   async handlePaystackWebhookProcessing(payload: any) {
     const event = payload.event;
     const reference = payload.data?.reference;
-    const status = payload.data?.status ?? payload.data?.gateway_response ?? payload.data?.failure_message ?? 'unknown';
+    const status =
+      payload.data?.status ??
+      payload.data?.gateway_response ??
+      payload.data?.failure_message ??
+      'unknown';
 
     this.logger.log(
       `Paystack webhook processing start: event=${event} reference=${reference || 'missing'} status=${status}`,
@@ -2150,25 +2664,94 @@ export class WebhookService {
     const lockTtl = Number(this.cfg.get<number>('WEBHOOK_LOCK_TTL_MS', 60000));
     const locked = await this.acquireLock(lockKey, lockTtl);
     if (!locked) {
-      this.logger.warn(`paystack webhook processing skipped for ${reference} due to existing lock`);
+      this.logger.warn(
+        `paystack webhook processing skipped for ${reference} due to existing lock`,
+      );
       return;
     }
 
     try {
+      const qrTransaction = await this.prisma.transactions.findUnique({
+        where: { transaction_reference: reference },
+      });
+      const qrMetadata =
+        (qrTransaction?.metadata as Record<string, unknown> | null) ?? {};
+      if (qrMetadata.type === 'qr_sale' && qrMetadata.isQrSale === true) {
+        if (qrMetadata.provider !== 'paystack') {
+          this.logger.warn(
+            `Paystack webhook provider mismatch for QR payment ref=${reference}`,
+          );
+          return;
+        }
+        if (event === 'charge.success') {
+          if (
+            payload.data?.status !== undefined &&
+            payload.data.status.toString().toLowerCase() !== 'success'
+          ) {
+            this.logger.warn(
+              `Paystack QR webhook did not report success ref=${reference}`,
+            );
+            return;
+          }
+          const verifiedPayment =
+            await this.paystackService.verifyTransaction(reference);
+          const settled = await this.qrPaymentsService.complete(
+            reference,
+            'paystack',
+            verifiedPayment,
+          );
+          this.logger.log(
+            `Paystack QR verification result ref=${reference} status=${settled ? 'success' : 'pending'}`,
+          );
+        } else if (
+          [
+            'charge.failed',
+            'payment.failed',
+            'transaction.failed',
+            'charge.cancelled',
+            'payment.cancelled',
+            'transaction.cancelled',
+            'charge.expired',
+            'payment.expired',
+            'transaction.expired',
+            'cancelled',
+            'failed',
+            'expired',
+          ].includes(event) ||
+          /(?:failed|cancelled|expired)$/i.test(event)
+        ) {
+          await this.qrPaymentsService.markFailed(
+            reference,
+            payload.data?.gateway_response ||
+              payload.data?.failure_message ||
+              payload.data?.message ||
+              'Payment failed or cancelled',
+          );
+        }
+        return;
+      }
+
       // Defense-in-depth: validate amount before processing (catches queue corruption/manipulation)
       if (event === 'charge.success') {
         const transaction = await this.prisma.transactions.findUnique({
           where: { transaction_reference: reference },
         });
-        if (!transaction || transaction.transaction_type?.toLowerCase() !== 'deposit') {
-          this.logger.warn(`Paystack charge.success has no matching deposit transaction: ${reference}`);
+        if (
+          !transaction ||
+          transaction.transaction_type?.toLowerCase() !== 'deposit'
+        ) {
+          this.logger.warn(
+            `Paystack charge.success has no matching deposit transaction: ${reference}`,
+          );
           return;
         }
         if (
           payload.data?.status !== undefined &&
           payload.data.status.toString().toLowerCase() !== 'success'
         ) {
-          this.logger.warn(`Paystack charge.success has non-success status for ${reference}`);
+          this.logger.warn(
+            `Paystack charge.success has non-success status for ${reference}`,
+          );
           return;
         }
 
@@ -2176,21 +2759,35 @@ export class WebhookService {
           where: { reference },
         });
         const metadata = (transaction.metadata as any) ?? {};
-        const provider = (metadata.provider ?? deposit?.provider)?.toString().toLowerCase();
+        const provider = (metadata.provider ?? deposit?.provider)
+          ?.toString()
+          .toLowerCase();
         const depositProvider = deposit?.provider?.toString().toLowerCase();
-        if (provider !== 'paystack' || (deposit && depositProvider !== 'paystack')) {
-          this.logger.warn(`Paystack charge.success does not match a Paystack deposit: ${reference}`);
+        if (
+          provider !== 'paystack' ||
+          (deposit && depositProvider !== 'paystack')
+        ) {
+          this.logger.warn(
+            `Paystack charge.success does not match a Paystack deposit: ${reference}`,
+          );
           return;
         }
 
         if (transaction) {
           const webhookAmount = Number(payload.data?.amount);
           let expectedKobo: number | null = null;
-          if (metadata?.amount_fiat !== undefined && metadata?.amount_fiat !== null) {
+          if (
+            metadata?.amount_fiat !== undefined &&
+            metadata?.amount_fiat !== null
+          ) {
             expectedKobo = Math.round(Number(metadata.amount_fiat) * 100);
           } else {
             // Prefer deposit base amount when available to avoid using totals
-            if (deposit && deposit.amount !== undefined && deposit.amount !== null) {
+            if (
+              deposit &&
+              deposit.amount !== undefined &&
+              deposit.amount !== null
+            ) {
               expectedKobo = Math.round(Number(deposit.amount) * 100);
             } else {
               expectedKobo = Number.isFinite(Number(transaction.amount))
@@ -2200,7 +2797,9 @@ export class WebhookService {
           }
 
           if (expectedKobo === null || !Number.isFinite(webhookAmount)) {
-            this.logger.error(`Paystack processing amount validation failed for ${reference}: expected amount unavailable`);
+            this.logger.error(
+              `Paystack processing amount validation failed for ${reference}: expected amount unavailable`,
+            );
             return;
           } else if (Math.abs(webhookAmount - expectedKobo) !== 0) {
             this.logger.error(
@@ -2213,11 +2812,14 @@ export class WebhookService {
         // The HTTP webhook guard verifies Paystack's signature before this event
         // is queued; its success event is authoritative once reference and amount
         // have matched the pending deposit.
-        const finalized = await this.depositService.finalizeSuccessfulDeposit(reference, {
-          ...payload.data,
+        const finalized = await this.depositService.finalizeSuccessfulDeposit(
           reference,
-          status: 'success',
-        });
+          {
+            ...payload.data,
+            reference,
+            status: 'success',
+          },
+        );
         this.logger.log(
           `Paystack verification result ref=${reference} status=${finalized ? 'success' : 'pending'}`,
         );
@@ -2230,8 +2832,12 @@ export class WebhookService {
           payload.data?.gateway_response ||
           payload.data?.message ||
           'unknown';
-        this.logger.warn(`Paystack transfer failure for ${reference}: ${failureDetail}`);
-        this.logger.debug(`Paystack transfer failure payload for ${reference}: ${JSON.stringify(payload.data)}`);
+        this.logger.warn(
+          `Paystack transfer failure for ${reference}: ${failureDetail}`,
+        );
+        this.logger.debug(
+          `Paystack transfer failure payload for ${reference}: ${JSON.stringify(payload.data)}`,
+        );
         await this.withdrawService.rejectWithdrawal(reference, failureDetail);
       } else if (
         [
@@ -2265,13 +2871,18 @@ export class WebhookService {
         );
       }
     } catch (error) {
-      this.logger.error(`Error processing Paystack webhook: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Error processing Paystack webhook: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw error;
     } finally {
       try {
         await this.releaseLock(lockKey);
       } catch (e) {
-        this.logger.debug('Failed to release lock for paystack webhook', e as any);
+        this.logger.debug(
+          'Failed to release lock for paystack webhook',
+          e as any,
+        );
       }
     }
   }
@@ -2280,7 +2891,9 @@ export class WebhookService {
     try {
       const client = this.getRedisClient();
       if (!client) {
-        this.logger.warn('Redis client not available; skipping webhook lock acquisition');
+        this.logger.warn(
+          'Redis client not available; skipping webhook lock acquisition',
+        );
         return true;
       }
       const res = await (client as any).set(key, 'locked', 'NX', 'PX', ttlMs);
@@ -2308,7 +2921,11 @@ export class WebhookService {
   async handleIvorypayWebhookProcessing(payload: any) {
     const event = payload.event ?? payload.status;
     let rawReference = this.getIvorypayReference(payload);
-    const status = payload.data?.status ?? payload.status ?? payload.data?.state ?? 'unknown';
+    const status =
+      payload.data?.status ??
+      payload.status ??
+      payload.data?.state ??
+      'unknown';
 
     if (!rawReference) {
       rawReference = this.buildIvorypayReferenceCandidates(payload)[0] ?? null;
@@ -2323,14 +2940,21 @@ export class WebhookService {
       return;
     }
 
-    const fallbackReference = (await this.resolveIvorypayInternalReference(rawReference)) ?? null;
-    const resolvedContext = await this.resolveIvorypayDepositAndTransaction(payload, rawReference);
-    const reference = resolvedContext.resolvedReference ?? fallbackReference ?? rawReference;
+    const fallbackReference =
+      (await this.resolveIvorypayInternalReference(rawReference)) ?? null;
+    const resolvedContext = await this.resolveIvorypayDepositAndTransaction(
+      payload,
+      rawReference,
+    );
+    const reference =
+      resolvedContext.resolvedReference ?? fallbackReference ?? rawReference;
     const lockKey = `ivorypay:webhook:${reference}`;
     const lockTtl = Number(this.cfg.get<number>('WEBHOOK_LOCK_TTL_MS', 60000));
     const locked = await this.acquireLock(lockKey, lockTtl);
     if (!locked) {
-      this.logger.warn(`Ivorypay webhook processing skipped for ${reference} due to existing lock`);
+      this.logger.warn(
+        `Ivorypay webhook processing skipped for ${reference} due to existing lock`,
+      );
       return;
     }
 
@@ -2348,23 +2972,30 @@ export class WebhookService {
           dataReference: payload?.data?.reference ?? null,
           dataTxRef: payload?.data?.tx_ref ?? null,
           dataTrxRef: payload?.data?.trxref ?? null,
-          dataTransactionReference: payload?.data?.transaction_reference ?? null,
-          dataTransactionReferenceAlt: payload?.data?.transactionReference ?? null,
+          dataTransactionReference:
+            payload?.data?.transaction_reference ?? null,
+          dataTransactionReferenceAlt:
+            payload?.data?.transactionReference ?? null,
         },
       )}`,
     );
 
     const transaction = resolvedContext.transaction;
     const deposit = resolvedContext.deposit;
-    const resolvedReference = resolvedContext.resolvedReference ?? reference ?? rawReference;
+    const resolvedReference =
+      resolvedContext.resolvedReference ?? reference ?? rawReference;
     const transactionMetadata = (transaction?.metadata as any) ?? {};
-    const payloadIdentifiers = this.ivorypayService.extractProviderIdentifiers(payload);
+    const payloadIdentifiers =
+      this.ivorypayService.extractProviderIdentifiers(payload);
     const providerRefFromMetadata =
       transactionMetadata.provider_ref ??
       transactionMetadata.provider_transaction_id ??
       transactionMetadata.provider_reference ??
       undefined;
-    const candidateRefs = this.buildIvorypayReferenceCandidates(payload, transactionMetadata);
+    const candidateRefs = this.buildIvorypayReferenceCandidates(
+      payload,
+      transactionMetadata,
+    );
 
     this.logger.log(
       `Ivorypay webhook processing matched deposit=${deposit?.id ?? 'none'} transaction=${transaction?.id ?? 'none'} resolvedReference=${resolvedReference} providerRef=${providerRefFromMetadata ?? rawReference}`,
@@ -2387,46 +3018,91 @@ export class WebhookService {
       payloadIdentifiers.transaction_reference ??
       null;
     const incomingCheckoutId = payloadIdentifiers.checkout_id ?? null;
-    const incomingPaymentReference = payloadIdentifiers.payment_reference ?? null;
-    const incomingMerchantReference = payloadIdentifiers.merchant_reference ?? null;
+    const incomingPaymentReference =
+      payloadIdentifiers.payment_reference ?? null;
+    const incomingMerchantReference =
+      payloadIdentifiers.merchant_reference ?? null;
     const incomingPayloadUpdate: any = {};
     const transactionMetadataUpdate: any = { ...transactionMetadata };
 
     if (deposit) {
       if (incomingProviderRef && deposit.providerRef !== incomingProviderRef)
         incomingPayloadUpdate.providerRef = incomingProviderRef;
-      if (incomingProviderRef && deposit.providerTransactionId !== incomingProviderRef)
+      if (
+        incomingProviderRef &&
+        deposit.providerTransactionId !== incomingProviderRef
+      )
         incomingPayloadUpdate.providerTransactionId = incomingProviderRef;
-      if (incomingProviderReference && deposit.providerReference !== incomingProviderReference)
+      if (
+        incomingProviderReference &&
+        deposit.providerReference !== incomingProviderReference
+      )
         incomingPayloadUpdate.providerReference = incomingProviderReference;
       if (incomingCheckoutId && deposit.checkoutId !== incomingCheckoutId)
         incomingPayloadUpdate.checkoutId = incomingCheckoutId;
-      if (incomingPaymentReference && deposit.paymentReference !== incomingPaymentReference)
+      if (
+        incomingPaymentReference &&
+        deposit.paymentReference !== incomingPaymentReference
+      )
         incomingPayloadUpdate.paymentReference = incomingPaymentReference;
-      if (incomingMerchantReference && deposit.merchantReference !== incomingMerchantReference)
+      if (
+        incomingMerchantReference &&
+        deposit.merchantReference !== incomingMerchantReference
+      )
         incomingPayloadUpdate.merchantReference = incomingMerchantReference;
-      if (payload && JSON.stringify(deposit.providerPayload) !== JSON.stringify(payload))
+      if (
+        payload &&
+        JSON.stringify(deposit.providerPayload) !== JSON.stringify(payload)
+      )
         incomingPayloadUpdate.providerPayload = payload;
     }
 
     if (transaction) {
-      if (incomingProviderRef && transactionMetadata.provider_ref !== incomingProviderRef)
+      if (
+        incomingProviderRef &&
+        transactionMetadata.provider_ref !== incomingProviderRef
+      )
         transactionMetadataUpdate.provider_ref = incomingProviderRef;
-      if (incomingProviderRef && transactionMetadata.provider_transaction_id !== incomingProviderRef)
+      if (
+        incomingProviderRef &&
+        transactionMetadata.provider_transaction_id !== incomingProviderRef
+      )
         transactionMetadataUpdate.provider_transaction_id = incomingProviderRef;
-      if (incomingProviderReference && transactionMetadata.provider_reference !== incomingProviderReference)
-        transactionMetadataUpdate.provider_reference = incomingProviderReference;
-      if (incomingCheckoutId && transactionMetadata.provider_checkout_id !== incomingCheckoutId)
+      if (
+        incomingProviderReference &&
+        transactionMetadata.provider_reference !== incomingProviderReference
+      )
+        transactionMetadataUpdate.provider_reference =
+          incomingProviderReference;
+      if (
+        incomingCheckoutId &&
+        transactionMetadata.provider_checkout_id !== incomingCheckoutId
+      )
         transactionMetadataUpdate.provider_checkout_id = incomingCheckoutId;
-      if (incomingPaymentReference && transactionMetadata.provider_payment_id !== incomingPaymentReference)
-        transactionMetadataUpdate.provider_payment_id = incomingPaymentReference;
-      if (incomingMerchantReference && transactionMetadata.merchant_reference !== incomingMerchantReference)
-        transactionMetadataUpdate.merchant_reference = incomingMerchantReference;
-      if (payload && JSON.stringify(transactionMetadata.provider_payload) !== JSON.stringify(payload))
+      if (
+        incomingPaymentReference &&
+        transactionMetadata.provider_payment_id !== incomingPaymentReference
+      )
+        transactionMetadataUpdate.provider_payment_id =
+          incomingPaymentReference;
+      if (
+        incomingMerchantReference &&
+        transactionMetadata.merchant_reference !== incomingMerchantReference
+      )
+        transactionMetadataUpdate.merchant_reference =
+          incomingMerchantReference;
+      if (
+        payload &&
+        JSON.stringify(transactionMetadata.provider_payload) !==
+          JSON.stringify(payload)
+      )
         transactionMetadataUpdate.provider_payload = payload;
     }
 
-    if (Object.keys(incomingPayloadUpdate).length || Object.keys(transactionMetadataUpdate).length) {
+    if (
+      Object.keys(incomingPayloadUpdate).length ||
+      Object.keys(transactionMetadataUpdate).length
+    ) {
       await this.prisma.$transaction(async (tx) => {
         if (deposit && Object.keys(incomingPayloadUpdate).length) {
           await tx.deposit.update({
@@ -2476,6 +3152,55 @@ export class WebhookService {
       const isSuccessEvent = this.isIvorypaySuccessEvent(event, status);
       const isFailureEvent = this.isIvorypayFailureEvent(event, status);
 
+      if (
+        transactionMetadata.type === 'qr_sale' &&
+        transactionMetadata.isQrSale === true
+      ) {
+        if (transactionMetadata.provider !== 'ivorypay') {
+          this.logger.warn(
+            `Ivorypay webhook provider mismatch for QR payment ref=${resolvedReference}`,
+          );
+          return;
+        }
+        if (isSuccessEvent) {
+          const verifiedTransaction =
+            await this.verifyIvorypayWebhookTransaction(
+              resolvedReference,
+              resolverProviderRef,
+              candidateRefs,
+            );
+          if (
+            !verifiedTransaction ||
+            !this.isIvorypayVerifiedAmountAcceptable(
+              transaction,
+              verifiedTransaction,
+            )
+          ) {
+            this.logger.warn(
+              `Ivorypay QR verification result ref=${resolvedReference} status=pending`,
+            );
+            return;
+          }
+          const settled = await this.qrPaymentsService.complete(
+            resolvedReference,
+            'ivorypay',
+            verifiedTransaction,
+          );
+          this.logger.log(
+            `Ivorypay QR verification result ref=${resolvedReference} status=${settled ? 'success' : 'pending'}`,
+          );
+        } else if (isFailureEvent) {
+          await this.qrPaymentsService.markFailed(
+            resolvedReference,
+            payload.data?.reason ||
+              payload.data?.message ||
+              payload.message ||
+              'Payment failed or cancelled',
+          );
+        }
+        return;
+      }
+
       if (isSuccessEvent) {
         const verifiedTransaction = await this.verifyIvorypayWebhookTransaction(
           resolvedReference,
@@ -2514,7 +3239,9 @@ export class WebhookService {
           verifiedTransaction.providerIdentifiers?.transaction_reference ??
           null;
         const providerIdentifiers =
-          verifiedTransaction?.providerIdentifiers ?? verifiedTransaction?.data?.providerIdentifiers ?? {};
+          verifiedTransaction?.providerIdentifiers ??
+          verifiedTransaction?.data?.providerIdentifiers ??
+          {};
         const providerTransactionId =
           verifiedProviderId ??
           providerIdentifiers.transaction_id ??
@@ -2530,7 +3257,10 @@ export class WebhookService {
           payload?.data?.provider_reference ??
           null;
         const checkoutId =
-          providerIdentifiers.checkout_id ?? payload?.data?.checkout_id ?? payload?.data?.checkoutId ?? null;
+          providerIdentifiers.checkout_id ??
+          payload?.data?.checkout_id ??
+          payload?.data?.checkoutId ??
+          null;
         const paymentReference =
           providerIdentifiers.payment_reference ??
           providerIdentifiers.reference ??
@@ -2564,7 +3294,11 @@ export class WebhookService {
           payload?.transactionId ??
           null;
         const verificationPayload = verifiedTransaction ?? payload;
-        const normalizedStatus = (verifiedTransaction?.status ?? verifiedTransaction?.data?.status ?? '')
+        const normalizedStatus = (
+          verifiedTransaction?.status ??
+          verifiedTransaction?.data?.status ??
+          ''
+        )
           .toString()
           .toLowerCase();
         const expectedAmount = Number(transaction?.amount ?? 0);
@@ -2588,7 +3322,9 @@ export class WebhookService {
             ...(checkoutId ? { checkoutId } : {}),
             ...(paymentReference ? { paymentReference } : {}),
             ...(merchantReference ? { merchantReference } : {}),
-            ...(verificationPayload ? { providerPayload: verificationPayload } : {}),
+            ...(verificationPayload
+              ? { providerPayload: verificationPayload }
+              : {}),
           };
           if (['success', 'completed'].includes(normalizedStatus)) {
             depositUpdate.verifiedAt = new Date();
@@ -2616,18 +3352,35 @@ export class WebhookService {
             const metadata = (transaction?.metadata as any) ?? {};
             const nextMetadata = {
               ...metadata,
-              ...(verifiedProviderId ? { provider_ref: verifiedProviderId } : {}),
-              ...(providerTransactionId ? { provider_transaction_id: providerTransactionId } : {}),
-              ...(providerReference ? { provider_reference: providerReference } : {}),
+              ...(verifiedProviderId
+                ? { provider_ref: verifiedProviderId }
+                : {}),
+              ...(providerTransactionId
+                ? { provider_transaction_id: providerTransactionId }
+                : {}),
+              ...(providerReference
+                ? { provider_reference: providerReference }
+                : {}),
               ...(checkoutId ? { provider_checkout_id: checkoutId } : {}),
-              ...(paymentReference ? { payment_reference: paymentReference } : {}),
-              ...(merchantReference ? { merchant_reference: merchantReference } : {}),
-              ...(providerIdentifiers.payment_id ? { provider_payment_id: providerIdentifiers.payment_id } : {}),
-              ...(providerIdentifiers.tx_ref ? { tx_ref: providerIdentifiers.tx_ref } : {}),
-              ...(providerIdentifiers.trxref ? { trxref: providerIdentifiers.trxref } : {}),
+              ...(paymentReference
+                ? { payment_reference: paymentReference }
+                : {}),
+              ...(merchantReference
+                ? { merchant_reference: merchantReference }
+                : {}),
+              ...(providerIdentifiers.payment_id
+                ? { provider_payment_id: providerIdentifiers.payment_id }
+                : {}),
+              ...(providerIdentifiers.tx_ref
+                ? { tx_ref: providerIdentifiers.tx_ref }
+                : {}),
+              ...(providerIdentifiers.trxref
+                ? { trxref: providerIdentifiers.trxref }
+                : {}),
               ...(providerIdentifiers.transaction_reference
                 ? {
-                    transaction_reference: providerIdentifiers.transaction_reference,
+                    transaction_reference:
+                      providerIdentifiers.transaction_reference,
                   }
                 : {}),
               ...(txHash ? { blockchain_tx_hash: txHash } : {}),
@@ -2645,7 +3398,12 @@ export class WebhookService {
           );
           return;
         }
-        if (!this.isIvorypayVerifiedAmountAcceptable(transaction, verifiedTransaction)) {
+        if (
+          !this.isIvorypayVerifiedAmountAcceptable(
+            transaction,
+            verifiedTransaction,
+          )
+        ) {
           this.logger.warn(
             `Ivorypay webhook processing: amount mismatch for ${reference}: transaction metadata does not align with verified provider amount`,
           );
@@ -2659,14 +3417,22 @@ export class WebhookService {
           const metadata = (transaction.metadata as any) ?? {};
           const webhookAmount = Number(payload.data?.amount ?? payload.amount);
           const expectedUsd =
-            metadata?.amount_usd !== undefined && metadata?.amount_usd !== null ? Number(metadata.amount_usd) : null;
+            metadata?.amount_usd !== undefined && metadata?.amount_usd !== null
+              ? Number(metadata.amount_usd)
+              : null;
           const expectedFarm = Number(transaction.amount);
-          if (expectedUsd !== null && isFinite(expectedUsd) && !isNaN(webhookAmount)) {
+          if (
+            expectedUsd !== null &&
+            isFinite(expectedUsd) &&
+            !isNaN(webhookAmount)
+          ) {
             if (Math.abs(webhookAmount - expectedUsd) > 0.01) {
               this.logger.error(
                 `FRAUD ALERT: Ivorypay USD amount mismatch for ${reference}: expected ${expectedUsd}, got ${webhookAmount}`,
               );
-              throw new BadRequestException(`Amount mismatch: expected ${expectedUsd}, got ${webhookAmount}`);
+              throw new BadRequestException(
+                `Amount mismatch: expected ${expectedUsd}, got ${webhookAmount}`,
+              );
             }
           } else if (isFinite(expectedFarm) && !isNaN(webhookAmount)) {
             if (Math.abs(webhookAmount - expectedFarm) > 0.01) {
@@ -2675,7 +3441,9 @@ export class WebhookService {
               );
             }
           } else {
-            this.logger.warn(`Ivorypay processing amount validation skipped for ${reference} due to missing data`);
+            this.logger.warn(
+              `Ivorypay processing amount validation skipped for ${reference} due to missing data`,
+            );
           }
         }
       }
@@ -2696,16 +3464,24 @@ export class WebhookService {
         'payout.completed',
       ].includes(event?.toString()?.toLowerCase() ?? '');
 
-      if ((transaction?.transaction_type === 'withdrawal' || isWithdrawalEvent) && isFailureEvent) {
+      if (
+        (transaction?.transaction_type === 'withdrawal' || isWithdrawalEvent) &&
+        isFailureEvent
+      ) {
         this.logger.warn(
           `Ivorypay webhook withdrawal failure event: event=${event} reference=${reference} status=${status}`,
         );
         await this.finalizeWithdrawal(
           resolvedReference,
           false,
-          payload.data?.reason || payload.data?.failureReason || payload.message,
+          payload.data?.reason ||
+            payload.data?.failureReason ||
+            payload.message,
         );
-      } else if ((transaction?.transaction_type === 'withdrawal' || isWithdrawalEvent) && isSuccessEvent) {
+      } else if (
+        (transaction?.transaction_type === 'withdrawal' || isWithdrawalEvent) &&
+        isSuccessEvent
+      ) {
         await this.finalizeWithdrawal(resolvedReference, true);
       } else if (isSuccessEvent) {
         const credited = await this.finalizeDeposit(resolvedReference);
@@ -2718,17 +3494,25 @@ export class WebhookService {
         );
         await this.depositService.failDeposit(
           resolvedReference,
-          payload.data?.reason || payload.data?.message || payload.message || 'Payment failed or cancelled',
+          payload.data?.reason ||
+            payload.data?.message ||
+            payload.message ||
+            'Payment failed or cancelled',
         );
       }
     } catch (error) {
-      this.logger.error(`Error processing Ivorypay webhook: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Error processing Ivorypay webhook: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw error;
     } finally {
       try {
         await this.releaseLock(lockKey);
       } catch (e) {
-        this.logger.debug('Failed to release lock for ivorypay webhook', e as any);
+        this.logger.debug(
+          'Failed to release lock for ivorypay webhook',
+          e as any,
+        );
       }
     }
   }

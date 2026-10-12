@@ -33,6 +33,7 @@ import { StkPushModule } from './stk/stk.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { QrModule } from './qr/qr.module';
+import { QrPaymentsModule } from './qr-payments/qr-payments.module';
 import { WebsocketModule } from './websocket/websocket.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
@@ -47,7 +48,10 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     AuditModule,
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: process.env.NODE_ENV === 'production' ? ['.env.production'] : ['.env.production', '.env'],
+      envFilePath:
+        process.env.NODE_ENV === 'production'
+          ? ['.env.production']
+          : ['.env.production', '.env'],
       ignoreEnvFile: false,
     }),
     ThrottlerModule.forRootAsync({
@@ -68,7 +72,9 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
       useFactory: async (cfg: ConfigService) => {
         const redisUrl = cfg.get<string>('REDIS_URL')?.trim();
         if (!redisUrl) {
-          throw new Error('REDIS_URL is required for Bull queue processing. Configure an external managed Redis URL.');
+          throw new Error(
+            'REDIS_URL is required for Bull queue processing. Configure an external managed Redis URL.',
+          );
         }
 
         return {
@@ -108,6 +114,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     TransactionsModule,
     BlockchainModule,
     QrModule,
+    QrPaymentsModule,
     WebsocketModule,
     EscrowModule,
     TransferRequestsModule,

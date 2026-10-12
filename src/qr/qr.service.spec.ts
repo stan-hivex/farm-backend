@@ -2,7 +2,7 @@ import { QrService } from './qr.service';
 import { createHmac } from 'crypto';
 
 describe('QrService merchant QR validation', () => {
-  it('uses the Firebase checkout host when a backend URL is configured', () => {
+  it('creates a public pay link for the merchant QR code', () => {
     const service = new QrService(
       {} as any,
       {} as any,
@@ -14,7 +14,7 @@ describe('QrService merchant QR validation', () => {
 
     const url = (service as any).checkoutUrl('{"merchant_id":"merchant-1"}');
 
-    expect(url).toMatch(/^https:\/\/farmapp-e2145\.web\.app\/merchant-payment\/\?qr=/);
+    expect(url).toBe('https://farmapp.africa/pay/merchant-1');
   });
 
   it('validates a signed merchant QR scanned from its hosted checkout URL', async () => {
@@ -49,7 +49,43 @@ describe('QrService merchant QR validation', () => {
     );
 
     await expect(
-      service.validate(`https://farmapp.africa/merchant-payment/?qr=${qr}`, 'customer-1'),
+      service.validate(
+        `https://farmapp.africa/merchant-payment/?qr=${qr}`,
+        'customer-1',
+      ),
+    ).resolves.toMatchObject({
+      data: {
+        valid: true,
+        type: 'merchant',
+        merchant_id: 'merchant-1',
+        business_name: 'Test Merchant',
+      },
+    });
+  });
+
+  it('validates a public merchant pay URL scanned in the app', async () => {
+    const prisma: any = {
+      merchants: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'merchant-1',
+          status: 'approved',
+          business_name: 'Test Merchant',
+          transaction_fee_percent: 0,
+          daily_limit: 0,
+        }),
+      },
+    };
+    const service = new QrService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    await expect(
+      service.validate('https://farmapp.africa/pay/merchant-1', 'customer-1'),
     ).resolves.toMatchObject({
       data: {
         valid: true,
@@ -79,7 +115,10 @@ describe('QrService merchant QR validation', () => {
     );
 
     await expect(
-      service.validate(JSON.stringify({ merchant_id: 'merchant-1' }), 'customer-1'),
+      service.validate(
+        JSON.stringify({ merchant_id: 'merchant-1' }),
+        'customer-1',
+      ),
     ).rejects.toThrow('Merchant is not approved to accept payments');
   });
 });

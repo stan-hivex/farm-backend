@@ -20,6 +20,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaService } from '../database/prisma.service';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
 import { QUEUES } from '../common/constants';
+import { QrPaymentsModule } from '../qr-payments/qr-payments.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { QUEUES } from '../common/constants';
     forwardRef(() => PaystackModule),
     forwardRef(() => IvorypayModule),
     NotificationsModule,
+    QrPaymentsModule,
     ScheduleModule.forRoot(),
     BullModule.registerQueue({
       name: QUEUES.WEBHOOKS,
