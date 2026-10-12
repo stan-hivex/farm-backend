@@ -1,10 +1,53 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { PassThrough } from 'stream';
-import { cloudinary } from './cloudinary';
+import { cloudinary, configureCloudinary } from './cloudinary';
 import { UploadsService } from './uploads.service';
 
 describe('UploadsService', () => {
-  afterEach(() => jest.restoreAllMocks());
+  const cloudinaryEnv = [
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+  ] as const;
+  const originalEnv = Object.fromEntries(
+    cloudinaryEnv.map((name) => [name, process.env[name]]),
+  );
+
+  beforeEach(() => {
+    process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
+    process.env.CLOUDINARY_API_KEY = 'test-key';
+    process.env.CLOUDINARY_API_SECRET = 'test-secret';
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    for (const name of cloudinaryEnv) {
+      const value = originalEnv[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  it('configures Cloudinary from environment values when called', () => {
+    const configure = jest.spyOn(cloudinary, 'config');
+
+    configureCloudinary();
+
+    expect(configure).toHaveBeenCalledWith({
+      cloud_name: 'test-cloud',
+      api_key: 'test-key',
+      api_secret: 'test-secret',
+      secure: true,
+    });
+  });
+
+  it('reports which Cloudinary settings are missing without exposing secrets', () => {
+    delete process.env.CLOUDINARY_API_SECRET;
+
+    expect(() => configureCloudinary()).toThrow(
+      'Missing Cloudinary configuration: CLOUDINARY_API_SECRET',
+    );
+  });
 
   it('streams the uploaded image to the farmapp folder', async () => {
     const bytes = Buffer.from('image-content');

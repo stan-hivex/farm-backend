@@ -1,28 +1,39 @@
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import { v2 as cloudinary } from 'cloudinary';
-import { PassThrough } from 'stream';
 import { CloudinaryService } from './cloudinary.service';
 
 describe('CloudinaryService support attachments', () => {
+  const cloudinaryEnv = [
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+  ] as const;
+  const originalEnv = Object.fromEntries(
+    cloudinaryEnv.map((name) => [name, process.env[name]]),
+  );
+
+  beforeEach(() => {
+    process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
+    process.env.CLOUDINARY_API_KEY = 'test-key';
+    process.env.CLOUDINARY_API_SECRET = 'test-secret';
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
+    for (const name of cloudinaryEnv) {
+      const value = originalEnv[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   });
 
   it('streams decoded attachment bytes to the correct Cloudinary resource type', async () => {
     const fileBytes = Buffer.from('video-content');
-    const receivedChunks: Buffer[] = [];
     const uploadStream = jest
-      .spyOn(cloudinary.uploader, 'upload_stream')
-      .mockImplementation(((options, callback) => {
-        const stream = new PassThrough();
-        stream.on('data', (chunk: Buffer) => receivedChunks.push(chunk));
-        stream.on('finish', () => {
-          callback(null, {
-            secure_url: 'https://res.cloudinary.com/demo/video/upload/file.mp4',
-          } as any);
-        });
-        return stream as any;
-      }) as any);
+      .spyOn(cloudinary.uploader, 'upload')
+      .mockResolvedValue({
+        secure_url: 'https://res.cloudinary.com/demo/video/upload/file.mp4',
+      } as any);
     const service = new CloudinaryService();
 
     await expect(
@@ -34,29 +45,21 @@ describe('CloudinaryService support attachments', () => {
     ).resolves.toBe('https://res.cloudinary.com/demo/video/upload/file.mp4');
 
     expect(uploadStream).toHaveBeenCalledWith(
+      `data:video/mp4;base64,${fileBytes.toString('base64')}`,
       expect.objectContaining({
         folder: 'support/ticket-1',
-        resource_type: 'video',
+        resource_type: 'auto',
       }),
-      expect.any(Function),
     );
-    expect(Buffer.concat(receivedChunks)).toEqual(fileBytes);
   });
 
   it('logs Cloudinary failures and returns a retryable service error', async () => {
     const loggerError = jest
       .spyOn(Logger.prototype, 'error')
       .mockImplementation();
-    jest.spyOn(cloudinary.uploader, 'upload_stream').mockImplementation(((
-      _options,
-      callback,
-    ) => {
-      const stream = new PassThrough();
-      stream.on('finish', () =>
-        callback(new Error('Upload rejected'), undefined),
-      );
-      return stream as any;
-    }) as any);
+    jest
+      .spyOn(cloudinary.uploader, 'upload')
+      .mockRejectedValue(new Error('Upload rejected'));
     const service = new CloudinaryService();
 
     await expect(

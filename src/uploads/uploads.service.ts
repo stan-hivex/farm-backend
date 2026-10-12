@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import type { Express } from 'express';
 import type { UploadApiResponse } from 'cloudinary';
-import { cloudinary } from './cloudinary';
+import {
+  cloudinary,
+  cloudinaryErrorMessage,
+  configureCloudinary,
+} from './cloudinary';
 
 type UploadedImage = { url: string; public_id: string };
 
@@ -19,6 +23,7 @@ export class UploadsService {
       throw new BadRequestException('Uploaded image is empty');
     }
     try {
+      configureCloudinary();
       const result = await new Promise<UploadApiResponse>((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
           { folder: 'farmapp', resource_type: 'image' },
@@ -29,6 +34,7 @@ export class UploadsService {
             resolve(response);
           },
         );
+        stream.on('error', reject);
         stream.end(file.buffer);
       });
       if (!result.secure_url || !result.public_id) {
@@ -37,7 +43,7 @@ export class UploadsService {
       return { url: result.secure_url, public_id: result.public_id };
     } catch (error) {
       this.logger.error(
-        'Cloudinary image upload failed',
+        `Cloudinary image upload failed: ${cloudinaryErrorMessage(error)}`,
         error instanceof Error ? error.stack : String(error),
       );
       throw new ServiceUnavailableException(

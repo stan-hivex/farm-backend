@@ -3,13 +3,18 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { cloudinary } from '../uploads/cloudinary';
+import {
+  cloudinary,
+  cloudinaryErrorMessage,
+  configureCloudinary,
+} from '../uploads/cloudinary';
 
 @Injectable()
 export class CloudinaryService {
   private readonly logger = new Logger(CloudinaryService.name);
 
   async uploadBase64(base64: string, folder: string): Promise<string> {
+    configureCloudinary();
     const response = await cloudinary.uploader.upload(
       `data:image/png;base64,${base64}`,
       { folder },
@@ -24,6 +29,7 @@ export class CloudinaryService {
     ticketId: string,
   ): Promise<string> {
     try {
+      configureCloudinary();
       const response = await cloudinary.uploader.upload(
         `data:${mimeType};base64,${base64}`,
         {
@@ -38,7 +44,7 @@ export class CloudinaryService {
     } catch (error) {
       this.logger.error(
         `Support attachment upload failed for ticket ${ticketId}: ${
-          error instanceof Error ? error.message : String(error)
+          cloudinaryErrorMessage(error)
         }`,
         error instanceof Error ? error.stack : undefined,
       );
@@ -53,6 +59,7 @@ export class CloudinaryService {
     base64: string,
     escrowId: string,
   ): Promise<string> {
+    configureCloudinary();
     const response = await cloudinary.uploader.upload(
       `data:${mimeType};base64,${base64}`,
       {
