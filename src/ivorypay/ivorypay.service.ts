@@ -43,6 +43,8 @@ export class IvorypayService {
   private readonly logger = new Logger(IvorypayService.name);
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
+  private readonly pricingUnavailableMessage =
+    'Payment pricing is temporarily unavailable. Try again shortly.';
 
   constructor(private readonly cfg: ConfigService) {
     const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
@@ -119,6 +121,27 @@ export class IvorypayService {
     }
 
     return null;
+  }
+
+  private isTemporaryPricingError(error: any): boolean {
+    const statusCode = error?.response?.status ?? error?.response?.data?.statusCode;
+    const message = (
+      error?.response?.data?.message ??
+      error?.response?.data?.error ??
+      ''
+    )
+      .toString()
+      .trim()
+      .toLowerCase();
+
+    return (
+      statusCode === 400 &&
+      message === this.pricingUnavailableMessage.toLowerCase()
+    );
+  }
+
+  private waitBeforePricingRetry(milliseconds: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
   private scanProviderIdentifiers(data: any) {
@@ -594,12 +617,33 @@ export class IvorypayService {
     }
 
     try {
-      const response = await axios.post(endpoint, requestBody, {
-        headers: {
-          Authorization: `${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-      });
+      let response;
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          response = await axios.post(endpoint, requestBody, {
+            headers: {
+              Authorization: `${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+          });
+          break;
+        } catch (error) {
+          if (!this.isTemporaryPricingError(error) || attempt === maxAttempts) {
+            throw error;
+          }
+          const delayMs = 500 * 2 ** (attempt - 1);
+          this.logger.warn(
+            `IvoryPay pricing unavailable for crypto withdrawal; retrying attempt ${attempt + 1}/${maxAttempts} in ${delayMs}ms`,
+          );
+          await this.waitBeforePricingRetry(delayMs);
+        }
+      }
+      if (!response) {
+        throw new BadGatewayException(
+          'IvoryPay did not return a crypto withdrawal response',
+        );
+      }
 
       const rawData = response.data;
       if (!rawData || rawData.status === false) {
@@ -629,6 +673,12 @@ export class IvorypayService {
       this.logger.error(
         `Ivorypay crypto withdrawal request failed: endpoint=${endpoint} method=POST status=${statusCode} request=${JSON.stringify(requestBody)} response=${JSON.stringify(responseBody ?? {})}`,
       );
+
+      if (this.isTemporaryPricingError(e)) {
+        throw new ServiceUnavailableException(
+          'IvoryPay pricing is temporarily unavailable. Please try again shortly.',
+        );
+      }
 
       if (statusCode === 400 || statusCode === 422) {
         throw new BadRequestException('Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.');

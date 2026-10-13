@@ -219,6 +219,111 @@ describe('IvorypayService', () => {
     expect(() => service.getProviderNetworks('DAI')).toThrow('Unsupported crypto token');
   });
 
+  it('retries a temporary IvoryPay pricing outage with the same withdrawal reference', async () => {
+    const pricingError = {
+      response: {
+        status: 400,
+        data: {
+          message:
+            'Payment pricing is temporarily unavailable. Try again shortly.',
+        },
+      },
+    };
+    const retryDelay = jest
+      .spyOn(service as any, 'waitBeforePricingRetry')
+      .mockResolvedValue(undefined);
+    mockedAxios.post
+      .mockRejectedValueOnce(pricingError)
+      .mockRejectedValueOnce(pricingError)
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: { id: 'WD_1', reference: 'withdrawal-ref', status: 'PENDING' },
+        },
+      } as any);
+
+    await expect(
+      service.createWithdrawal({
+        amount: 3.00763446,
+        token: 'USDC',
+        network: 'POLYGON',
+        address: '0x0e892b10a8104855837652906a869acadd07a142',
+        reference: 'withdrawal-ref',
+      }),
+    ).resolves.toMatchObject({
+      providerTransactionId: 'WD_1',
+      providerReference: 'withdrawal-ref',
+    });
+
+    expect(mockedAxios.post).toHaveBeenCalledTimes(3);
+    expect(
+      mockedAxios.post.mock.calls.map((call) => call[1]),
+    ).toEqual([
+      expect.objectContaining({ reference: 'withdrawal-ref' }),
+      expect.objectContaining({ reference: 'withdrawal-ref' }),
+      expect.objectContaining({ reference: 'withdrawal-ref' }),
+    ]);
+    expect(retryDelay.mock.calls).toEqual([[500], [1000]]);
+  });
+
+  it('returns a retryable service error after exhausting temporary pricing retries', async () => {
+    const pricingError = {
+      response: {
+        status: 400,
+        data: {
+          message:
+            'Payment pricing is temporarily unavailable. Try again shortly.',
+        },
+      },
+    };
+    jest
+      .spyOn(service as any, 'waitBeforePricingRetry')
+      .mockResolvedValue(undefined);
+    mockedAxios.post
+      .mockRejectedValueOnce(pricingError)
+      .mockRejectedValueOnce(pricingError)
+      .mockRejectedValueOnce(pricingError);
+
+    await expect(
+      service.createWithdrawal({
+        amount: 3,
+        token: 'USDC',
+        network: 'POLYGON',
+        address: '0x0e892b10a8104855837652906a869acadd07a142',
+        reference: 'withdrawal-ref',
+      }),
+    ).rejects.toMatchObject({
+      status: 503,
+      message:
+        'IvoryPay pricing is temporarily unavailable. Please try again shortly.',
+    });
+    expect(mockedAxios.post).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry other provider validation errors', async () => {
+    mockedAxios.post.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: { message: 'Invalid destination address' },
+      },
+    });
+    const retryDelay = jest.spyOn(service as any, 'waitBeforePricingRetry');
+
+    await expect(
+      service.createWithdrawal({
+        amount: 3,
+        token: 'USDC',
+        network: 'POLYGON',
+        address: '0x0e892b10a8104855837652906a869acadd07a142',
+        reference: 'withdrawal-ref',
+      }),
+    ).rejects.toThrow(
+      'Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.',
+    );
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    expect(retryDelay).not.toHaveBeenCalled();
+  });
+
   it('chooses tx_ref before trxref and transaction_reference when determining primary reference', () => {
     const identifiers = {
       transaction_id: null,

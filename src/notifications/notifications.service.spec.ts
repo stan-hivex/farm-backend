@@ -72,9 +72,19 @@ describe('NotificationsService.notifyTransfer', () => {
       users: {
         findUnique: jest.fn().mockImplementation(({ where }: any) => {
           if (where.id === 'sender-id') {
-            return Promise.resolve({ id: 'sender-id', first_name: 'John', last_name: 'Mwangi', username: 'john' });
+            return Promise.resolve({
+              id: 'sender-id',
+              first_name: 'John',
+              last_name: 'Mwangi',
+              username: 'john',
+            });
           }
-          return Promise.resolve({ id: 'receiver-id', first_name: 'Grace', last_name: 'Njeri', username: 'grace' });
+          return Promise.resolve({
+            id: 'receiver-id',
+            first_name: 'Grace',
+            last_name: 'Njeri',
+            username: 'grace',
+          });
         }),
       },
       wallets: {
@@ -87,8 +97,14 @@ describe('NotificationsService.notifyTransfer', () => {
       },
     };
 
-    const service = new NotificationsService(prisma as any, { get: jest.fn() } as any, {} as any);
-    const sendNotificationSpy = jest.spyOn(service, 'sendNotification').mockResolvedValue({ id: 'notify-1' } as any);
+    const service = new NotificationsService(
+      prisma as any,
+      { get: jest.fn() } as any,
+      {} as any,
+    );
+    const sendNotificationSpy = jest
+      .spyOn(service, 'sendNotification')
+      .mockResolvedValue({ id: 'notify-1' } as any);
 
     await service.notifyTransfer('sender-id', 'receiver-id', 250, 'tx-123');
 
@@ -129,11 +145,12 @@ describe('NotificationsService.notifyTransfer', () => {
         const service = new NotificationsService(
           {} as any,
           {
-            get: jest.fn((key: string) =>
-              ({
-                RESEND_API_KEY: 'test-resend-key',
-                RESEND_FROM: 'FARM <receipts@farmapp.africa>',
-              })[key],
+            get: jest.fn(
+              (key: string) =>
+                ({
+                  RESEND_API_KEY: 'test-resend-key',
+                  RESEND_FROM: 'FARM <receipts@farmapp.africa>',
+                })[key],
             ),
           } as any,
           {} as any,
@@ -143,23 +160,65 @@ describe('NotificationsService.notifyTransfer', () => {
         await service.sendReceiptEmailOrThrow({
           to: 'merchant@example.com',
           receiptNumber: 'FARM-2026-TRANSACTION',
-          amount: 12.5,
-          currency: 'FARM',
+          amount: 500,
+          currency: 'KES',
+          creditedAmount: 3.846,
           pdfBase64: 'cGRm',
+          logoBase64: 'bG9nbw==',
+          merchantName: 'Farm Shop',
+          merchantEmail: 'shop@example.com',
+          merchantPhone: '+254700000000',
+          merchantLocation: 'Nairobi, Kenya',
+          transactionId: 'QR-reference-123',
+          paymentMethod: 'card',
+          paidAt: '13 Oct 2026, 2:30 PM',
+          downloadUrl: 'https://storage.example/download',
+          viewUrl: 'https://storage.example/view',
         });
 
         expect(post).toHaveBeenCalledWith(
           'https://api.resend.com/emails',
           expect.objectContaining({
             to: 'merchant@example.com',
+            subject: 'FARM payment receipt FARM-2026-TRANSACTION',
+            html: expect.stringContaining('Payment successful'),
+            text: expect.stringContaining('Download Receipt (PDF)'),
             attachments: [
               {
                 filename: 'FARM-2026-TRANSACTION.pdf',
                 content: 'cGRm',
               },
+              {
+                filename: 'farm-logo.png',
+                content: 'bG9nbw==',
+                content_id: 'farm-brand-logo',
+              },
             ],
           }),
           expect.any(Object),
+        );
+        const request = post.mock.calls[0][1] as {
+          html: string;
+          text: string;
+        };
+        expect(request.html).toContain('Farm Shop');
+        expect(request.html).toContain('500.00 KES');
+        expect(request.html).toContain('3.846 FARM');
+        expect(request.html).toContain('QR-reference-123');
+        expect(request.html).toContain('card');
+        expect(request.html).toContain('13 Oct 2026, 2:30 PM');
+        expect(request.html).toContain('https://storage.example/download');
+        expect(request.html).toContain('https://storage.example/view');
+        expect(request.html).toContain('support@farmapp.africa');
+        expect(request.html).toContain('https://farmapp.africa');
+        expect(request.text).toContain('Transaction ID: QR-reference-123');
+        expect(post.mock.calls[0][2]).toEqual(
+          expect.objectContaining({
+            headers: {
+              Authorization: 'Bearer test-resend-key',
+              'Content-Type': 'application/json',
+            },
+          }),
         );
       });
     });
@@ -214,20 +273,18 @@ describe('NotificationsService.notifyTransfer', () => {
 
     it('does not expose provider response details when API delivery fails', async () => {
       const service = createService();
-      jest
-        .spyOn(axios, 'post')
-        .mockRejectedValue(
-          Object.assign(new Error('provider returned private diagnostic'), {
-            isAxiosError: true,
-            response: {
-              status: 403,
-              data: {
-                name: 'validation_error',
-                message: 'example.com is not verified',
-              },
+      jest.spyOn(axios, 'post').mockRejectedValue(
+        Object.assign(new Error('provider returned private diagnostic'), {
+          isAxiosError: true,
+          response: {
+            status: 403,
+            data: {
+              name: 'validation_error',
+              message: 'example.com is not verified',
             },
-          }),
-        );
+          },
+        }),
+      );
       const errorLog = jest
         .spyOn((service as any).logger, 'error')
         .mockImplementation();

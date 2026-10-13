@@ -2,6 +2,8 @@ import { Processor, Process, InjectQueue } from '@nestjs/bull';
 import { ConfigService } from '@nestjs/config';
 import type { Job, Queue } from 'bull';
 import { getStorage } from 'firebase-admin/storage';
+import { readFile } from 'fs/promises';
+import { resolve } from 'path';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../database/prisma.service';
@@ -21,7 +23,9 @@ export class ReceiptsProcessor {
     const receipt = await this.prisma.payment_receipts.findUnique({
       where: { id: job.data.receiptId },
       include: {
-        transactions: { select: { transaction_reference: true } },
+        transactions: {
+          select: { transaction_reference: true, metadata: true },
+        },
         merchants: {
           include: {
             users_merchants_user_idTousers: { select: { email: true } },
@@ -29,7 +33,8 @@ export class ReceiptsProcessor {
         },
       },
     });
-    if (!receipt) throw new Error(`Receipt ${job.data.receiptId} was not found`);
+    if (!receipt)
+      throw new Error(`Receipt ${job.data.receiptId} was not found`);
     if (!receipt.pdf_url) {
       const bucketName = this.config.get<string>('FIREBASE_STORAGE_BUCKET');
       if (!bucketName) {
@@ -37,8 +42,7 @@ export class ReceiptsProcessor {
       }
 
       const pdfBytes = await this.createPdf(receipt);
-      const objectPath =
-        `receipts/${receipt.merchant_id}/${receipt.receipt_number}.pdf`;
+      const objectPath = `receipts/${receipt.merchant_id}/${receipt.receipt_number}.pdf`;
       await getStorage()
         .bucket(bucketName)
         .file(objectPath)
@@ -73,7 +77,9 @@ export class ReceiptsProcessor {
     const receipt = await this.prisma.payment_receipts.findUnique({
       where: { id: job.data.receiptId },
       include: {
-        transactions: { select: { transaction_reference: true } },
+        transactions: {
+          select: { transaction_reference: true, metadata: true },
+        },
         merchants: {
           include: {
             users_merchants_user_idTousers: { select: { email: true } },
@@ -81,28 +87,80 @@ export class ReceiptsProcessor {
         },
       },
     });
-    if (!receipt) throw new Error(`Receipt ${job.data.receiptId} was not found`);
+    if (!receipt)
+      throw new Error(`Receipt ${job.data.receiptId} was not found`);
     if (receipt.email_sent_at || !receipt.pdf_url) return;
 
     const email =
       receipt.merchants.business_email?.trim() ||
       receipt.merchants.users_merchants_user_idTousers?.email?.trim();
     if (!email) {
-      throw new Error(`No merchant email is configured for receipt ${receipt.id}`);
+      throw new Error(
+        `No merchant email is configured for receipt ${receipt.id}`,
+      );
     }
     const bucketName = this.config.get<string>('FIREBASE_STORAGE_BUCKET');
-    if (!bucketName) throw new Error('FIREBASE_STORAGE_BUCKET is not configured');
-    const [pdfBuffer] = await getStorage()
-      .bucket(bucketName)
-      .file(receipt.pdf_url)
-      .download();
+    if (!bucketName)
+      throw new Error('FIREBASE_STORAGE_BUCKET is not configured');
+    const file = getStorage().bucket(bucketName).file(receipt.pdf_url);
+    const expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    const [[pdfBuffer], [downloadUrl], [viewUrl], logoBuffer] =
+      await Promise.all([
+        file.download(),
+        file.getSignedUrl({
+          action: 'read',
+          expires,
+          responseDisposition: `attachment; filename="${receipt.receipt_number}.pdf"`,
+        }),
+        file.getSignedUrl({
+          action: 'read',
+          expires,
+          responseDisposition: `inline; filename="${receipt.receipt_number}.pdf"`,
+        }),
+        readFile(resolve(process.cwd(), 'assets', 'app_logo.png')),
+      ]);
+    const metadata =
+      receipt.transactions?.metadata &&
+      typeof receipt.transactions.metadata === 'object'
+        ? (receipt.transactions.metadata as Record<string, unknown>)
+        : {};
+    const location = [receipt.merchants.city, receipt.merchants.country]
+      .filter((part): part is string => Boolean(part?.trim()))
+      .join(', ');
+    const paidAmount = Number(
+      metadata.amount_fiat ?? metadata.amount_usd ?? receipt.amount,
+    );
+    const paidCurrency =
+      typeof metadata.currency_fiat === 'string'
+        ? metadata.currency_fiat
+        : metadata.amount_usd != null
+          ? 'USD'
+          : 'FARM';
 
     await this.notifications.sendReceiptEmailOrThrow({
       to: email,
       receiptNumber: receipt.receipt_number,
-      amount: Number(receipt.amount),
-      currency: 'FARM',
+      amount: paidAmount,
+      currency: paidCurrency,
+      creditedAmount: Number(receipt.amount),
       pdfBase64: pdfBuffer.toString('base64'),
+      logoBase64: logoBuffer.toString('base64'),
+      merchantName: receipt.merchants.business_name,
+      merchantEmail: receipt.merchants.business_email,
+      merchantPhone: receipt.merchants.business_phone,
+      merchantLocation: location || null,
+      transactionId: receipt.transactions.transaction_reference,
+      paymentMethod:
+        typeof metadata.payment_method === 'string'
+          ? metadata.payment_method
+          : 'QR payment',
+      paidAt: new Intl.DateTimeFormat('en-KE', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: 'Africa/Nairobi',
+      }).format(receipt.created_at),
+      downloadUrl,
+      viewUrl,
     });
     await this.prisma.payment_receipts.update({
       where: { id: receipt.id },
