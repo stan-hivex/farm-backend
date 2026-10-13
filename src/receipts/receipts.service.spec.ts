@@ -1,0 +1,85 @@
+import { NotFoundException } from '@nestjs/common';
+import { ReceiptsService } from './receipts.service';
+
+describe('ReceiptsService merchant ownership', () => {
+  it('lists only receipts belonging to the authenticated user merchant', async () => {
+    const prisma = {
+      merchants: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'merchant-1' }),
+      },
+      payment_receipts: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'receipt-1',
+            receipt_number: 'FARM-2026-tx-1',
+            transaction_id: 'tx-1',
+            merchant_id: 'merchant-1',
+            amount: 12.5,
+            fee: 0,
+            pdf_url: null,
+            created_at: new Date('2026-10-13T10:00:00Z'),
+            transactions: {
+              transaction_reference: 'QR-reference',
+              status: 'completed',
+              currency: 'FARM',
+              metadata: { guest_email: 'customer@example.com' },
+            },
+            merchants: { business_name: 'Farm Shop' },
+          },
+        ]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+    };
+    const service = new ReceiptsService(
+      prisma as any,
+      {} as any,
+      {} as any,
+    );
+
+    const result = await service.listForMerchantOwner('owner-1', {
+      page: 1,
+      limit: 20,
+    });
+
+    expect(prisma.merchants.findFirst).toHaveBeenCalledWith({
+      where: { user_id: 'owner-1' },
+      select: { id: true },
+    });
+    expect(prisma.payment_receipts.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { merchant_id: 'merchant-1' } }),
+    );
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        id: 'receipt-1',
+        payer_email: 'customer@example.com',
+        merchant_name: 'Farm Shop',
+        amount: 12.5,
+      }),
+    );
+  });
+
+  it('does not expose a receipt owned by another merchant', async () => {
+    const prisma = {
+      payment_receipts: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const service = new ReceiptsService(
+      prisma as any,
+      {} as any,
+      {} as any,
+    );
+
+    await expect(
+      service.getForMerchantOwner('owner-1', 'receipt-from-another-merchant'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.payment_receipts.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 'receipt-from-another-merchant',
+          merchants: { user_id: 'owner-1' },
+        },
+      }),
+    );
+  });
+});

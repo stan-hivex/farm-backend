@@ -12,6 +12,7 @@ import { PrismaService } from '../database/prisma.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaystackService } from '../paystack/paystack.service';
+import { ReceiptsService } from '../receipts/receipts.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { CreateQrPaymentDto } from './create-qr-payment.dto';
 
@@ -32,6 +33,7 @@ export class QrPaymentsService {
     private readonly cache: CacheService,
     private readonly websocket: WebsocketGateway,
     private readonly notifications: NotificationsService,
+    private readonly receipts: ReceiptsService,
   ) {}
 
   async getPublicMerchant(merchantId: string) {
@@ -476,9 +478,10 @@ export class QrPaymentsService {
     const walletId = transaction.receiver_wallet_id;
 
     const settled = await this.prisma.$transaction(async (tx) => {
+      const settledAt = new Date();
       const claim = await tx.transactions.updateMany({
         where: { id: transaction.id, status: 'pending' },
-        data: { status: 'completed', processed_at: new Date() },
+        data: { status: 'completed', processed_at: settledAt },
       });
       if (claim.count !== 1) return null;
 
@@ -524,11 +527,19 @@ export class QrPaymentsService {
         where: { id: merchantId },
         data: { total_sales: { increment: amount } },
       });
+      const receipt = await this.receipts.createForTransaction(
+        tx,
+        transaction.id,
+        merchantId,
+        transaction.amount,
+        settledAt,
+      );
       return {
         userId: wallet.user_id,
         balance: Number(updatedWallet.balance),
         amount,
         merchantId,
+        receiptId: receipt.id,
       };
     });
 
@@ -538,6 +549,8 @@ export class QrPaymentsService {
       );
       return false;
     }
+
+    this.receipts.enqueuePdfAndEmail(settled.receiptId);
 
     try {
       this.websocket.emitBalanceUpdate(settled.userId, settled.balance);

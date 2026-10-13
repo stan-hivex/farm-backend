@@ -120,6 +120,50 @@ describe('NotificationsService.notifyTransfer', () => {
       jest.restoreAllMocks();
     });
 
+    describe('NotificationsService receipt email delivery', () => {
+      afterEach(() => {
+        jest.restoreAllMocks();
+      });
+
+      it('sends the generated receipt PDF as a Resend attachment', async () => {
+        const service = new NotificationsService(
+          {} as any,
+          {
+            get: jest.fn((key: string) =>
+              ({
+                RESEND_API_KEY: 'test-resend-key',
+                RESEND_FROM: 'FARM <receipts@farmapp.africa>',
+              })[key],
+            ),
+          } as any,
+          {} as any,
+        );
+        const post = jest.spyOn(axios, 'post').mockResolvedValue({} as never);
+
+        await service.sendReceiptEmailOrThrow({
+          to: 'merchant@example.com',
+          receiptNumber: 'FARM-2026-TRANSACTION',
+          amount: 12.5,
+          currency: 'FARM',
+          pdfBase64: 'cGRm',
+        });
+
+        expect(post).toHaveBeenCalledWith(
+          'https://api.resend.com/emails',
+          expect.objectContaining({
+            to: 'merchant@example.com',
+            attachments: [
+              {
+                filename: 'FARM-2026-TRANSACTION.pdf',
+                content: 'cGRm',
+              },
+            ],
+          }),
+          expect.any(Object),
+        );
+      });
+    });
+
     it('sends reset email through the Resend HTTPS API', async () => {
       const service = createService();
       const post = jest.spyOn(axios, 'post').mockResolvedValue({} as never);

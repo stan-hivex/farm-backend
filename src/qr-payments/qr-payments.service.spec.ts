@@ -56,6 +56,7 @@ describe('QrPaymentsService checkout initialization', () => {
       {} as any,
       {} as any,
       {} as any,
+      { createForTransaction: jest.fn(), enqueuePdfAndEmail: jest.fn() } as any,
     );
     return { service, prisma, paystack, ivorypay };
   };
@@ -232,6 +233,7 @@ describe('QrPaymentsService settlement', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
     const complete = jest
       .spyOn(service, 'complete')
@@ -265,6 +267,7 @@ describe('QrPaymentsService settlement', () => {
         {} as any,
         {} as any,
         {} as any,
+        {} as any,
       );
 
       await expect(service.getPublicMerchant(merchantId)).rejects.toThrow(
@@ -278,6 +281,7 @@ describe('QrPaymentsService settlement', () => {
     const findUnique = jest.fn().mockResolvedValue(null);
     const service = new QrPaymentsService(
       { merchants: { findUnique } } as any,
+      {} as any,
       {} as any,
       {} as any,
       {} as any,
@@ -330,6 +334,12 @@ describe('QrPaymentsService settlement', () => {
     const notifications = {
       sendNotification: jest.fn().mockResolvedValue(undefined),
     };
+    const receipts = {
+      createForTransaction: jest
+        .fn()
+        .mockResolvedValue({ id: 'receipt-1' }),
+      enqueuePdfAndEmail: jest.fn(),
+    };
     const service = new QrPaymentsService(
       prisma,
       {} as any,
@@ -338,6 +348,7 @@ describe('QrPaymentsService settlement', () => {
       cache as any,
       websocket as any,
       notifications as any,
+      receipts as any,
     );
 
     const settled = await service.complete(reference, 'paystack', {
@@ -362,6 +373,14 @@ describe('QrPaymentsService settlement', () => {
     });
     expect(tx.ledger_entries.create).toHaveBeenCalledTimes(1);
     expect(tx.merchants.update).toHaveBeenCalledTimes(1);
+    expect(receipts.createForTransaction).toHaveBeenCalledWith(
+      tx,
+      'transaction-1',
+      'merchant-1',
+      7.5,
+      expect.any(Date),
+    );
+    expect(receipts.enqueuePdfAndEmail).toHaveBeenCalledWith('receipt-1');
     expect(cache.invalidateWallet).toHaveBeenCalledWith('owner-1');
     expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('owner-1', 20);
     expect(
@@ -399,6 +418,7 @@ describe('QrPaymentsService settlement', () => {
     };
     const service = new QrPaymentsService(
       prisma,
+      {} as any,
       {} as any,
       {} as any,
       {} as any,

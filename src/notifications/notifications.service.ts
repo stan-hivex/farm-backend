@@ -271,6 +271,60 @@ async updateSettings(userId: string, body: any) {
     }
   }
 
+  async sendReceiptEmailOrThrow(input: {
+    to: string;
+    receiptNumber: string;
+    amount: number;
+    currency: string;
+    pdfBase64: string;
+  }) {
+    const apiKey = this.cfg.get<string>('RESEND_API_KEY');
+    const from =
+      this.cfg.get<string>('RESEND_FROM') ||
+      this.cfg.get<string>('SMTP_FROM');
+    if (!apiKey || !from) {
+      throw new Error('Transactional email API is not configured');
+    }
+
+    try {
+      await axios.post(
+        'https://api.resend.com/emails',
+        {
+          from,
+          to: input.to,
+          subject: `FARM payment receipt ${input.receiptNumber}`,
+          html: `<p>Your merchant received ${input.amount} ${input.currency}.</p><p>Receipt: ${input.receiptNumber}</p>`,
+          text: `Your merchant received ${input.amount} ${input.currency}. Receipt: ${input.receiptNumber}`,
+          attachments: [
+            {
+              filename: `${input.receiptNumber}.pdf`,
+              content: input.pdfBase64,
+            },
+          ],
+        },
+        {
+          headers: {
+            Authorization: `******`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15_000,
+        },
+      );
+    } catch (error) {
+      const status = axios.isAxiosError(error)
+        ? error.response?.status
+        : undefined;
+      this.logger.error(
+        `Receipt email delivery failed${status ? ` (HTTP ${status})` : ''}`,
+      );
+      throw new Error(
+        status
+          ? `Receipt email provider rejected the request (HTTP ${status})`
+          : 'Receipt email provider request failed',
+      );
+    }
+  }
+
   async sendSms(phone: string, message: string) {
     // Avoid logging message contents (OTP) to stdout.
     if (this.twilioClient) {

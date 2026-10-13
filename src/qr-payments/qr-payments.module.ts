@@ -5,6 +5,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { PaystackModule } from '../paystack/paystack.module';
 import { PrismaModule } from '../database/prisma.module';
 import { WebsocketModule } from '../websocket/websocket.module';
+import { ReceiptsModule } from '../receipts/receipts.module';
 import { QrPaymentsController } from './qr-payments.controller';
 import { QrPaymentsService } from './qr-payments.service';
 
@@ -16,6 +17,7 @@ import { QrPaymentsService } from './qr-payments.service';
     IvorypayModule,
     NotificationsModule,
     WebsocketModule,
+    ReceiptsModule,
   ],
   controllers: [QrPaymentsController],
   providers: [QrPaymentsService],
