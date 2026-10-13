@@ -79,6 +79,47 @@ describe('QrPaymentsService checkout initialization', () => {
     );
   });
 
+  it('uses the deployed Firebase success page as the provider callback', async () => {
+    const { service, paystack } = createService();
+
+    await service.initialize({
+      merchantId: merchant.id,
+      amount: 100,
+      method: 'card',
+      guestEmail: 'customer@example.com',
+    });
+
+    expect(paystack.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callback_url: expect.stringMatching(
+          /^https:\/\/farmapp-e2145\.web\.app\/pay\/success\?reference=QR-/,
+        ),
+      }),
+    );
+  });
+
+  it('initializes mobile money checkout without collecting a phone number', async () => {
+    const { service, paystack } = createService();
+
+    await service.initialize({
+      merchantId: merchant.id,
+      amount: 100,
+      method: 'mpesa',
+      guestEmail: 'customer@example.com',
+    });
+
+    expect(paystack.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 100,
+        currency: 'KES',
+        channels: ['mobile_money'],
+      }),
+    );
+    expect(paystack.initializePayment.mock.calls[0][0]).not.toHaveProperty(
+      'phone',
+    );
+  });
+
   it('initializes crypto checkout using an active IvoryPay token/network pair', async () => {
     const { service, ivorypay } = createService();
 
@@ -105,6 +146,24 @@ describe('QrPaymentsService checkout initialization', () => {
     );
   });
 
+  it('chooses an active IvoryPay token and network when none are supplied', async () => {
+    const { service, ivorypay } = createService();
+
+    await service.initialize({
+      merchantId: merchant.id,
+      amount: 100,
+      method: 'crypto',
+      guestEmail: 'customer@example.com',
+    });
+
+    expect(ivorypay.createPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        crypto: 'USDC',
+        chain: 'POLYGON',
+      }),
+    );
+  });
+
   it('rejects a crypto network that is not active for the selected token', async () => {
     const { service, ivorypay, prisma } = createService();
 
@@ -128,6 +187,71 @@ describe('QrPaymentsService checkout initialization', () => {
 
 describe('QrPaymentsService settlement', () => {
   const reference = 'QR-123-payment';
+
+  it('settles successful Paystack verification and reports completed status', async () => {
+    const pendingTransaction = {
+      id: 'transaction-1',
+      status: 'pending',
+      metadata: {
+        type: 'qr_sale',
+        isQrSale: true,
+        provider: 'paystack',
+        provider_ref: reference,
+        amount_fiat: 100,
+      },
+    };
+    const prisma: any = {
+      transactions: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(pendingTransaction)
+          .mockResolvedValueOnce({
+            id: 'transaction-1',
+            status: 'completed',
+          }),
+      },
+      qr_payments: {
+        findFirst: jest.fn().mockResolvedValue({ merchant_id: 'merchant-1' }),
+      },
+      merchants: {
+        findUnique: jest.fn().mockResolvedValue({ business_name: 'Farm Shop' }),
+      },
+    };
+    const paystack = {
+      verifyTransaction: jest.fn().mockResolvedValue({
+        status: 'success',
+        reference,
+        amount: 10_000,
+      }),
+    };
+    const service = new QrPaymentsService(
+      prisma,
+      paystack as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const complete = jest
+      .spyOn(service, 'complete')
+      .mockResolvedValue(true);
+
+    await expect(service.verify(reference)).resolves.toEqual({
+      data: {
+        status: 'completed',
+        business_name: 'Farm Shop',
+        amount: 100,
+        currency: 'KES',
+      },
+    });
+    expect(paystack.verifyTransaction).toHaveBeenCalledWith(reference);
+    expect(complete).toHaveBeenCalledWith(reference, 'paystack', {
+      status: 'success',
+      reference,
+      amount: 10_000,
+    });
+  });
 
   it.each(['ANYID', 'f.'])(
     'rejects invalid public merchant ID %s without querying Prisma',

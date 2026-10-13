@@ -15,7 +15,8 @@ import { PaystackService } from '../paystack/paystack.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { CreateQrPaymentDto } from './create-qr-payment.dto';
 
-const PUBLIC_PAY_SUCCESS_URL = 'https://farmapp.africa/pay/success';
+const DEFAULT_PUBLIC_PAY_SUCCESS_URL =
+  'https://farmapp-e2145.web.app/pay/success';
 
 type QrProvider = 'paystack' | 'ivorypay';
 
@@ -132,29 +133,39 @@ export class QrPaymentsService {
         'An email address is required for this payment',
       );
     }
-    if (dto.method === 'mpesa' && !dto.guestPhone?.startsWith('+')) {
-      throw new BadRequestException(
-        'Enter the M-Pesa phone number with its country code',
-      );
-    }
-
     let amountUsd: number | undefined;
     let crypto = dto.crypto;
     let chain = dto.chain;
     if (provider === 'ivorypay') {
-      crypto = crypto ?? 'USDT';
       const options = await this.ivorypay.getSupportedPaymentOptions();
-      const tokenOptions = options.filter((option) => option.token === crypto);
+      const preferredOptions = crypto
+        ? options.filter((option) => option.token === crypto)
+        : options.filter((option) => option.token === 'USDT');
+      const tokenOptions = preferredOptions.length
+        ? preferredOptions
+        : crypto
+          ? []
+          : options;
       if (!tokenOptions.length) {
         throw new BadRequestException(
           'The selected crypto token is not enabled for IvoryPay',
         );
       }
-      if (chain && !tokenOptions.some((option) => option.network === chain)) {
+      const selectedOption = chain
+        ? tokenOptions.find((option) => option.network === chain)
+        : tokenOptions[0];
+      if (!selectedOption) {
         throw new BadRequestException(
           'The selected crypto token and network are not enabled for IvoryPay',
         );
       }
+      if (selectedOption.token !== 'USDC' && selectedOption.token !== 'USDT') {
+        throw new BadRequestException(
+          'IvoryPay returned an unsupported crypto token',
+        );
+      }
+      crypto = selectedOption.token;
+      chain = selectedOption.network;
       const farmUsdRate = Number(rate.farm_usd_rate);
       if (!Number.isFinite(farmUsdRate) || farmUsdRate <= 0) {
         throw new BadRequestException(
@@ -221,7 +232,7 @@ export class QrPaymentsService {
     });
 
     try {
-      const callbackUrl = `${PUBLIC_PAY_SUCCESS_URL}?reference=${encodeURIComponent(reference)}`;
+      const callbackUrl = `${DEFAULT_PUBLIC_PAY_SUCCESS_URL}?reference=${encodeURIComponent(reference)}`;
       let paymentUrl: string | undefined;
       let providerReference = reference;
 
