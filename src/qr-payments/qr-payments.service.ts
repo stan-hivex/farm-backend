@@ -513,7 +513,6 @@ export class QrPaymentsService {
       return false;
     }
 
-    await this.cache.invalidateWallet(settled.userId);
     try {
       this.websocket.emitBalanceUpdate(settled.userId, settled.balance);
       this.websocket.emitTransactionUpdate(settled.userId, {
@@ -526,8 +525,17 @@ export class QrPaymentsService {
         error instanceof Error ? error.stack : String(error),
       );
     }
-    try {
-      await this.notifications.sendNotification(settled.userId, {
+
+    const cacheInvalidation = this.cache
+      .invalidateWallet(settled.userId)
+      .catch((error) => {
+        this.logger.error(
+          `QR payment wallet cache invalidation failed ref=${reference}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      });
+    const notificationDelivery = this.notifications
+      .sendNotification(settled.userId, {
         type: 'merchant',
         entityId: reference,
         title: 'Merchant payment received',
@@ -539,13 +547,14 @@ export class QrPaymentsService {
           currency: 'FARM',
           reference,
         },
+      })
+      .catch((error) => {
+        this.logger.error(
+          `Could not notify merchant owner about QR payment ${reference}`,
+          error instanceof Error ? error.stack : String(error),
+        );
       });
-    } catch (error) {
-      this.logger.error(
-        `Could not notify merchant owner about QR payment ${reference}`,
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
+    await Promise.all([cacheInvalidation, notificationDelivery]);
 
     this.logger.log(
       `QR payment credited ref=${reference} merchant=${settled.merchantId}`,

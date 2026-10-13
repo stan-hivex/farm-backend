@@ -6,7 +6,6 @@ import {
   IsPositive,
   IsString,
   Length,
-  Min,
 } from 'class-validator';
 
 export class CreateQrPaymentDto {
@@ -16,7 +15,6 @@ export class CreateQrPaymentDto {
 
   @IsNumber()
   @IsPositive()
-  @Min(10)
   amount!: number;
 
   @IsIn(['mpesa', 'card', 'bank', 'crypto'])

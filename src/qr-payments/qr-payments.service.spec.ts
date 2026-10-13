@@ -114,6 +114,19 @@ describe('QrPaymentsService settlement', () => {
     expect(tx.merchants.update).toHaveBeenCalledTimes(1);
     expect(cache.invalidateWallet).toHaveBeenCalledWith('owner-1');
     expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('owner-1', 20);
+    expect(websocket.emitBalanceUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      cache.invalidateWallet.mock.invocationCallOrder[0],
+    );
+    expect(notifications.sendNotification).toHaveBeenCalledWith(
+      'owner-1',
+      expect.objectContaining({
+        title: 'Merchant payment received',
+        metadata: expect.objectContaining({
+          event: 'merchant_payment_received',
+          reference,
+        }),
+      }),
+    );
   });
 
   it('does not settle a payment when the verified Paystack amount differs', async () => {

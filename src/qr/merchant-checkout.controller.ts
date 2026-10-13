@@ -18,7 +18,6 @@ import {
   IsPositive,
   IsString,
   Length,
-  Min,
 } from 'class-validator';
 import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../database/prisma.service';
@@ -35,7 +34,6 @@ class MerchantCheckoutPaymentDto {
 
   @IsNumber()
   @IsPositive()
-  @Min(10)
   amount_kes!: number;
 
   @IsIn(['CARD', 'MOBILE_MONEY', 'BANK_TRANSFER', 'CRYPTO'])
