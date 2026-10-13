@@ -28,6 +28,8 @@ export class CacheInterceptor implements NestInterceptor {
     const path = req.originalUrl.split('?')[0].toLowerCase();
     if (
       path.includes('/wallet') ||
+      path.includes('/merchant/dashboard') ||
+      path.includes('/merchant/transactions') ||
       path.includes('/payments/deposits') ||
       path.includes('/deposit/history') ||
       path.includes('/deposit/status/') ||

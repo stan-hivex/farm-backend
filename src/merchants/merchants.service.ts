@@ -74,7 +74,9 @@ export class MerchantsService {
       throw new ForbiddenException('Full KYC verification is required to access the merchant dashboard');
     }
 
-    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
+    });
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const qrData = await this.qrService.getMerchantQr(merchant.id);
 
