@@ -161,12 +161,20 @@ export class PaystackService {
 
   async createTransferRecipient(payload: any) {
     if (!this.secretKey) {
-      this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock recipient');
-      return { recipient_code: 'RCP_MOCK_123456' };
+      throw new BadRequestException('Paystack payouts are not configured');
     }
 
     try {
-      this.logger.debug(`Paystack transfer recipient payload: ${JSON.stringify(payload)}`);
+      this.logger.debug(
+        `Paystack transfer recipient request: ${JSON.stringify({
+          type: payload.type,
+          currency: payload.currency,
+          bank_code: payload.bank_code,
+          account_number: payload.account_number
+            ? `***${String(payload.account_number).slice(-4)}`
+            : undefined,
+        })}`,
+      );
       const response = await axios.post(
         `${this.paystackBaseUrl}/transferrecipient`,
         payload,
@@ -175,18 +183,22 @@ export class PaystackService {
         },
       );
 
-      this.logger.debug(`Paystack transfer recipient response: ${JSON.stringify(response.data)}`);
       if (!response.data.status) {
         throw new BadRequestException('Failed to create transfer recipient');
       }
 
+      this.logger.debug(
+        `Paystack transfer recipient created: type=${response.data.data?.type}, code=${response.data.data?.recipient_code}`,
+      );
       return response.data.data;
     } catch (e: any) {
       const responseData = e.response?.data;
       const apiMessage = responseData?.message || e.message;
       this.logger.error(`Paystack recipient creation error: ${apiMessage}`);
       if (responseData) {
-        this.logger.debug(`Paystack recipient creation error payload: ${JSON.stringify(responseData)}`);
+        this.logger.debug(
+          `Paystack recipient creation error code: ${responseData.code || 'unspecified'}`,
+        );
       }
 
       // Provide actionable guidance for common bank code problems
@@ -223,7 +235,59 @@ export class PaystackService {
   // Fetch Paystack supported banks for a country and attempt to match a bank name
   private banksCache: Record<string, any[]> = {};
 
+  async getBanks(currency = 'KES', type?: string) {
+    if (!this.secretKey) {
+      throw new BadRequestException('Paystack payouts are not configured');
+    }
+
+    const normalizedCurrency = currency.trim().toUpperCase();
+    const normalizedType = type?.trim().toLowerCase();
+    const cacheKey = `${normalizedCurrency}:${normalizedType ?? 'all'}`;
+    if (this.banksCache[cacheKey]) return this.banksCache[cacheKey];
+
+    try {
+      const response = await axios.get(`${this.paystackBaseUrl}/bank`, {
+        params: {
+          currency: normalizedCurrency,
+          ...(normalizedType ? { type: normalizedType } : {}),
+        },
+        headers: { Authorization: `Bearer ${this.secretKey}` },
+      });
+      if (!response.data?.status || !Array.isArray(response.data.data)) {
+        throw new BadRequestException(
+          'Paystack returned an invalid payout destination list',
+        );
+      }
+      this.banksCache[cacheKey] = response.data.data.filter(
+        (entry: any) => entry?.active !== false,
+      );
+      return this.banksCache[cacheKey];
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to fetch Paystack destinations for ${normalizedCurrency}: ${error.response?.data?.message || error.message}`,
+      );
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(
+        `Could not load Paystack payout destinations: ${error.response?.data?.message || error.message}`,
+      );
+    }
+  }
+
   async getBankCodeByName(bankName: string, country = 'KE') {
+    const key = country.toUpperCase();
+    const banks = await this.getBanks(key === 'KE' ? 'KES' : key);
+    const normalized = this.normalizeBankName(bankName);
+    const match = banks.find(
+      (bank: any) => this.normalizeBankName(bank?.name ?? '') === normalized,
+    );
+    if (match?.code) return match.code;
+
+    throw new BadRequestException(
+      `Unknown Paystack bank '${bankName}'. Refresh the bank list and select a supported bank.`,
+    );
+  }
+
+  private async legacyGetBankCodeByName(bankName: string, country = 'KE') {
     if (!this.secretKey) {
       // In non-production/testing without keys, return the provided value
       return bankName;
@@ -319,8 +383,7 @@ export class PaystackService {
 
   async initiateTransfer(payload: any) {
     if (!this.secretKey) {
-      this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock transfer');
-      return { status: 'success', data: { id: 'TRF_MOCK_123456' } };
+      throw new BadRequestException('Paystack payouts are not configured');
     }
 
     try {
@@ -339,7 +402,9 @@ export class PaystackService {
         amount: transferPayload.amount,
         currency: transferPayload.currency,
         reference: transferPayload.reference,
-        recipient_phone: transferPayload.recipient_phone,
+        recipient_phone: transferPayload.recipient_phone
+          ? `***${String(transferPayload.recipient_phone).slice(-4)}`
+          : undefined,
       })}`);
 
       const response = await axios.post(
@@ -350,12 +415,13 @@ export class PaystackService {
         },
       );
 
-      this.logger.debug(`Paystack transfer response: ${JSON.stringify(response.data)}`);
-
       if (!response.data.status) {
         throw new BadRequestException('Failed to initiate transfer');
       }
 
+      this.logger.debug(
+        `Paystack transfer initiated: status=${response.data.data?.status}, code=${response.data.data?.transfer_code}, reference=${response.data.data?.reference}`,
+      );
       return response.data;
     } catch (e: any) {
       this.logger.error(`Paystack transfer error: ${e.response?.data?.message || e.message}`);

@@ -1,4 +1,4 @@
-import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateWithdrawDto {
   @IsNumber()
@@ -23,6 +23,10 @@ export class CreateWithdrawDto {
   @IsOptional()
   @IsString()
   phoneNumber?: string;
+
+  @IsOptional()
+  @IsIn(['MPESA'])
+  mobileMoneyProvider?: 'MPESA';
 
   @IsOptional()
   @IsString()

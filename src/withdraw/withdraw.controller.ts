@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -65,6 +66,7 @@ export class WithdrawController {
       method: 'MOBILE_MONEY',
       phoneNumber: dto.phoneNumber,
       accountName: dto.accountName,
+      mobileMoneyProvider: dto.mobileMoneyProvider,
       pin: dto.pin,
     };
 
@@ -95,6 +97,15 @@ export class WithdrawController {
   @Get('crypto/networks')
   async getCryptoNetworks(@Req() req, @Query('token') token: string) {
     return this.withdrawService.getProviderNetworks(token);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('paystack/destinations')
+  async getPaystackDestinations(@Query('type') type?: string) {
+    if (type && type !== 'mobile_money') {
+      throw new BadRequestException('Unsupported Paystack destination type');
+    }
+    return this.withdrawService.getPaystackDestinations(type);
   }
 
   @Permissions('withdraw:read')

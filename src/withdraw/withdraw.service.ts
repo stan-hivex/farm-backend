@@ -99,6 +99,12 @@ export class WithdrawService {
       if (!dto.phoneNumber) {
         throw new BadRequestException('Phone number is required for mobile money withdrawals');
       }
+      if (!dto.accountName) {
+        throw new BadRequestException('Account holder name is required for mobile money withdrawals');
+      }
+      if (dto.mobileMoneyProvider !== 'MPESA') {
+        throw new BadRequestException('Select a supported Paystack mobile money provider');
+      }
     } else if (dto.method === 'BANK_TRANSFER') {
       if (!dto.accountName || !dto.accountNumber || !dto.bankName) {
         throw new BadRequestException('Account name, account number and bank name are required for bank transfer withdrawals');
@@ -124,6 +130,7 @@ export class WithdrawService {
       : (dto.cryptoAsset ?? '');
 
     let cryptoExchangeSnapshot: any = null;
+    let paystackConversionSnapshot: any = null;
     if (dto.method === 'CRYPTO') {
       const rate = await this.currencyConversionService.getCurrentRate();
       const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
@@ -150,6 +157,20 @@ export class WithdrawService {
         settlement_usd: settlementUsd,
         crypto_asset: normalizedCryptoAsset,
       };
+    } else {
+      const rate = await this.currencyConversionService.getCurrentRate();
+      const farmKesRate = Number(rate.farm_kes_rate ?? 0);
+      if (!Number.isFinite(farmKesRate) || farmKesRate <= 0) {
+        throw new BadRequestException('The FARM to KES exchange rate is unavailable');
+      }
+      paystackConversionSnapshot = {
+        currency: 'KES',
+        farmKesRate,
+        amountKes: Number((amount * farmKesRate).toFixed(2)),
+        feeKes: Number((fee * farmKesRate).toFixed(2)),
+        settlementKes: Number((settlement * farmKesRate).toFixed(2)),
+        conversionTimestamp: new Date().toISOString(),
+      };
     }
 
     const { withdrawal, wallet: reservedWallet } = await this.prisma.$transaction(async (tx) => {
@@ -169,7 +190,10 @@ export class WithdrawService {
           method: dto.method,
           accountName: dto.accountName,
           accountNumber: dto.accountNumber,
-          bankName: dto.bankName,
+          bankName:
+            dto.method === 'MOBILE_MONEY'
+              ? dto.mobileMoneyProvider
+              : dto.bankName,
           phoneNumber: dto.phoneNumber,
           cryptoAddress,
           cryptoAsset: normalizedCryptoAsset,
@@ -198,6 +222,10 @@ export class WithdrawService {
             cryptoAsset: normalizedCryptoAsset,
             network: normalizedNetworkValue,
             conversion_snapshot: cryptoExchangeSnapshot,
+            paystack_conversion_snapshot: paystackConversionSnapshot,
+            ...(dto.method === 'MOBILE_MONEY'
+              ? { mobile_money_provider: dto.mobileMoneyProvider }
+              : {}),
           },
         },
       });
@@ -247,6 +275,17 @@ export class WithdrawService {
 
   getProviderNetworks(token?: string) {
     return this.ivorypay.getProviderNetworks(token);
+  }
+
+  async getPaystackDestinations(type?: string) {
+    const destinations = await this.paystack.getBanks('KES', type);
+    return {
+      success: true,
+      data: destinations.map((destination: any) => ({
+        name: destination.name,
+        code: destination.code,
+      })),
+    };
   }
 
   async getWithdrawal(id: string, userId?: string) {
@@ -564,28 +603,35 @@ export class WithdrawService {
     if (!withdrawal) return;
 
     try {
+      const transaction = await this.prisma.transactions.findUnique({
+        where: { transaction_reference: reference },
+      });
+      const metadata = (transaction?.metadata as any) ?? {};
       let recipient: any;
 
       if (withdrawal.method === 'MOBILE_MONEY') {
+        const providerCode = (withdrawal.bankName || '').toUpperCase();
+        if (providerCode !== 'MPESA') {
+          throw new BadRequestException(
+            'Unsupported Paystack mobile money provider for this withdrawal',
+          );
+        }
         recipient = await this.paystack.createTransferRecipient({
           type: 'mobile_money',
-          name: withdrawal.accountName || 'FARM User',
+          name: withdrawal.accountName!,
           account_number: this.formatMpesaNumber(withdrawal.phoneNumber),
-          mobile_number: this.formatMpesaNumber(withdrawal.phoneNumber),
-          provider: 'MPESA',
-          bank_code: 'MPESA',
+          bank_code: providerCode,
           currency: 'KES',
         });
       } else if (withdrawal.method === 'BANK_TRANSFER') {
         const bankCode = await this.paystack.getBankCodeByName(withdrawal.bankName || '');
         this.logger.log(`Resolved bank name='${withdrawal.bankName}' -> bank_code='${bankCode}'`);
         recipient = await this.paystack.createTransferRecipient({
-          type: 'nuban',
+          type: 'kepss',
           name: withdrawal.accountName!,
           account_number: withdrawal.accountNumber!,
           bank_code: bankCode,
           currency: 'KES',
-          country: 'KE',
         });
       } else if (withdrawal.method === 'CRYPTO') {
         // Off-chain crypto withdrawal via Ivorypay (or mock)
@@ -595,22 +641,45 @@ export class WithdrawService {
       }
 
       if (recipient) {
+        const conversionSnapshot = metadata.paystack_conversion_snapshot ?? {};
+        const rate = Number(conversionSnapshot.farmKesRate);
+        const payoutAmountKes = Number.isFinite(
+          Number(conversionSnapshot.settlementKes),
+        )
+          ? Number(conversionSnapshot.settlementKes)
+          : Number(
+              (
+                Number(withdrawal.settlement) *
+                (Number.isFinite(rate) && rate > 0
+                  ? rate
+                  : Number(
+                      (await this.currencyConversionService.getCurrentRate())
+                        .farm_kes_rate,
+                    ))
+              ).toFixed(2),
+            );
+        if (!Number.isFinite(payoutAmountKes) || payoutAmountKes <= 0) {
+          throw new BadRequestException(
+            'The FARM to KES payout amount could not be calculated',
+          );
+        }
         const transferResponse = await this.paystack.initiateTransfer({
-          amount: withdrawal.settlement,
+          source: 'balance',
+          amount: payoutAmountKes,
           recipient: recipient.recipient_code,
           reference,
           currency: 'KES',
+          reason: `FARM withdrawal ${reference}`,
         });
 
         const transferData = transferResponse?.data ?? {};
-        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
-          const metadata = (transaction.metadata as any) ?? {};
           const updatedMetadata = {
             ...metadata,
             paystack_transfer_code: transferData.transfer_code || transferData.id || metadata.paystack_transfer_code,
             paystack_transfer_status: transferData.status || metadata.paystack_transfer_status || 'pending',
             paystack_transfer_initiated_at: new Date().toISOString(),
+            paystack_transfer_amount_kes: payoutAmountKes,
           };
           await this.prisma.transactions.update({
             where: { id: transaction.id },
@@ -992,10 +1061,11 @@ export class WithdrawService {
 
   private formatMpesaNumber(phone: string | null) {
     if (!phone) return phone || '';
-    if (phone.startsWith('+254')) {
-      return '0' + phone.substring(4);
-    }
-    return phone;
+    const digits = phone.replace(/\D/g, '');
+    if (digits.startsWith('254')) return `0${digits.substring(3)}`;
+    if (digits.startsWith('0')) return digits;
+    if (digits.length === 9) return `0${digits}`;
+    return digits;
   }
 
   private resolveBankCode(bankName: string) {

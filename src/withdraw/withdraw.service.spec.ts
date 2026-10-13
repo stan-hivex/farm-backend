@@ -25,7 +25,11 @@ describe('WithdrawService', () => {
         findUnique: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
-      transactions: { create: jest.fn(), findUnique: jest.fn() },
+      transactions: {
+        create: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+      },
       $transaction: jest.fn(),
     };
 
@@ -179,6 +183,105 @@ describe('WithdrawService', () => {
     });
     // crypto amount is derived from the authoritative farm->USD rate (mock returns farm_usd_rate=0.00666667)
     expect(callArg.amount).toBeCloseTo(0.6000003, 6);
+  });
+
+  it('creates a Kenyan Paystack bank recipient and transfers the KES settlement', async () => {
+    const withdrawal = {
+      userId: 'user-1',
+      amount: 100,
+      settlement: 98.5,
+      method: 'BANK_TRANSFER',
+      accountName: 'Jane Doe',
+      accountNumber: '12345678',
+      bankName: 'Example Bank',
+    };
+    prisma.withdrawal.updateMany.mockResolvedValue({ count: 1 });
+    prisma.withdrawal.findUnique.mockResolvedValue(withdrawal);
+    prisma.transactions.findUnique.mockResolvedValue({
+      id: 'tx-1',
+      metadata: {
+        paystack_conversion_snapshot: {
+          farmKesRate: 1.25,
+          settlementKes: 123.13,
+        },
+      },
+    });
+
+    const paystack = (service as any).paystack;
+    paystack.getBankCodeByName = jest.fn().mockResolvedValue('BANK_CODE');
+    paystack.createTransferRecipient = jest
+      .fn()
+      .mockResolvedValue({ recipient_code: 'RCP_1' });
+    paystack.initiateTransfer = jest
+      .fn()
+      .mockResolvedValue({ data: { transfer_code: 'TRF_1', status: 'pending' } });
+
+    await (service as any).processWithdrawal('withdrawal-ref');
+
+    expect(paystack.createTransferRecipient).toHaveBeenCalledWith({
+      type: 'kepss',
+      name: 'Jane Doe',
+      account_number: '12345678',
+      bank_code: 'BANK_CODE',
+      currency: 'KES',
+    });
+    expect(paystack.initiateTransfer).toHaveBeenCalledWith({
+      source: 'balance',
+      amount: 123.13,
+      recipient: 'RCP_1',
+      reference: 'withdrawal-ref',
+      currency: 'KES',
+      reason: 'FARM withdrawal withdrawal-ref',
+    });
+  });
+
+  it('creates a Paystack mobile money recipient with the selected M-Pesa code', async () => {
+    const withdrawal = {
+      userId: 'user-1',
+      amount: 1500,
+      settlement: 1477.5,
+      method: 'MOBILE_MONEY',
+      accountName: 'Jane Doe',
+      phoneNumber: '+254700000000',
+      bankName: 'MPESA',
+    };
+    prisma.withdrawal.updateMany.mockResolvedValue({ count: 1 });
+    prisma.withdrawal.findUnique.mockResolvedValue(withdrawal);
+    prisma.transactions.findUnique.mockResolvedValue({
+      id: 'tx-1',
+      metadata: {
+        paystack_conversion_snapshot: {
+          farmKesRate: 1,
+          settlementKes: 1477.5,
+        },
+      },
+    });
+
+    const paystack = (service as any).paystack;
+    paystack.createTransferRecipient = jest
+      .fn()
+      .mockResolvedValue({ recipient_code: 'RCP_MPESA' });
+    paystack.initiateTransfer = jest
+      .fn()
+      .mockResolvedValue({ data: { transfer_code: 'TRF_MPESA', status: 'pending' } });
+
+    await (service as any).processWithdrawal('mobile-ref');
+
+    expect(paystack.createTransferRecipient).toHaveBeenCalledWith({
+      type: 'mobile_money',
+      name: 'Jane Doe',
+      account_number: '0700000000',
+      bank_code: 'MPESA',
+      currency: 'KES',
+    });
+    expect(paystack.initiateTransfer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'balance',
+        amount: 1477.5,
+        recipient: 'RCP_MPESA',
+        currency: 'KES',
+      }),
+    );
   });
 
   it('marks a completed withdrawal as success and updates user wallet', async () => {

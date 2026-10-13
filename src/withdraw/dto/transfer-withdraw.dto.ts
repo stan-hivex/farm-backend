@@ -1,4 +1,4 @@
-import { IsNumber, IsString } from 'class-validator';
+import { IsIn, IsNumber, IsString } from 'class-validator';
 
 export class TransferWithdrawDto {
   @IsNumber()
@@ -12,4 +12,7 @@ export class TransferWithdrawDto {
 
   @IsString()
   accountName?: string;
+
+  @IsIn(['MPESA'])
+  mobileMoneyProvider!: 'MPESA';
 }
