@@ -1,5 +1,131 @@
 import { QrPaymentsService } from './qr-payments.service';
 
+describe('QrPaymentsService checkout initialization', () => {
+  const merchant = {
+    id: 'merchant-1',
+    user_id: 'owner-1',
+    status: 'approved',
+    business_name: 'Farm Shop',
+    business_email: 'shop@example.com',
+    qr_code: '{"merchant_id":"merchant-1"}',
+    users_merchants_user_idTousers: { email: 'owner@example.com' },
+  };
+
+  const createService = () => {
+    const transaction = { id: 'transaction-1' };
+    const prisma: any = {
+      merchants: { findUnique: jest.fn().mockResolvedValue(merchant) },
+      wallets: { findFirst: jest.fn().mockResolvedValue({ id: 'wallet-1' }) },
+      $transaction: jest.fn((callback) =>
+        callback({
+          transactions: { create: jest.fn().mockResolvedValue(transaction) },
+          qr_payments: { create: jest.fn().mockResolvedValue({}) },
+        }),
+      ),
+      transactions: {
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const paystack = {
+      initializePayment: jest.fn().mockResolvedValue({
+        authorization_url: 'https://checkout.paystack.com/reference',
+      }),
+    };
+    const ivorypay = {
+      getSupportedPaymentOptions: jest
+        .fn()
+        .mockResolvedValue([
+          { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
+        ]),
+      createPayment: jest.fn().mockResolvedValue({
+        payment_link: 'https://checkout.ivorypay.io/reference',
+      }),
+    };
+    const currencyConversion = {
+      getCurrentRate: jest.fn().mockResolvedValue({
+        farm_kes_rate: 130,
+        farm_usd_rate: 1.3,
+      }),
+    };
+    const service = new QrPaymentsService(
+      prisma,
+      paystack as any,
+      ivorypay as any,
+      currencyConversion as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { service, prisma, paystack, ivorypay };
+  };
+
+  it('uses the Paystack bank_transfer channel for QR bank checkout', async () => {
+    const { service, paystack } = createService();
+
+    await service.initialize({
+      merchantId: merchant.id,
+      amount: 100,
+      method: 'bank',
+      guestEmail: 'customer@example.com',
+    });
+
+    expect(paystack.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 100,
+        currency: 'KES',
+        channels: ['bank_transfer'],
+      }),
+    );
+  });
+
+  it('initializes crypto checkout using an active IvoryPay token/network pair', async () => {
+    const { service, ivorypay } = createService();
+
+    await service.initialize({
+      merchantId: merchant.id,
+      amount: 100,
+      method: 'crypto',
+      guestEmail: 'customer@example.com',
+      crypto: 'USDC',
+      chain: 'POLYGON',
+    });
+
+    expect(ivorypay.createPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 1,
+        currency: 'USD',
+        crypto: 'USDC',
+        chain: 'POLYGON',
+        baseFiat: 'USD',
+      }),
+    );
+    expect(ivorypay.createPayment.mock.calls[0][0].reference).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it('rejects a crypto network that is not active for the selected token', async () => {
+    const { service, ivorypay, prisma } = createService();
+
+    await expect(
+      service.initialize({
+        merchantId: merchant.id,
+        amount: 100,
+        method: 'crypto',
+        guestEmail: 'customer@example.com',
+        crypto: 'USDC',
+        chain: 'BSC',
+      }),
+    ).rejects.toThrow(
+      'The selected crypto token and network are not enabled for IvoryPay',
+    );
+
+    expect(ivorypay.createPayment).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('QrPaymentsService settlement', () => {
   const reference = 'QR-123-payment';
 
@@ -114,9 +240,9 @@ describe('QrPaymentsService settlement', () => {
     expect(tx.merchants.update).toHaveBeenCalledTimes(1);
     expect(cache.invalidateWallet).toHaveBeenCalledWith('owner-1');
     expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('owner-1', 20);
-    expect(websocket.emitBalanceUpdate.mock.invocationCallOrder[0]).toBeLessThan(
-      cache.invalidateWallet.mock.invocationCallOrder[0],
-    );
+    expect(
+      websocket.emitBalanceUpdate.mock.invocationCallOrder[0],
+    ).toBeLessThan(cache.invalidateWallet.mock.invocationCallOrder[0]);
     expect(notifications.sendNotification).toHaveBeenCalledWith(
       'owner-1',
       expect.objectContaining({

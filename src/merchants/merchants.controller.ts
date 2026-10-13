@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpException,
+  Logger,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-validator';
 import { MerchantsService } from './merchants.service';
@@ -6,6 +16,9 @@ import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { Public } from '../common/decorators/public.decorator';
+import { QrPaymentsService } from '../qr-payments/qr-payments.service';
+import { Throttle } from '@nestjs/throttler';
 
 class ApplyDto {
   @IsNotEmpty() @IsString() business_name!: string;
@@ -50,4 +63,31 @@ export class MerchantsController {
 
   @Permissions('merchant:write')
   @Post('qr/regenerate')   regenQr(@CurrentUser() u: any) { return this.svc.regenerateQr(u.id); }
+}
+
+@ApiTags('Merchants')
+@Controller({ path: 'merchants', version: '1' })
+export class PublicMerchantsController {
+  private readonly logger = new Logger(PublicMerchantsController.name);
+
+  constructor(private readonly qrPayments: QrPaymentsService) {}
+
+  @Public()
+  @Get('public/:id')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Get public merchant details for QR checkout' })
+  async getPublicMerchant(@Param('id') merchantId: string) {
+    try {
+      return await this.qrPayments.getPublicMerchant(merchantId);
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(
+        `Public merchant lookup failed for ${merchantId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw error;
+    }
+  }
 }

@@ -74,6 +74,12 @@ export class QrPaymentsService {
     };
   }
 
+  async getPublicCryptoOptions() {
+    const options = await this.ivorypay.getSupportedPaymentOptions();
+    const tokens = [...new Set(options.map((option) => option.token))].sort();
+    return { data: { tokens, options } };
+  }
+
   async initialize(dto: CreateQrPaymentDto) {
     const merchant = await this.prisma.merchants.findUnique({
       where: { id: dto.merchantId },
@@ -113,7 +119,10 @@ export class QrPaymentsService {
 
     const provider: QrProvider =
       dto.method === 'crypto' ? 'ivorypay' : 'paystack';
-    const reference = `QR-${Date.now()}-${randomUUID()}`;
+    const reference =
+      provider === 'ivorypay'
+        ? randomUUID()
+        : `QR-${Date.now()}-${randomUUID()}`;
     const email =
       dto.guestEmail?.trim() ||
       merchant.business_email?.trim() ||
@@ -134,10 +143,16 @@ export class QrPaymentsService {
     let chain = dto.chain;
     if (provider === 'ivorypay') {
       crypto = crypto ?? 'USDT';
-      const networks = this.ivorypay.getProviderNetworks(crypto).networks;
-      if (!networks.includes(chain ?? '')) {
+      const options = await this.ivorypay.getSupportedPaymentOptions();
+      const tokenOptions = options.filter((option) => option.token === crypto);
+      if (!tokenOptions.length) {
         throw new BadRequestException(
-          'The selected crypto network is not enabled for IvoryPay',
+          'The selected crypto token is not enabled for IvoryPay',
+        );
+      }
+      if (chain && !tokenOptions.some((option) => option.network === chain)) {
+        throw new BadRequestException(
+          'The selected crypto token and network are not enabled for IvoryPay',
         );
       }
       const farmUsdRate = Number(rate.farm_usd_rate);
@@ -147,9 +162,9 @@ export class QrPaymentsService {
         );
       }
       amountUsd = Number((amountFarm * farmUsdRate).toFixed(2));
-      if (!chain) {
+      if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
         throw new BadRequestException(
-          'Choose a network for the crypto payment',
+          'The payment amount is too small to convert to a positive USD amount',
         );
       }
     }
@@ -215,7 +230,7 @@ export class QrPaymentsService {
           dto.method === 'mpesa'
             ? ['mobile_money']
             : dto.method === 'bank'
-              ? ['bank']
+              ? ['bank_transfer']
               : ['card'];
         const initialized = await this.paystack.initializePayment({
           email,
