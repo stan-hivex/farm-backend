@@ -19,7 +19,15 @@ export class AdminService {
   async getDashboardStats() {
     const [totalUsers, totalMerchants, activeEscrows, txVolume, pendingKyc, pendingPayouts] =
       await Promise.all([
-        this.prisma.users.count({ where: { is_deleted: false } }),
+        this.prisma.users.count({
+          where: {
+            is_deleted: false,
+            OR: [
+              { role: { notIn: ['admin', 'super_admin'] } },
+              { role: null },
+            ],
+          },
+        }),
         this.prisma.merchants.count({ where: { status: 'approved' } }),
         this.prisma.escrow_contracts.count({ where: { status: 'active' } }),
         this.prisma.transactions.aggregate({
@@ -43,13 +51,26 @@ export class AdminService {
 
   async listUsers(query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
-    const where: any = { is_deleted: false };
-    if (query.search)
-      where.OR = [
+    const where: any = {
+      is_deleted: false,
+      AND: [
+        {
+          OR: [
+            { role: { notIn: ['admin', 'super_admin'] } },
+            { role: null },
+          ],
+        },
+      ],
+    };
+    if (query.search) {
+      where.AND.push({
+        OR: [
         { username: { contains: query.search, mode: 'insensitive' } },
         { phone: { contains: query.search } },
         { email: { contains: query.search, mode: 'insensitive' } },
-      ];
+        ],
+      });
+    }
     if (query.role) where.role = query.role;
     if (query.kyc_status) where.kyc_status = query.kyc_status;
 
@@ -541,7 +562,15 @@ export class AdminService {
 
     const [totalUsers, totalEscrows, totalTransactions, pendingKyc, pendingPayouts, totalSecurityEvents] =
       await Promise.all([
-        this.prisma.users.count({ where: { is_deleted: false } }),
+        this.prisma.users.count({
+          where: {
+            is_deleted: false,
+            OR: [
+              { role: { notIn: ['admin', 'super_admin'] } },
+              { role: null },
+            ],
+          },
+        }),
         this.prisma.escrow_contracts.count({ where: {} }),
         this.prisma.transactions.count({ where: {} }),
         this.prisma.kyc_documents.count({ where: { status: 'pending' } }),
@@ -1224,7 +1253,15 @@ export class AdminService {
   async getSuperadminDashboard() {
     const [totalUsers, totalTransactions, totalRevenue, activeTransactions, flaggedTx, supportTickets, pendingDisputes, pendingKyc] =
       await Promise.all([
-        this.prisma.users.count({ where: { is_deleted: false } }),
+        this.prisma.users.count({
+          where: {
+            is_deleted: false,
+            OR: [
+              { role: { notIn: ['admin', 'super_admin'] } },
+              { role: null },
+            ],
+          },
+        }),
         this.prisma.transactions.count({ where: { status: 'completed' } }),
         this.prisma.transactions.aggregate({
           where: { status: 'completed' },
@@ -1390,7 +1427,8 @@ export class AdminService {
       _sum: { settlement: true },
     });
 
-    const [creationFees, releaseFees, withdrawalFees] = await Promise.all([
+    const [creationFees, releaseFees, withdrawalFees, merchantSalesFees] =
+      await Promise.all([
       this.prisma.transactions.aggregate({
         where: {
           transaction_type: 'escrow_lock',
@@ -1416,6 +1454,19 @@ export class AdminService {
           fee: { gt: 0 },
         },
         _sum: { fee: true },
+        _count: { id: true         },
+      }),
+      this.prisma.transactions.aggregate({
+        where: {
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          fee: { gt: 0 },
+          metadata: {
+            path: ['platform_fee_type'],
+            equals: 'merchant_sale',
+          },
+        },
+        _sum: { fee: true },
         _count: { id: true },
       }),
     ]);
@@ -1423,8 +1474,12 @@ export class AdminService {
     const escrowCreationRevenue = Number(creationFees._sum.fee ?? 0);
     const escrowReleaseRevenue = Number(releaseFees._sum.fee ?? 0);
     const withdrawalRevenue = Number(withdrawalFees._sum.fee ?? 0);
+    const merchantSalesRevenue = Number(merchantSalesFees._sum.fee ?? 0);
     const totalPlatformRevenue =
-      escrowCreationRevenue + escrowReleaseRevenue + withdrawalRevenue;
+      escrowCreationRevenue +
+      escrowReleaseRevenue +
+      withdrawalRevenue +
+      merchantSalesRevenue;
 
     const availableBalance = Math.max(
       0,
@@ -1441,10 +1496,12 @@ export class AdminService {
         escrow_creation_revenue: escrowCreationRevenue,
         escrow_release_revenue: escrowReleaseRevenue,
         withdrawal_revenue: withdrawalRevenue,
+        merchant_sales_revenue: merchantSalesRevenue,
         total_platform_revenue: totalPlatformRevenue,
         escrow_creation_count: creationFees._count.id ?? 0,
         escrow_release_count: releaseFees._count.id ?? 0,
         withdrawal_fee_count: withdrawalFees._count.id ?? 0,
+        merchant_sales_count: merchantSalesFees._count.id ?? 0,
         currency: wallet.currency ?? 'FARM',
         wallet_address: wallet.wallet_address,
       },
@@ -1525,7 +1582,10 @@ export class AdminService {
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.users.update({
         where: { id: adminId },
-        data: { is_suspended: suspended },
+        data: {
+          is_suspended: suspended,
+          is_active: !suspended,
+        },
       });
       if (suspended) {
         await tx.user_sessions.updateMany({
@@ -1543,7 +1603,10 @@ export class AdminService {
       });
       return updated;
     });
-    return { data: result };
+    return {
+      data: result,
+      message: suspended ? 'Admin suspended successfully' : 'Admin approved successfully',
+    };
   }
 
   async deleteAdmin(adminId: string, actorId: string) {
@@ -1554,16 +1617,40 @@ export class AdminService {
     return this.prisma.$transaction(async (tx) => {
       const deleted = await tx.users.update({
         where: { id: adminId },
-        data: { is_deleted: true, is_active: false, is_suspended: true },
+        data: {
+          is_deleted: true,
+          is_active: false,
+          is_suspended: true,
+          deleted_at: new Date(),
+          first_name: 'Deleted',
+          last_name: 'Admin',
+          username: `deleted_${adminId}`,
+          email: null,
+          phone: `deleted_${adminId.slice(0, 12)}`,
+          firebase_uid: null,
+          password_hash: '!deleted!',
+          profile_image: null,
+          bio: null,
+          country: null,
+          city: null,
+          address: null,
+          referral_code: null,
+          referred_by: null,
+          pin_hash: null,
+        },
       });
       await tx.user_sessions.updateMany({
         where: { user_id: adminId, OR: [{ is_revoked: false }, { is_revoked: null }] },
-        data: { is_revoked: true },
+        data: { is_revoked: true, expires_at: new Date() },
       });
+      await tx.device_tokens.deleteMany({ where: { user_id: adminId } });
+      await tx.biometric_settings.deleteMany({ where: { user_id: adminId } });
+      await tx.api_keys.deleteMany({ where: { user_id: adminId } });
+      await tx.notifications.deleteMany({ where: { user_id: adminId } });
       await tx.audit_logs.create({
         data: { user_id: actorId, action: 'DELETE_ADMIN', entity_type: 'users', entity_id: adminId },
       });
-      return { data: deleted };
+      return { data: deleted, message: 'Admin deleted successfully' };
     });
   }
 

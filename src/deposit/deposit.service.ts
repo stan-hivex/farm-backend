@@ -306,10 +306,12 @@ export class DepositService {
     if (!transaction) {
       throw new BadRequestException(`Transaction not found for reference: ${reference}`);
     }
+    const transactionMetadata =
+      (transaction.metadata as Record<string, unknown> | null) ?? {};
 
     // Extra guard: verify provider's authoritative status for this reference
     try {
-      const metadata = (transaction.metadata as any) ?? {};
+      const metadata = transactionMetadata;
       const provider = (metadata?.provider?.toString()?.toLowerCase() || deposit?.provider?.toLowerCase() || 'unknown').trim();
       if (provider === 'paystack') {
         try {
@@ -365,6 +367,23 @@ export class DepositService {
       return false;
     }
 
+    if (transactionMetadata.qr_guest_payment === true) {
+      if (
+        txStatus === 'completed' &&
+        (transactionMetadata.platform_fee_type === 'merchant_sale' ||
+          depositComplete)
+      ) {
+        return true;
+      }
+      if (!deposit || !depositPending || (!txPending && !txComplete)) {
+        this.logger.warn(
+          `finalizeSuccessfulDeposit: merchant QR payment ${reference} is not eligible for settlement`,
+        );
+        return false;
+      }
+      return this.finalizeMerchantQrDeposit(reference, deposit, transaction);
+    }
+
     if (depositComplete && txComplete) {
       this.logger.log(`finalizeSuccessfulDeposit: already completed for ${reference}`);
       return true;
@@ -388,6 +407,187 @@ export class DepositService {
 
     this.logger.warn(`finalizeSuccessfulDeposit: transaction ${reference} status=${transaction.status} is not eligible for wallet credit`);
     return false;
+  }
+
+  private async finalizeMerchantQrDeposit(
+    reference: string,
+    deposit: any,
+    transaction: any,
+  ) {
+    const metadata = (transaction.metadata as Record<string, unknown> | null) ?? {};
+    const merchantId = metadata.merchant_id;
+    if (typeof merchantId !== 'string' || !merchantId) {
+      throw new BadRequestException(
+        `Merchant QR payment ${reference} is missing its merchant`,
+      );
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const merchant = await tx.merchants.findUnique({
+        where: { id: merchantId },
+        select: { id: true, user_id: true, business_name: true },
+      });
+      if (!merchant?.user_id || merchant.user_id !== deposit.userId) {
+        throw new BadRequestException(
+          `Merchant QR payment ${reference} does not match its merchant wallet`,
+        );
+      }
+
+      const merchantWallet = await tx.wallets.findFirst({
+        where: {
+          user_id: merchant.user_id,
+          wallet_type: 'user',
+          is_active: true,
+        },
+      });
+      if (!merchantWallet) {
+        throw new BadRequestException(
+          `Merchant wallet not found for QR payment ${reference}`,
+        );
+      }
+
+      const superadmin = await tx.users.findFirst({
+        where: { role: 'super_admin', is_deleted: false },
+        include: { wallets: { where: { is_active: true }, take: 1 } },
+      });
+      const superadminWallet = superadmin?.wallets[0];
+      if (!superadmin || !superadminWallet) {
+        throw new BadRequestException('Superadmin wallet not found');
+      }
+
+      const updatedDeposit = await tx.deposit.updateMany({
+        where: { id: deposit.id, status: 'PENDING' },
+        data: { status: 'SUCCESS' },
+      });
+      if (updatedDeposit.count === 0) {
+        return { ok: false };
+      }
+
+      const amount = this.normalizeAmount(Number(deposit.amount));
+      const fee = this.normalizeAmount(amount * 0.01);
+      const merchantNet = this.normalizeAmount(amount - fee);
+      const merchantBalanceBefore = this.normalizeAmount(
+        Number(merchantWallet.balance ?? 0),
+      );
+      const superadminBalanceBefore = this.normalizeAmount(
+        Number(superadminWallet.balance ?? 0),
+      );
+      const settledMetadata = {
+        ...metadata,
+        platform_fee_type: 'merchant_sale',
+        platform_fee_percent: 1,
+        platform_fee: fee,
+      };
+
+      await tx.wallets.update({
+        where: { id: merchantWallet.id },
+        data: { balance: { increment: merchantNet } },
+      });
+      const updatedSuperadminWallet = await tx.wallets.update({
+        where: { id: superadminWallet.id },
+        data: { balance: { increment: fee } },
+      });
+      await tx.transactions.update({
+        where: { id: transaction.id },
+        data: {
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          fee,
+          net_amount: merchantNet,
+          receiver_wallet_id: merchantWallet.id,
+          metadata: settledMetadata,
+          processed_at: new Date(),
+        },
+      });
+      await tx.merchants.update({
+        where: { id: merchant.id },
+        data: { total_sales: { increment: amount } },
+      });
+      await tx.qr_payments.updateMany({
+        where: { transaction_id: transaction.id, status: { not: 'completed' } },
+        data: { status: 'completed' },
+      });
+      await tx.ledger_entries.createMany({
+        data: [
+          {
+            transaction_id: transaction.id,
+            wallet_id: merchantWallet.id,
+            entry_type: 'credit',
+            amount: merchantNet,
+            balance_before: merchantBalanceBefore,
+            balance_after: merchantBalanceBefore + merchantNet,
+            description: `Merchant QR sale received after 1% platform fee — ref: ${reference}`,
+          },
+          {
+            transaction_id: transaction.id,
+            wallet_id: superadminWallet.id,
+            entry_type: 'credit',
+            amount: fee,
+            balance_before: superadminBalanceBefore,
+            balance_after: superadminBalanceBefore + fee,
+            description: `1% platform fee from merchant QR sale — ref: ${reference}`,
+          },
+        ],
+      });
+
+      return {
+        ok: true,
+        merchantId: merchant.user_id,
+        merchantBalance: merchantBalanceBefore + merchantNet,
+        superadminId: superadmin.id,
+        superadminBalance: Number(updatedSuperadminWallet.balance),
+        amount,
+        fee,
+        merchantNet,
+      };
+    });
+
+    if (!result.ok) return false;
+
+    try {
+      this.websocket.emitBalanceUpdate(result.merchantId, result.merchantBalance);
+      this.websocket.emitBalanceUpdate(
+        result.superadminId,
+        result.superadminBalance,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Merchant QR balance update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    try {
+      await Promise.all([
+        this.invalidateFinancialCaches(result.merchantId),
+        this.invalidateFinancialCaches(result.superadminId),
+      ]);
+    } catch (error) {
+      this.logger.error(
+        `Merchant QR cache invalidation failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    try {
+      await this.notificationsService.sendNotification(result.merchantId, {
+        type: 'merchant',
+        entityId: reference,
+        title: 'Merchant payment received',
+        body: `You received ${result.merchantNet} FARM after the 1% sales fee.`,
+        metadata: {
+          merchant_id: metadata.merchant_id,
+          amount: result.amount,
+          fee: result.fee,
+          net_amount: result.merchantNet,
+          event: 'merchant_payment_received',
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Merchant QR payment notification failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    return true;
   }
 
   async failDeposit(reference: string, reason?: string) {

@@ -147,6 +147,74 @@ describe('AdminService admin management', () => {
     });
   });
 
+  describe('AdminService superadmin wallet revenue', () => {
+    it('includes merchant sale fees and counts in total platform revenue', async () => {
+      const revenueByType: Record<string, { fee: number; count: number }> = {
+        escrow_lock: { fee: 2.5, count: 1 },
+        escrow_release: { fee: 1.5, count: 1 },
+        withdrawal: { fee: 2, count: 2 },
+        merchant_payment: { fee: 1, count: 3 },
+      };
+      const prisma: any = {
+        users: {
+          findUnique: jest.fn().mockResolvedValue({
+            role: 'super_admin',
+            wallets: [
+              {
+                balance: 107,
+                locked_balance: 0,
+                currency: 'FARM',
+                wallet_address: 'superadmin-wallet',
+              },
+            ],
+          }),
+        },
+        withdrawal: {
+          aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0, settlement: 0 } }),
+        },
+        transactions: {
+          aggregate: jest.fn(({ where }) => {
+            const value = revenueByType[where.transaction_type];
+            return Promise.resolve({
+              _sum: { fee: value.fee },
+              _count: { id: value.count },
+            });
+          }),
+        },
+      };
+      const service = new AdminService(
+        prisma,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      const result = await service.getSuperadminWallet('superadmin-1');
+
+      expect(result.data).toEqual(
+        expect.objectContaining({
+          merchant_sales_revenue: 1,
+          merchant_sales_count: 3,
+          total_platform_revenue: 7,
+        }),
+      );
+      expect(prisma.transactions.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            transaction_type: 'merchant_payment',
+            status: 'completed',
+            fee: { gt: 0 },
+            metadata: {
+              path: ['platform_fee_type'],
+              equals: 'merchant_sale',
+            },
+          }),
+        }),
+      );
+    });
+  });
+
   it('keeps admin and superadmin accounts out of ordinary user lists', async () => {
     const prisma = {
       users: {
@@ -212,7 +280,7 @@ describe('AdminService admin management', () => {
     expect(tx.users.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'admin-1' },
-        data: { is_suspended: true },
+        data: { is_suspended: true, is_active: false },
       }),
     );
     expect(tx.user_sessions.updateMany).toHaveBeenCalledWith(
@@ -227,6 +295,88 @@ describe('AdminService admin management', () => {
     expect(tx.audit_logs.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ action: 'SUSPEND_ADMIN' }),
+      }),
+    );
+  });
+
+  it('reactivates an approved admin account', async () => {
+    const tx = {
+      users: {
+        update: jest.fn().mockResolvedValue({
+          id: 'admin-1',
+          role: 'admin',
+          is_active: true,
+          is_suspended: false,
+        }),
+      },
+      audit_logs: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      users: { findFirst: jest.fn().mockResolvedValue({ id: 'admin-1' }) },
+      $transaction: jest.fn((callback: (client: any) => unknown) =>
+        callback(tx),
+      ),
+    };
+    const service = new AdminService(
+      prisma as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    await service.setAdminStatus('admin-1', 'approve', 'superadmin-1');
+
+    expect(tx.users.update).toHaveBeenCalledWith({
+      where: { id: 'admin-1' },
+      data: { is_suspended: false, is_active: true },
+    });
+  });
+
+  it('removes admin sign-in data and revokes sessions when deleting', async () => {
+    const tx = {
+      users: { update: jest.fn().mockResolvedValue({ id: 'admin-1' }) },
+      user_sessions: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      device_tokens: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      biometric_settings: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      api_keys: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      notifications: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      audit_logs: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      users: { findFirst: jest.fn().mockResolvedValue({ id: 'admin-1' }) },
+      $transaction: jest.fn((callback: (client: any) => unknown) =>
+        callback(tx),
+      ),
+    };
+    const service = new AdminService(
+      prisma as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    await service.deleteAdmin('admin-1', 'superadmin-1');
+
+    expect(tx.users.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'admin-1' },
+        data: expect.objectContaining({
+          is_deleted: true,
+          is_active: false,
+          is_suspended: true,
+          email: null,
+          firebase_uid: null,
+          phone: expect.stringMatching(/^deleted_/),
+          username: 'deleted_admin-1',
+        }),
+      }),
+    );
+    expect(tx.user_sessions.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { user_id: 'admin-1', OR: [{ is_revoked: false }, { is_revoked: null }] },
+        data: expect.objectContaining({ is_revoked: true }),
       }),
     );
   });

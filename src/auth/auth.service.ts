@@ -126,7 +126,7 @@ export class AuthService {
       select: { id: true, role: true },
     });
 
-    if (!actor || !['super_admin', 'admin'].includes(String(actor.role || '').toLowerCase())) {
+    if (!actor || String(actor.role || '').toLowerCase() !== 'super_admin') {
       throw new ForbiddenException('Only superadmins can create admin accounts');
     }
 
@@ -135,7 +135,7 @@ export class AuthService {
         OR: [
           { phone: dto.phone },
           { username: dto.username.toLowerCase() },
-          { email: dto.email },
+          { email: dto.email.trim().toLowerCase() },
         ],
       },
     });
@@ -160,10 +160,13 @@ export class AuthService {
           last_name: dto.last_name,
           username: dto.username.toLowerCase(),
           phone: dto.phone,
-          email: dto.email,
+          email: dto.email.trim().toLowerCase(),
           password_hash,
           country: dto.country,
           role: 'admin',
+          is_active: true,
+          is_suspended: false,
+          is_deleted: false,
           referral_code: generateReferralCode(),
         },
       });

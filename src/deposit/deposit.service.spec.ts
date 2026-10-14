@@ -145,4 +145,122 @@ describe('DepositService', () => {
     expect(result.deposit.fee).toBe(0);
     expect(result.deposit.total).toBe(100);
   });
+
+  it('deducts the public merchant QR fee before crediting wallets', async () => {
+    const transaction = {
+      id: 'transaction-qr-1',
+      transaction_reference: 'qr-reference-1',
+      transaction_type: 'deposit',
+      status: 'pending',
+      amount: 100,
+      currency: 'FARM',
+      metadata: {
+        provider: 'ivorypay',
+        user_id: 'merchant-user-1',
+        merchant_id: 'merchant-1',
+        qr_guest_payment: true,
+      },
+    };
+    const deposit = {
+      id: 'deposit-qr-1',
+      userId: 'merchant-user-1',
+      amount: 100,
+      currency: 'FARM',
+      status: 'PENDING',
+    };
+    const merchantWallet = {
+      id: 'merchant-wallet-1',
+      balance: 10,
+    };
+    const superadminWallet = {
+      id: 'superadmin-wallet-1',
+      balance: 0,
+    };
+    const tx: any = {
+      merchants: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'merchant-1',
+          user_id: 'merchant-user-1',
+          business_name: 'Test Merchant',
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      wallets: {
+        findFirst: jest.fn().mockResolvedValue(merchantWallet),
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balance: 109 })
+          .mockResolvedValueOnce({ balance: 1 }),
+      },
+      users: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'superadmin-1',
+          wallets: [superadminWallet],
+        }),
+      },
+      deposit: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      transactions: {
+        update: jest.fn().mockResolvedValue({}),
+      },
+      qr_payments: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      ledger_entries: {
+        createMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+    };
+
+    prisma.deposit.findFirst = jest.fn().mockResolvedValue(deposit);
+    prisma.transactions.findUnique = jest.fn().mockResolvedValue(transaction);
+    prisma.$transaction = jest.fn((callback) => callback(tx));
+    cache.cacheInvalidatePattern = jest.fn().mockResolvedValue(undefined);
+    cache.cacheDelete = jest.fn().mockResolvedValue(undefined);
+    websocket.emitBalanceUpdate = jest.fn();
+    notifications.sendNotification = jest.fn().mockResolvedValue(undefined);
+
+    await expect(service.finalizeSuccessfulDeposit(transaction.transaction_reference))
+      .resolves.toBe(true);
+
+    expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
+      where: { id: 'merchant-wallet-1' },
+      data: { balance: { increment: 99 } },
+    });
+    expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'superadmin-wallet-1' },
+      data: { balance: { increment: 1 } },
+    });
+    expect(tx.transactions.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: transaction.id },
+        data: expect.objectContaining({
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          fee: 1,
+          net_amount: 99,
+          receiver_wallet_id: 'merchant-wallet-1',
+          metadata: expect.objectContaining({
+            platform_fee_type: 'merchant_sale',
+            platform_fee_percent: 1,
+            platform_fee: 1,
+          }),
+        }),
+      }),
+    );
+    expect(tx.ledger_entries.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          wallet_id: 'merchant-wallet-1',
+          entry_type: 'credit',
+          amount: 99,
+        }),
+        expect.objectContaining({
+          wallet_id: 'superadmin-wallet-1',
+          entry_type: 'credit',
+          amount: 1,
+        }),
+      ]),
+    });
+  });
 });
