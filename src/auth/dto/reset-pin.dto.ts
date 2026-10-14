@@ -12,6 +12,12 @@ export class ResetPinDto {
   @IsString()
   password!: string;
 
+  @ApiProperty({ description: 'One-time code sent for forgotten PIN recovery' })
+  @IsNotEmpty()
+  @IsString()
+  @Length(6, 6)
+  otp!: string;
+
   @ApiProperty()
   @IsNotEmpty()
   @IsString()

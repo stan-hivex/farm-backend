@@ -7,11 +7,12 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as admin from 'firebase-admin';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FirebaseService } from '../notifications/firebase.service';
 import { TurnstileService } from '../common/services/turnstile.service';
+import { RedisService } from '../common/redis/redis.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { SetPinDto } from './dto/set-pin.dto';
@@ -39,6 +40,7 @@ export class AuthService {
     private notifications: NotificationsService,
     private turnstile: TurnstileService,
     private firebase: FirebaseService,
+    private readonly redis: RedisService,
   ) {}
 
   // ── Register ────────────────────────────────────────────────────────────────
@@ -640,7 +642,180 @@ if (new Date() > expiryDate) {
     return { message: 'If an account exists for this email, a password reset link has been sent.' };
   }
 
+  async checkUsernameAvailability(username: string) {
+    const normalized = username.trim();
+    if (!normalized) {
+      throw new BadRequestException('Username is required');
+    }
+
+    const existing = await this.prisma.users.findUnique({
+      where: { username: normalized.toLowerCase() },
+      select: { id: true },
+    });
+
+    return { data: { available: !existing } };
+  }
+
+  async checkRegistrationAvailability(params: { email?: string; phone?: string }) {
+    const email = params.email?.trim();
+    const phone = params.phone?.trim();
+    if (!email && !phone) {
+      throw new BadRequestException('Email or phone number is required');
+    }
+
+    const [emailResult, phoneResult] = await Promise.all([
+      email
+        ? this.prisma.users.findUnique({
+            where: { email: email.toLowerCase() },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+      phone
+        ? this.prisma.users.findUnique({
+            where: { phone },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    return {
+      data: {
+        emailAvailable: !emailResult,
+        phoneAvailable: !phoneResult,
+      },
+    };
+  }
+
+  async sendPasswordResetLink(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const redisClient = this.redis?.getClient?.();
+    if (!redisClient) {
+      throw new Error('Password reset rate limiting is unavailable');
+    }
+
+    const key = `password-reset:${createHash('sha256').update(normalizedEmail).digest('hex')}`;
+    const alreadySent = await redisClient.set(key, '1', 'EX', 180, 'NX');
+    if (alreadySent !== 'OK') {
+      return { message: 'If an account exists, we have sent a reset link' };
+    }
+
+    try {
+      const user = await this.prisma.users.findFirst({
+        where: { email: normalizedEmail, is_deleted: false },
+        select: { id: true, email: true, firebase_uid: true, is_active: true, role: true },
+      });
+
+      if (user?.email) {
+        const firebaseUid = user.firebase_uid || await this.ensureFirebaseAccount(user.email);
+        if (!user.firebase_uid) {
+          await this.prisma.users.update({
+            where: { id: user.id },
+            data: { firebase_uid: firebaseUid },
+          });
+        }
+
+        const continueUrl = this.cfg.get<string>('FIREBASE_PASSWORD_RESET_CONTINUE_URL')
+          || 'https://farmapp-e2145.firebaseapp.com/admin-reset-password';
+        const resetLink = await this.firebase.auth.generatePasswordResetLink(user.email, {
+          url: continueUrl,
+          handleCodeInApp: true,
+          android: { packageName: 'farmapp.africa', installApp: true },
+          iOS: { bundleId: 'com.mycompany.farm' },
+        });
+
+        const safeHtml = this.notifications
+          ? `...` : `...`;
+
+        const buttonUrl = resetLink.includes('__/auth/action')
+          ? resetLink
+          : continueUrl;
+
+        await this.notifications.sendEmailOrThrow(
+          user.email,
+          'Reset your FARM password',
+          `<html><body style="font-family:Arial,sans-serif;background:#f5f5f5;padding:24px;">` +
+          `<div style="max-width:540px;margin:auto;background:#fff;border-radius:12px;padding:24px;box-shadow:0 1px 12px rgba(0,0,0,.06);">` +
+          `<div style="font-size:14px;font-weight:700;color:#ff9800;letter-spacing:1px;text-transform:uppercase;">FARM</div>` +
+          `<h2 style="margin:18px 0 12px;color:#0d1b2a;">Reset your password</h2>` +
+          `<p style="font-size:15px;line-height:1.6;color:#334155;">We received a request to reset your password for your FARM account.</p>` +
+          `<p style="font-size:15px;line-height:1.6;color:#334155;">Tap the button below to set a new password and return to the app.</p>` +
+          `<div style="text-align:center;margin:26px 0;">` +
+          `<a href="${buttonUrl}" style="display:inline-block;background:#ff9800;color:#fff;text-decoration:none;padding:14px 26px;border-radius:999px;font-weight:700;">SET A NEW PASSWORD</a>` +
+          `</div>` +
+          `<p style="font-size:12px;color:#64748b;">If you did not request this, you can ignore this email.</p>` +
+          `</div></body></html>`,
+          `We received a request to reset your password for your FARM account. Open this link to set a new password: ${buttonUrl}`,
+        );
+      }
+
+      return { message: 'If an account exists, we have sent a reset link' };
+    } catch (error) {
+      await redisClient.del(key);
+      throw error;
+    }
+  }
+
+  async completePasswordReset(dto: { firebase_id_token: string; password: string; confirm_password: string }) {
+    if (dto.password !== dto.confirm_password) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    if (!dto.firebase_id_token) {
+      throw new BadRequestException('Firebase identity token is required');
+    }
+
+    const decoded = await this.firebase.verifyIdToken(dto.firebase_id_token);
+    const user = await this.prisma.users.findUnique({
+      where: { email: decoded.email ?? '' },
+      select: { id: true, email: true, is_active: true, is_deleted: false },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    const passwordHash = await bcrypt.hash(dto.password, rounds);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.users.update({
+        where: { id: user.id },
+        data: {
+          password_hash: passwordHash,
+          failed_login_attempts: 0,
+        },
+      });
+      await tx.user_sessions.updateMany({
+        where: { user_id: user.id, is_revoked: false },
+        data: { is_revoked: true },
+      });
+    });
+
+    return { message: 'Password reset successfully' };
+  }
+
   async resetPassword(dto: ResetPasswordDto) {
+    if (!dto.password || !dto.confirm_password) {
+      throw new BadRequestException('Password and confirmation are required');
+    }
+    if (dto.password !== dto.confirm_password) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    if (dto.email) {
+      const user = await this.prisma.users.findUnique({ where: { email: dto.email.toLowerCase() } });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+      const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+      const passwordHash = await bcrypt.hash(dto.password, rounds);
+      await this.prisma.users.update({
+        where: { id: user.id },
+        data: { password_hash: passwordHash, failed_login_attempts: 0 },
+      });
+      return { message: 'Password reset successfully' };
+    }
+
     return { message: 'Password reset flow is not configured in this environment' };
   }
 
