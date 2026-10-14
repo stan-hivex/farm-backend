@@ -1,18 +1,9 @@
 // src/withdraw/withdraw.service.ts
-import {
-  Injectable,
-  BadRequestException,
-  ConflictException,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
-import {
-  PaystackService,
-  PaystackTransferInitiationError,
-} from '../paystack/paystack.service';
+import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { v4 as uuidv4 } from 'uuid';
@@ -20,25 +11,10 @@ import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
-import { WebsocketGateway } from '../websocket/websocket.gateway';
-
-const ORIGINAL_WITHDRAWAL_MINIMUMS = {
-  BANK_TRANSFER: 4999,
-  MOBILE_MONEY: 1499,
-  CRYPTO: 100,
-} as const;
-const TEMPORARY_WITHDRAWAL_MINIMUM: number | null = 10;
 
 @Injectable()
 export class WithdrawService {
   private readonly logger = new Logger(WithdrawService.name);
-
-  private availableWalletBalance(wallet: any): number {
-    return Math.max(
-      0,
-      Number(wallet?.balance ?? 0) - Number(wallet?.locked_balance ?? 0),
-    );
-  }
 
   constructor(
     private prisma: PrismaService,
@@ -49,7 +25,6 @@ export class WithdrawService {
     private cache: CacheService,
     private notificationsService: NotificationsService,
     private readonly currencyConversionService: CurrencyConversionService,
-    private readonly websocket: WebsocketGateway,
   ) {}
 
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
@@ -75,38 +50,35 @@ export class WithdrawService {
     const cryptoAsset = dto.cryptoAsset ?? dto.token;
     const normalizedNetwork = dto.network?.trim();
     const method = dto.method;
+
+    // Temporary testing override: lower all withdrawal minimums to KES 10.
+    // Keep the original method minima in memory so they can be restored later.
+    const originalMethodMinima = {
+      BANK_TRANSFER: 4999,
+      MOBILE_MONEY: 1499,
+      CRYPTO: 100,
+    } as const;
+    const temporaryMinimumWithdrawalOverride = 10;
+
+    const effectiveMinimum = temporaryMinimumWithdrawalOverride ?? originalMethodMinima[method];
+
     if (method === 'BANK_TRANSFER') {
-      const minimum =
-        TEMPORARY_WITHDRAWAL_MINIMUM ??
-        ORIGINAL_WITHDRAWAL_MINIMUMS.BANK_TRANSFER;
-      if (amount < minimum) {
-        throw new BadRequestException(
-          `Minimum withdrawal amount for bank transfer is ${minimum} FARM`,
-        );
+      if (amount < effectiveMinimum) {
+        throw new BadRequestException(`Minimum withdrawal amount for bank transfer is ${effectiveMinimum.toLocaleString()} FARM`);
       }
       if (amount > 999999) {
         throw new BadRequestException('Maximum withdrawal amount for bank transfer is 999,999 FARM');
       }
     } else if (method === 'MOBILE_MONEY') {
-      const minimum =
-        TEMPORARY_WITHDRAWAL_MINIMUM ??
-        ORIGINAL_WITHDRAWAL_MINIMUMS.MOBILE_MONEY;
-      if (amount < minimum) {
-        throw new BadRequestException(
-          `Minimum withdrawal amount for mobile money is ${minimum} FARM`,
-        );
+      if (amount < effectiveMinimum) {
+        throw new BadRequestException(`Minimum withdrawal amount for mobile money is ${effectiveMinimum.toLocaleString()} FARM`);
       }
       if (amount > 249999) {
         throw new BadRequestException('Maximum withdrawal amount for mobile money is 249,999 FARM');
       }
     } else if (method === 'CRYPTO') {
-      const minimum =
-        TEMPORARY_WITHDRAWAL_MINIMUM ??
-        ORIGINAL_WITHDRAWAL_MINIMUMS.CRYPTO;
-      if (amount < minimum) {
-        throw new BadRequestException(
-          `Minimum withdrawal amount for crypto is ${minimum} FARM`,
-        );
+      if (amount < effectiveMinimum) {
+        throw new BadRequestException(`Minimum withdrawal amount for crypto is ${effectiveMinimum.toLocaleString()} FARM`);
       }
     }
 
@@ -123,12 +95,6 @@ export class WithdrawService {
     if (dto.method === 'MOBILE_MONEY') {
       if (!dto.phoneNumber) {
         throw new BadRequestException('Phone number is required for mobile money withdrawals');
-      }
-      if (!dto.accountName) {
-        throw new BadRequestException('Account holder name is required for mobile money withdrawals');
-      }
-      if (dto.mobileMoneyProvider !== 'MPESA') {
-        throw new BadRequestException('Select a supported Paystack mobile money provider');
       }
     } else if (dto.method === 'BANK_TRANSFER') {
       if (!dto.accountName || !dto.accountNumber || !dto.bankName) {
@@ -155,7 +121,6 @@ export class WithdrawService {
       : (dto.cryptoAsset ?? '');
 
     let cryptoExchangeSnapshot: any = null;
-    let paystackConversionSnapshot: any = null;
     if (dto.method === 'CRYPTO') {
       const rate = await this.currencyConversionService.getCurrentRate();
       const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
@@ -182,24 +147,10 @@ export class WithdrawService {
         settlement_usd: settlementUsd,
         crypto_asset: normalizedCryptoAsset,
       };
-    } else {
-      const rate = await this.currencyConversionService.getCurrentRate();
-      const farmKesRate = Number(rate.farm_kes_rate ?? 0);
-      if (!Number.isFinite(farmKesRate) || farmKesRate <= 0) {
-        throw new BadRequestException('The FARM to KES exchange rate is unavailable');
-      }
-      paystackConversionSnapshot = {
-        currency: 'KES',
-        farmKesRate,
-        amountKes: Number((amount * farmKesRate).toFixed(2)),
-        feeKes: Number((fee * farmKesRate).toFixed(2)),
-        settlementKes: Number((settlement * farmKesRate).toFixed(2)),
-        conversionTimestamp: new Date().toISOString(),
-      };
     }
 
-    const { withdrawal, wallet: reservedWallet } = await this.prisma.$transaction(async (tx) => {
-      const updatedWallet = await tx.wallets.update({
+    const withdrawal = await this.prisma.$transaction(async (tx) => {
+      await tx.wallets.update({
         where: { id: wallet.id },
         data: { locked_balance: { increment: amount } },
       });
@@ -215,10 +166,7 @@ export class WithdrawService {
           method: dto.method,
           accountName: dto.accountName,
           accountNumber: dto.accountNumber,
-          bankName:
-            dto.method === 'MOBILE_MONEY'
-              ? dto.mobileMoneyProvider
-              : dto.bankName,
+          bankName: dto.bankName,
           phoneNumber: dto.phoneNumber,
           cryptoAddress,
           cryptoAsset: normalizedCryptoAsset,
@@ -247,41 +195,16 @@ export class WithdrawService {
             cryptoAsset: normalizedCryptoAsset,
             network: normalizedNetworkValue,
             conversion_snapshot: cryptoExchangeSnapshot,
-            paystack_conversion_snapshot: paystackConversionSnapshot,
-            ...(dto.method === 'MOBILE_MONEY'
-              ? { mobile_money_provider: dto.mobileMoneyProvider }
-              : {}),
           },
         },
       });
 
-      return { withdrawal: created, wallet: updatedWallet };
+      return created;
     });
-
-    try {
-      const reservedLockedBalance =
-        reservedWallet?.locked_balance !== undefined
-          ? Number(reservedWallet.locked_balance)
-          : Number(wallet.locked_balance ?? 0) + amount;
-      this.websocket.emitBalanceUpdate(
-        userId,
-        Math.max(
-          0,
-          Number(reservedWallet?.balance ?? wallet.balance ?? 0) -
-            reservedLockedBalance,
-        ),
-      );
-      this.websocket.emitTransactionUpdate(userId, {
-        reference,
-        status: 'PENDING',
-      });
-    } catch (error) {
-      this.logger.warn(`Withdrawal realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
 
     setImmediate(() => this.processWithdrawal(reference).catch((error) => this.logger.error(error?.message ?? error)));
 
-    await this.cache.invalidateWallet(userId);
+    await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
     await this.cache.cacheInvalidatePattern(`dashboard:${userId}`);
     await this.cache.cacheInvalidatePattern(`transactions:${userId}:*`);
 
@@ -290,27 +213,13 @@ export class WithdrawService {
 
   async getUserWithdrawals(userId: string) {
     return this.prisma.withdrawal.findMany({
-      where: {
-        userId,
-        status: { notIn: ['PENDING', 'PROCESSING', 'FAILED', 'CANCELLED'] },
-      },
+      where: { userId, status: { not: 'FAILED' } },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   getProviderNetworks(token?: string) {
     return this.ivorypay.getProviderNetworks(token);
-  }
-
-  async getPaystackDestinations(type?: string) {
-    const destinations = await this.paystack.getBanks('KES', type);
-    return {
-      success: true,
-      data: destinations.map((destination: any) => ({
-        name: destination.name,
-        code: destination.code,
-      })),
-    };
   }
 
   async getWithdrawal(id: string, userId?: string) {
@@ -321,256 +230,6 @@ export class WithdrawService {
 
     assertResourceAccess(withdrawal.userId, userId, 'withdrawal');
     return withdrawal;
-  }
-
-  async adminApproveWithdrawal(id: string) {
-    const withdrawal = await this.prisma.withdrawal.findUnique({
-      where: { id },
-    });
-    if (!withdrawal) throw new NotFoundException('Withdrawal not found');
-    if (withdrawal.status === 'COMPLETED') {
-      throw new ConflictException('This withdrawal has already completed');
-    }
-    if (withdrawal.status === 'PROCESSING') {
-      throw new ConflictException(
-        'This withdrawal is already being processed. Wait for the provider confirmation.',
-      );
-    }
-
-    let reference = withdrawal.reference;
-    let retriedFailedWithdrawal = false;
-    if (withdrawal.status === 'FAILED') {
-      const amount = Number(withdrawal.amount ?? 0);
-      reference = uuidv4();
-      await this.prisma.$transaction(async (tx) => {
-        const wallet = await tx.wallets.findFirst({
-          where: { user_id: withdrawal.userId, is_active: true },
-        });
-        if (!wallet) throw new BadRequestException('Active wallet not found');
-
-        const availableBalance =
-          Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0);
-        if (availableBalance < amount) {
-          throw new BadRequestException(
-            'The user no longer has enough available balance to retry this withdrawal',
-          );
-        }
-
-        const retried = await tx.withdrawal.updateMany({
-          where: { id, status: 'FAILED' },
-          data: {
-            reference,
-            status: 'PENDING',
-            rejectionReason: null,
-          },
-        });
-        if (retried.count !== 1) {
-          throw new ConflictException(
-            'This withdrawal has changed; refresh and try again',
-          );
-        }
-
-        await tx.wallets.update({
-          where: { id: wallet.id },
-          data: { locked_balance: { increment: amount } },
-        });
-
-        const transaction = await tx.transactions.findUnique({
-          where: { transaction_reference: withdrawal.reference },
-        });
-        if (!transaction) {
-          throw new BadRequestException(
-            'The withdrawal transaction record could not be found',
-          );
-        }
-
-        const metadata = (transaction.metadata as Record<string, any>) ?? {};
-        await tx.transactions.update({
-          where: { id: transaction.id },
-          data: {
-            transaction_reference: reference,
-            status: 'pending',
-            processed_at: null,
-            description: 'Withdrawal retry pending',
-            metadata: {
-              ...metadata,
-              reference,
-              retry_of: withdrawal.reference,
-              paystack_transfer_code: null,
-              paystack_transfer_status: null,
-              paystack_failure_reason: null,
-              ivorypay_withdrawal_id: null,
-              ivorypay_withdrawal_status: null,
-              ivorypay_failure_reason: null,
-            },
-          },
-        });
-      });
-      retriedFailedWithdrawal = true;
-    } else if (withdrawal.status !== 'PENDING') {
-      throw new ConflictException(
-        `Cannot approve a withdrawal with status ${withdrawal.status}`,
-      );
-    } else {
-      const wallet = await this.prisma.wallets.findFirst({
-        where: { user_id: withdrawal.userId, is_active: true },
-      });
-      const amount = Number(withdrawal.amount ?? 0);
-      if (
-        !wallet ||
-        Number(wallet.balance ?? 0) < amount ||
-        Number(wallet.locked_balance ?? 0) < amount
-      ) {
-        throw new BadRequestException(
-          'The user no longer has enough reserved wallet balance for this withdrawal',
-        );
-      }
-    }
-
-    await this.processWithdrawal(reference);
-    const updated = await this.prisma.withdrawal.findUnique({
-      where: { reference },
-    });
-    if (!updated) throw new NotFoundException('Withdrawal not found after processing');
-
-    if (retriedFailedWithdrawal) {
-      const wallet = await this.prisma.wallets.findFirst({
-        where: { user_id: withdrawal.userId, is_active: true },
-      });
-      try {
-        this.websocket.emitBalanceUpdate(
-          withdrawal.userId,
-          this.availableWalletBalance(wallet),
-        );
-        this.websocket.emitTransactionUpdate(withdrawal.userId, {
-          reference,
-          status: updated.status,
-        });
-      } catch (error) {
-        this.logger.warn(
-          `Withdrawal retry realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      await Promise.all([
-        this.cache.cacheInvalidatePattern(
-          `wallet:${withdrawal.userId}:balance`,
-        ),
-        this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
-        this.cache.cacheInvalidatePattern(
-          `transactions:${withdrawal.userId}:*`,
-        ),
-      ]);
-    }
-
-    return {
-      data: updated,
-      message:
-        updated.status === 'FAILED'
-          ? updated.rejectionReason || 'The provider could not process the withdrawal'
-          : 'Withdrawal sent to the payout provider; completion will be confirmed by the provider',
-    };
-  }
-
-  async adminRejectWithdrawal(id: string, reason: string) {
-    const withdrawal = await this.prisma.withdrawal.findUnique({
-      where: { id },
-    });
-    if (!withdrawal) throw new NotFoundException('Withdrawal not found');
-    if (withdrawal.status !== 'PENDING') {
-      throw new ConflictException(
-        'Only a pending withdrawal that has not been submitted to a provider can be rejected',
-      );
-    }
-
-    const transaction = await this.prisma.transactions.findUnique({
-      where: { transaction_reference: withdrawal.reference },
-    });
-    if (!transaction) {
-      throw new BadRequestException(
-        'The withdrawal transaction record could not be found',
-      );
-    }
-
-    const rejectionReason = reason.trim() || 'Rejected by support';
-    const result = await this.prisma.$transaction(async (tx) => {
-      const changed = await tx.withdrawal.updateMany({
-        where: { id, status: 'PENDING' },
-        data: { status: 'FAILED', rejectionReason },
-      });
-      if (changed.count !== 1) {
-        throw new ConflictException(
-          'This withdrawal has already been submitted or updated',
-        );
-      }
-
-      const wallet = await tx.wallets.findFirst({
-        where: { user_id: withdrawal.userId, is_active: true },
-      });
-      const amount = Number(withdrawal.amount ?? 0);
-      if (!wallet || Number(wallet.locked_balance ?? 0) < amount) {
-        throw new BadRequestException(
-          'The withdrawal funds are no longer reserved in the user wallet',
-        );
-      }
-
-      const updatedWallet = await tx.wallets.update({
-        where: { id: wallet.id },
-        data: { locked_balance: { decrement: amount } },
-      });
-      const metadata = (transaction.metadata as Record<string, any>) ?? {};
-      await tx.transactions.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'failed',
-          processed_at: new Date(),
-          description: 'Withdrawal rejected by support',
-          metadata: {
-            ...metadata,
-            rejection_reason: rejectionReason,
-          },
-        },
-      });
-
-      return updatedWallet;
-    });
-
-    try {
-      this.websocket.emitBalanceUpdate(
-        withdrawal.userId,
-        this.availableWalletBalance(result),
-      );
-      this.websocket.emitTransactionUpdate(withdrawal.userId, {
-        reference: withdrawal.reference,
-        status: 'FAILED',
-      });
-    } catch (error) {
-      this.logger.warn(
-        `Admin withdrawal rejection realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-
-    await Promise.all([
-      this.cache.cacheInvalidatePattern(
-        `wallet:${withdrawal.userId}:balance`,
-      ),
-      this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
-      this.cache.cacheInvalidatePattern(
-        `transactions:${withdrawal.userId}:*`,
-      ),
-      this.cache.cacheDelete('admin:dashboard:stats'),
-    ]);
-    await this.notificationsService.sendNotification(withdrawal.userId, {
-      type: 'transaction',
-      title: 'Withdrawal rejected',
-      body: `Your withdrawal request was rejected: ${rejectionReason}. The reserved funds are available in your wallet again.`,
-      entityId: withdrawal.id,
-      metadata: { reference: withdrawal.reference, reason: rejectionReason },
-    });
-
-    return {
-      data: { id: withdrawal.id, status: 'FAILED' },
-      message: 'Withdrawal rejected and reserved funds released to the wallet',
-    };
   }
 
   async getWithdrawalStatus(reference: string, userId: string) {
@@ -601,60 +260,14 @@ export class WithdrawService {
       statusResult.paystack_transfer_code = metadata.paystack_transfer_code;
       statusResult.paystack_transfer_status = metadata.paystack_transfer_status;
       statusResult.paystack_failure_reason = metadata.paystack_failure_reason;
-      const isAwaitingProvider =
-        ['PENDING', 'PROCESSING'].includes(
-          String(withdrawal.status).toUpperCase(),
-        );
-      if (metadata.paystack_transfer_code || isAwaitingProvider) {
+      if (metadata.paystack_transfer_code) {
         try {
-          const transferStatus = metadata.paystack_transfer_code
-            ? await this.paystack.getTransferStatus(
-                metadata.paystack_transfer_code,
-              )
-            : await this.paystack.getTransferByReference(reference);
+          const transferStatus = await this.paystack.getTransferStatus(metadata.paystack_transfer_code);
           statusResult.paystack_transfer_details = transferStatus;
-          statusResult.paystack_transfer_status =
-            transferStatus.status || statusResult.paystack_transfer_status;
-
-          if (
-            transferStatus.reference !== reference &&
-            isAwaitingProvider
-          ) {
-            throw new BadRequestException(
-              'Paystack transfer reference did not match the withdrawal',
-            );
-          }
-
-          const providerStatus = String(
-            transferStatus.status ?? '',
-          ).toLowerCase();
-          if (isAwaitingProvider && providerStatus === 'success') {
-            await this.markAsSuccess(reference);
-          } else if (
-            isAwaitingProvider &&
-            ['failed', 'reversed'].includes(providerStatus)
-          ) {
-            await this.rejectWithdrawal(
-              reference,
-              transferStatus.reason ||
-                transferStatus.failure_reason ||
-                `Paystack transfer ${providerStatus}`,
-            );
-          }
+          statusResult.paystack_transfer_status = transferStatus.status || statusResult.paystack_transfer_status;
         } catch (e: any) {
-          statusResult.paystack_transfer_status_error =
-            e.message || 'Unable to query Paystack transfer status';
+          statusResult.paystack_transfer_status_error = e.message || 'Unable to query paystack transfer status';
         }
-      }
-    }
-
-    if (['PENDING', 'PROCESSING'].includes(String(withdrawal.status).toUpperCase())) {
-      const latest = await this.prisma.withdrawal.findFirst({
-        where: { reference, userId },
-      });
-      if (latest) {
-        statusResult.withdrawal_status = latest.status;
-        statusResult.rejection_reason = latest.rejectionReason;
       }
     }
 
@@ -662,47 +275,34 @@ export class WithdrawService {
   }
 
   private async processWithdrawal(reference: string) {
-    const claimed = await this.prisma.withdrawal.updateMany({
-      where: { reference, status: 'PENDING' },
-      data: { status: 'PROCESSING' },
-    });
-    if (claimed.count !== 1) return;
+    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
+    if (!withdrawal || withdrawal.status !== 'PENDING') return;
 
-    const withdrawal = await this.prisma.withdrawal.findUnique({
-      where: { reference },
-    });
-    if (!withdrawal) return;
+    await this.prisma.withdrawal.update({ where: { reference }, data: { status: 'PROCESSING' } });
 
     try {
-      const transaction = await this.prisma.transactions.findUnique({
-        where: { transaction_reference: reference },
-      });
-      const metadata = (transaction?.metadata as any) ?? {};
       let recipient: any;
 
       if (withdrawal.method === 'MOBILE_MONEY') {
-        const providerCode = (withdrawal.bankName || '').toUpperCase();
-        if (providerCode !== 'MPESA') {
-          throw new BadRequestException(
-            'Unsupported Paystack mobile money provider for this withdrawal',
-          );
-        }
         recipient = await this.paystack.createTransferRecipient({
           type: 'mobile_money',
-          name: withdrawal.accountName!,
+          name: withdrawal.accountName || 'FARM User',
           account_number: this.formatMpesaNumber(withdrawal.phoneNumber),
-          bank_code: providerCode,
+          mobile_number: this.formatMpesaNumber(withdrawal.phoneNumber),
+          provider: 'MPESA',
+          bank_code: 'MPESA',
           currency: 'KES',
         });
       } else if (withdrawal.method === 'BANK_TRANSFER') {
         const bankCode = await this.paystack.getBankCodeByName(withdrawal.bankName || '');
         this.logger.log(`Resolved bank name='${withdrawal.bankName}' -> bank_code='${bankCode}'`);
         recipient = await this.paystack.createTransferRecipient({
-          type: 'kepss',
+          type: 'nuban',
           name: withdrawal.accountName!,
           account_number: withdrawal.accountNumber!,
           bank_code: bankCode,
           currency: 'KES',
+          country: 'KE',
         });
       } else if (withdrawal.method === 'CRYPTO') {
         // Off-chain crypto withdrawal via Ivorypay (or mock)
@@ -712,45 +312,22 @@ export class WithdrawService {
       }
 
       if (recipient) {
-        const conversionSnapshot = metadata.paystack_conversion_snapshot ?? {};
-        const rate = Number(conversionSnapshot.farmKesRate);
-        const payoutAmountKes = Number.isFinite(
-          Number(conversionSnapshot.settlementKes),
-        )
-          ? Number(conversionSnapshot.settlementKes)
-          : Number(
-              (
-                Number(withdrawal.settlement) *
-                (Number.isFinite(rate) && rate > 0
-                  ? rate
-                  : Number(
-                      (await this.currencyConversionService.getCurrentRate())
-                        .farm_kes_rate,
-                    ))
-              ).toFixed(2),
-            );
-        if (!Number.isFinite(payoutAmountKes) || payoutAmountKes <= 0) {
-          throw new BadRequestException(
-            'The FARM to KES payout amount could not be calculated',
-          );
-        }
         const transferResponse = await this.paystack.initiateTransfer({
-          source: 'balance',
-          amount: payoutAmountKes,
+          amount: withdrawal.settlement,
           recipient: recipient.recipient_code,
           reference,
           currency: 'KES',
-          reason: `FARM withdrawal ${reference}`,
         });
 
         const transferData = transferResponse?.data ?? {};
+        const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
         if (transaction) {
+          const metadata = (transaction.metadata as any) ?? {};
           const updatedMetadata = {
             ...metadata,
             paystack_transfer_code: transferData.transfer_code || transferData.id || metadata.paystack_transfer_code,
             paystack_transfer_status: transferData.status || metadata.paystack_transfer_status || 'pending',
             paystack_transfer_initiated_at: new Date().toISOString(),
-            paystack_transfer_amount_kes: payoutAmountKes,
           };
           await this.prisma.transactions.update({
             where: { id: transaction.id },
@@ -760,41 +337,6 @@ export class WithdrawService {
       }
       // Do NOT mark success here – wait for webhook or provider callback
     } catch (e: any) {
-      if (
-        e instanceof PaystackTransferInitiationError &&
-        e.outcome === 'unknown'
-      ) {
-        this.logger.error(
-          `Paystack transfer outcome is unknown for ${reference}; retaining reserved funds for reconciliation: ${e.message}`,
-        );
-        try {
-          const pendingTransaction =
-            await this.prisma.transactions.findUnique({
-              where: { transaction_reference: reference },
-            });
-          if (pendingTransaction) {
-            const pendingMetadata =
-              (pendingTransaction.metadata as Record<string, unknown>) ?? {};
-            await this.prisma.transactions.update({
-              where: { id: pendingTransaction.id },
-              data: {
-                metadata: {
-                  ...pendingMetadata,
-                  paystack_transfer_status: 'unknown',
-                  paystack_transfer_outcome_unknown_at:
-                    new Date().toISOString(),
-                  paystack_transfer_outcome_unknown_reason: e.message,
-                },
-              },
-            });
-          }
-        } catch (metadataError: any) {
-          this.logger.error(
-            `Could not save unknown Paystack transfer outcome for ${reference}: ${metadataError?.message ?? metadataError}`,
-          );
-        }
-        return;
-      }
       await this.rejectWithdrawal(reference, e.message || 'Withdrawal transfer failed');
     }
   }
@@ -901,14 +443,13 @@ export class WithdrawService {
     const previousLocked = Number(wallet.locked_balance ?? 0);
     const unlockAmount = Math.min(previousLocked, amount);
 
-    const updatedWallet = await this.prisma.$transaction(async (tx) => {
-      const completed = await tx.withdrawal.updateMany({
-        where: { reference, status: { in: ['PENDING', 'PROCESSING'] } },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.withdrawal.update({
+        where: { reference },
         data: { status: 'COMPLETED' },
       });
-      if (completed.count !== 1) return null;
 
-      const walletAfterUpdate = await tx.wallets.update({
+      await tx.wallets.update({
         where: { id: wallet.id },
         data: {
           balance: { decrement: amount },
@@ -943,33 +484,12 @@ export class WithdrawService {
       await this.creditPlatformFeeInTx(
         tx,
         Number(withdrawal.fee ?? 0),
-        reference,
-        transaction?.id,
+        `Platform withdrawal fee credited — ref: ${reference}`,
       );
-      return walletAfterUpdate;
     });
-    if (!updatedWallet) {
-      const current = await this.prisma.withdrawal.findUnique({
-        where: { reference },
-      });
-      return current?.status === 'COMPLETED';
-    }
-
-    try {
-      this.websocket.emitBalanceUpdate(
-        withdrawal.userId,
-        this.availableWalletBalance(updatedWallet),
-      );
-      this.websocket.emitTransactionUpdate(withdrawal.userId, {
-        reference,
-        status: 'SUCCESS',
-      });
-    } catch (error) {
-      this.logger.warn(`Withdrawal completion realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
 
     await Promise.all([
-      this.cache.invalidateWallet(withdrawal.userId),
+      this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
       this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
       this.cache.cacheInvalidatePattern(`transactions:${withdrawal.userId}:*`),
       this.cache.cacheDelete('admin:dashboard:stats'),
@@ -988,69 +508,17 @@ export class WithdrawService {
     return true;
   }
 
-  async reconcileCompletedPlatformFees() {
-    await this.prisma.$transaction(async (tx) => {
-      const superadminUser = await tx.users.findFirst({
-        where: { role: 'super_admin', is_deleted: false },
-        include: { wallets: { where: { is_active: true }, take: 1 } },
-      });
-      const superWallet = superadminUser?.wallets?.[0];
-      if (!superWallet) {
-        throw new BadRequestException('Superadmin wallet not found');
-      }
-
-      const completedWithdrawals = await tx.transactions.findMany({
-        where: {
-          transaction_type: 'withdrawal',
-          status: 'completed',
-          fee: { gt: 0 },
-        },
-        select: { id: true, transaction_reference: true, fee: true },
-      });
-
-      for (const transaction of completedWithdrawals) {
-        await this.creditPlatformFeeInTx(
-          tx,
-          Number(transaction.fee ?? 0),
-          transaction.transaction_reference,
-          transaction.id,
-          superWallet.id,
-        );
-      }
-    });
-  }
-
-  async creditPlatformFeeInTx(
-    tx: any,
-    platformFee: number,
-    reference: string,
-    transactionId?: string,
-    superWalletId?: string,
-  ) {
+  private async creditPlatformFeeInTx(tx: any, platformFee: number, description: string) {
     if (platformFee <= 0) return;
 
-    const description = `Platform withdrawal fee credited — ref: ${reference}`;
-    const superWallet = superWalletId
-      ? await tx.wallets.findUnique({ where: { id: superWalletId } })
-      : (
-          await tx.users.findFirst({
-            where: { role: 'super_admin', is_deleted: false },
-            include: { wallets: { where: { is_active: true }, take: 1 } },
-          })
-        )?.wallets?.[0];
+    const superadminUser = await tx.users.findFirst({
+      where: { role: 'super_admin', is_deleted: false },
+      include: { wallets: { where: { is_active: true }, take: 1 } },
+    });
+    const superWallet = superadminUser?.wallets?.[0];
     if (!superWallet) {
       throw new BadRequestException('Superadmin wallet not found');
     }
-
-    const existingCredit = await tx.ledger_entries.findFirst({
-      where: {
-        wallet_id: superWallet.id,
-        entry_type: 'credit',
-        description,
-      },
-      select: { id: true },
-    });
-    if (existingCredit) return;
 
     const previousBalance = Number(superWallet.balance ?? 0);
     await tx.wallets.update({
@@ -1059,7 +527,7 @@ export class WithdrawService {
     });
     await tx.ledger_entries.create({
       data: {
-        transaction_id: transactionId ?? null,
+        transaction_id: null,
         wallet_id: superWallet.id,
         entry_type: 'credit',
         amount: platformFee,
@@ -1074,7 +542,6 @@ export class WithdrawService {
     const withdrawal = await this.prisma.withdrawal.findUnique({ where: { reference } });
     if (!withdrawal) return false;
     if (withdrawal.status === 'FAILED') return true;
-    if (withdrawal.status === 'COMPLETED') return false;
 
     const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: withdrawal.userId, is_active: true } });
@@ -1084,17 +551,13 @@ export class WithdrawService {
     const previousLocked = Number(wallet.locked_balance ?? 0);
     const unlockAmount = Math.min(previousLocked, amount);
 
-    const updatedWallet = await this.prisma.$transaction(async (tx) => {
-      const failed = await tx.withdrawal.updateMany({
-        where: {
-          reference,
-          status: { in: ['PENDING', 'PROCESSING'] },
-        },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.withdrawal.update({
+        where: { reference },
         data: { status: 'FAILED', rejectionReason: reason },
       });
-      if (failed.count !== 1) return null;
 
-      const walletAfterUpdate = await tx.wallets.update({
+      await tx.wallets.update({
         where: { id: wallet.id },
         data: { locked_balance: { decrement: unlockAmount } },
       });
@@ -1123,30 +586,10 @@ export class WithdrawService {
           },
         });
       }
-      return walletAfterUpdate;
     });
-    if (!updatedWallet) {
-      const current = await this.prisma.withdrawal.findUnique({
-        where: { reference },
-      });
-      return current?.status === 'FAILED';
-    }
-
-    try {
-      this.websocket.emitBalanceUpdate(
-        withdrawal.userId,
-        this.availableWalletBalance(updatedWallet),
-      );
-      this.websocket.emitTransactionUpdate(withdrawal.userId, {
-        reference,
-        status: 'FAILED',
-      });
-    } catch (error) {
-      this.logger.warn(`Withdrawal failure realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
 
     await Promise.all([
-      this.cache.invalidateWallet(withdrawal.userId),
+      this.cache.cacheInvalidatePattern(`wallet:${withdrawal.userId}:balance`),
       this.cache.cacheInvalidatePattern(`dashboard:${withdrawal.userId}`),
       this.cache.cacheInvalidatePattern(`transactions:${withdrawal.userId}:*`),
       this.cache.cacheDelete('admin:dashboard:stats'),
@@ -1167,11 +610,10 @@ export class WithdrawService {
 
   private formatMpesaNumber(phone: string | null) {
     if (!phone) return phone || '';
-    const digits = phone.replace(/\D/g, '');
-    if (digits.startsWith('254')) return `0${digits.substring(3)}`;
-    if (digits.startsWith('0')) return digits;
-    if (digits.length === 9) return `0${digits}`;
-    return digits;
+    if (phone.startsWith('+254')) {
+      return '0' + phone.substring(4);
+    }
+    return phone;
   }
 
   private resolveBankCode(bankName: string) {

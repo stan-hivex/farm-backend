@@ -1,23 +1,16 @@
 import {
-  Injectable,
-  BadRequestException,
-  UnauthorizedException,
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-  Logger,
+  Injectable, BadRequestException, UnauthorizedException,
+  ConflictException, ForbiddenException, NotFoundException, Logger,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as admin from 'firebase-admin';
-import { createHash, randomBytes } from 'crypto';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FirebaseService } from '../notifications/firebase.service';
-import { RedisService } from '../common/redis/redis.service';
 import { TurnstileService } from '../common/services/turnstile.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -28,17 +21,11 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { CreateAdminDto } from './dto/create-admin.dto';
-import { AdminPasswordResetCompleteDto } from './dto/admin-password-reset-complete.dto';
 import {
-  generateWalletAddress,
-  generateOtp,
-  generateReferralCode,
+  generateWalletAddress, generateOtp, generateReferralCode,
 } from '../common/utils/reference.util';
 import {
-  MAX_PIN_ATTEMPTS,
-  MAX_LOGIN_ATTEMPTS,
-  OTP_EXPIRY_MINUTES,
-  OTP_MAX_ATTEMPTS,
+  MAX_PIN_ATTEMPTS, MAX_LOGIN_ATTEMPTS, OTP_EXPIRY_MINUTES, OTP_MAX_ATTEMPTS,
 } from '../common/constants';
 
 @Injectable()
@@ -52,63 +39,10 @@ export class AuthService {
     private notifications: NotificationsService,
     private turnstile: TurnstileService,
     private firebase: FirebaseService,
-    private redis: RedisService,
   ) {}
 
   // ── Register ────────────────────────────────────────────────────────────────
-  async checkUsernameAvailability(username: string) {
-    const normalizedUsername = username.trim().toLowerCase();
-    const existing = await this.prisma.users.findFirst({
-      where: { username: normalizedUsername },
-      select: { id: true },
-    });
-
-    return {
-      data: {
-        username: normalizedUsername,
-        available: !existing,
-      },
-    };
-  }
-
-  async checkRegistrationAvailability(input: {
-    email?: string;
-    phone?: string;
-  }) {
-    const email = input.email?.trim().toLowerCase();
-    const phone = input.phone?.trim();
-    if (!email && !phone) {
-      throw new BadRequestException('Email or phone number is required');
-    }
-
-    const [existingEmail, existingPhone] = await Promise.all([
-      email
-        ? this.prisma.users.findFirst({
-            where: { email: { equals: email, mode: 'insensitive' } },
-            select: { id: true },
-          })
-        : null,
-      phone
-        ? this.prisma.users.findFirst({
-            where: { phone },
-            select: { id: true },
-          })
-        : null,
-    ]);
-
-    return {
-      data: {
-        emailAvailable: email ? !existingEmail : null,
-        phoneAvailable: phone ? !existingPhone : null,
-      },
-    };
-  }
-
   async register(dto: RegisterDto, ip: string, turnstileToken?: string) {
-    const email = dto.email?.trim().toLowerCase();
-    const phone = dto.phone.trim();
-    const username = dto.username.trim().toLowerCase();
-
     // Validate Turnstile token (bot protection)
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
@@ -117,24 +51,24 @@ export class AuthService {
     const existing = await this.prisma.users.findFirst({
       where: {
         OR: [
-          { phone },
-          { username },
-          ...(email
-            ? [{ email: { equals: email, mode: 'insensitive' as const } }]
-            : []),
+          { phone: dto.phone },
+          { username: dto.username.toLowerCase() },
+          ...(dto.email ? [{ email: dto.email }] : []),
         ],
       },
     });
     if (existing) {
-      if (existing.phone === phone)
-        throw new ConflictException('Phone already registered');
-      if (existing.username === username)
-        throw new ConflictException('Username taken');
+      if (existing.phone === dto.phone) throw new ConflictException('Phone already registered');
+      if (existing.username === dto.username.toLowerCase()) throw new ConflictException('Username taken');
       throw new ConflictException('Email already registered');
     }
 
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
     const password_hash = await bcrypt.hash(dto.password, rounds);
+
+    const firebaseUid = dto.email
+      ? await this.ensureFirebaseAccount(dto.email, dto.password)
+      : null;
 
     let referred_by: string | undefined;
     if (dto.referral_code) {
@@ -147,85 +81,41 @@ export class AuthService {
     // QR_HMAC_SECRET must be set in environment (fail fast if missing)
     const qrSecret = this.cfg.get<string>('QR_HMAC_SECRET');
     if (!qrSecret) {
-      throw new Error(
-        'QR_HMAC_SECRET not configured - wallet generation impossible',
-      );
+      throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
     }
 
-    let user: Awaited<ReturnType<typeof this.prisma.users.create>>;
-    try {
-      user = await this.prisma.$transaction(async (tx) => {
-        const u = await tx.users.create({
-          data: {
-            first_name: dto.first_name,
-            last_name: dto.last_name,
-            username,
-            phone,
-            email,
-            firebase_uid: null,
-            password_hash,
-            country: dto.country,
-            referred_by,
-            referral_code: generateReferralCode(),
-          },
-        });
-        await tx.wallets.create({
-          data: {
-            user_id: u.id,
-            wallet_name: `${u.first_name}'s Wallet`,
-            wallet_type: 'user',
-            wallet_address: generateWalletAddress(u.id, qrSecret),
-            currency: 'FARM',
-          },
-        });
-        await tx.activity_logs.create({
-          data: { user_id: u.id, activity: 'REGISTER', ip_address: ip },
-        });
-        return u;
+    const user = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.users.create({
+        data: {
+          first_name: dto.first_name,
+          last_name: dto.last_name,
+          username: dto.username.toLowerCase(),
+          phone: dto.phone,
+          email: dto.email,
+          firebase_uid: firebaseUid,
+          password_hash,
+          country: dto.country,
+          referred_by,
+          referral_code: generateReferralCode(),
+        },
       });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        const target = error.meta?.target;
-        const fields = Array.isArray(target)
-          ? target.map(String)
-          : [String(target ?? '')];
-        if (fields.some((field) => field.includes('phone'))) {
-          throw new ConflictException('Phone already registered');
-        }
-        if (fields.some((field) => field.includes('username'))) {
-          throw new ConflictException('Username taken');
-        }
-        if (fields.some((field) => field.includes('email'))) {
-          throw new ConflictException('Email already registered');
-        }
-      }
-      throw error;
-    }
+      await tx.wallets.create({
+        data: {
+          user_id: u.id,
+          wallet_name: `${u.first_name}'s Wallet`,
+          wallet_type: 'user',
+          wallet_address: generateWalletAddress(u.id, qrSecret),
+          currency: 'FARM',
+        },
+      });
+      await tx.activity_logs.create({
+        data: { user_id: u.id, activity: 'REGISTER', ip_address: ip },
+      });
+      return u;
+    });
 
-    if (email) {
-      void this.ensureFirebaseAccount(email, dto.password)
-        .then((firebaseUid) =>
-          this.prisma.users.updateMany({
-            where: { id: user.id, firebase_uid: null },
-            data: { firebase_uid: firebaseUid },
-          }),
-        )
-        .catch((error) => {
-          this.logger.warn(
-            `Firebase account linking deferred for new user ${user.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        });
-    }
-
-    await this.sendOtp(user.id, user.phone, 'phone_verification', true);
-    return {
-      message: 'Registration successful. OTP sent to your phone number.',
-    };
+    await this.sendOtp(user.id, user.phone, 'phone_verification');
+    return { message: 'Registration successful. OTP sent to your phone number.' };
   }
 
   async createAdmin(actorUserId: string, dto: CreateAdminDto) {
@@ -234,10 +124,8 @@ export class AuthService {
       select: { id: true, role: true },
     });
 
-    if (!actor || String(actor.role || '').toLowerCase() !== 'super_admin') {
-      throw new ForbiddenException(
-        'Only superadmins can create admin accounts',
-      );
+    if (!actor || !['super_admin', 'admin'].includes(String(actor.role || '').toLowerCase())) {
+      throw new ForbiddenException('Only superadmins can create admin accounts');
     }
 
     const existing = await this.prisma.users.findFirst({
@@ -251,10 +139,8 @@ export class AuthService {
     });
 
     if (existing) {
-      if (existing.phone === dto.phone)
-        throw new ConflictException('Phone already registered');
-      if (existing.username === dto.username.toLowerCase())
-        throw new ConflictException('Username taken');
+      if (existing.phone === dto.phone) throw new ConflictException('Phone already registered');
+      if (existing.username === dto.username.toLowerCase()) throw new ConflictException('Username taken');
       throw new ConflictException('Email already registered');
     }
 
@@ -262,9 +148,7 @@ export class AuthService {
     const password_hash = await bcrypt.hash(dto.password, rounds);
     const qrSecret = this.cfg.get<string>('QR_HMAC_SECRET');
     if (!qrSecret) {
-      throw new Error(
-        'QR_HMAC_SECRET not configured - wallet generation impossible',
-      );
+      throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
     }
 
     const admin = await this.prisma.$transaction(async (tx) => {
@@ -293,26 +177,18 @@ export class AuthService {
       });
 
       await tx.activity_logs.create({
-        data: {
-          user_id: created.id,
-          activity: 'ADMIN_ACCOUNT_CREATED',
-          ip_address: '127.0.0.1',
-        },
+        data: { user_id: created.id, activity: 'ADMIN_ACCOUNT_CREATED', ip_address: '127.0.0.1' },
       });
 
       return created;
     });
 
-    await this.sendOtp(admin.id, admin.phone, 'phone_verification', true);
+    await this.sendOtp(admin.id, admin.phone, 'phone_verification');
     return { message: 'Admin account created successfully' };
   }
 
   // ── Verify OTP ───────────────────────────────────────────────────────────────
-  async verifyOtp(
-    phone: string,
-    otpCode: string,
-    purpose = 'phone_verification',
-  ) {
+  async verifyOtp(phone: string, otpCode: string, purpose = 'phone_verification') {
     const user = await this.prisma.users.findUnique({ where: { phone } });
     if (!user) throw new NotFoundException('User not found');
 
@@ -321,18 +197,19 @@ export class AuthService {
       orderBy: { created_at: 'desc' },
     });
 
-    if (!otp)
-      throw new BadRequestException('No active OTP found. Request a new one.');
+    if (!otp) throw new BadRequestException('No active OTP found. Request a new one.');
 
-    const expiryDate = new Date(otp.expires_at as any);
+const expiryDate = new Date(otp.expires_at as any);
 
-    if (isNaN(expiryDate.getTime())) {
-      throw new BadRequestException('Invalid OTP expiry date');
-    }
+if (isNaN(expiryDate.getTime())) {
+  throw new BadRequestException('Invalid OTP expiry date');
+}
 
-    if (new Date() > expiryDate) {
-      throw new BadRequestException('OTP has expired');
-    }
+if (new Date() > expiryDate) {
+  throw new BadRequestException('OTP has expired');
+}
+
+
 
     const attempts = otp.attempts ?? 0;
 
@@ -341,35 +218,25 @@ export class AuthService {
 
     if (otp.otp_code !== otpCode) {
       await this.prisma.otp_verifications.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
+        where: { id: otp.id }, data: { attempts: { increment: 1 } },
       });
       const remaining = OTP_MAX_ATTEMPTS - attempts - 1;
-      throw new BadRequestException(
-        `Invalid OTP. ${remaining} attempt(s) remaining.`,
-      );
+      throw new BadRequestException(`Invalid OTP. ${remaining} attempt(s) remaining.`);
     }
 
     await this.prisma.otp_verifications.update({
-      where: { id: otp.id },
-      data: { verified: true },
+      where: { id: otp.id }, data: { verified: true },
     });
     if (purpose === 'phone_verification') {
       await this.prisma.users.update({
-        where: { id: user.id },
-        data: { phone_verified: true },
+        where: { id: user.id }, data: { phone_verified: true },
       });
     }
     return { message: 'OTP verified successfully', user_id: user.id };
   }
 
   // ── Login ────────────────────────────────────────────────────────────────────
-  async login(
-    dto: LoginDto,
-    ip: string,
-    userAgent: string,
-    turnstileToken?: string,
-  ) {
+  async login(dto: LoginDto, ip: string, userAgent: string, turnstileToken?: string) {
     // Validate Turnstile token (bot protection)
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
@@ -378,7 +245,7 @@ export class AuthService {
     const normalizedIdentifier = dto.identifier.trim();
     const normalizedPhone = this.normalizePhoneNumber(normalizedIdentifier);
 
-    const user = (await this.prisma.users.findFirst({
+    const user = await this.prisma.users.findFirst({
       where: {
         OR: [
           { phone: normalizedPhone },
@@ -398,11 +265,10 @@ export class AuthService {
         is_deleted: false,
       },
       include: { wallets: { where: { is_active: true }, take: 1 } },
-    })) as any;
+    }) as any;
 
     if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (user.is_suspended)
-      throw new ForbiddenException('Account suspended. Contact support.');
+    if (user.is_suspended) throw new ForbiddenException('Account suspended. Contact support.');
     if (!user.is_active) throw new ForbiddenException('Account is inactive.');
 
     const failedAttempts = user.failed_login_attempts ?? 0;
@@ -431,11 +297,7 @@ export class AuthService {
 
     await this.prisma.users.update({
       where: { id: user.id },
-      data: {
-        failed_login_attempts: 0,
-        last_login_at: new Date(),
-        last_seen_at: new Date(),
-      },
+      data: { failed_login_attempts: 0, last_login_at: new Date(), last_seen_at: new Date() },
     });
 
     const userRole = (user.role ?? 'user').toString().toLowerCase();
@@ -445,11 +307,7 @@ export class AuthService {
 
     // Regular users require Firebase phone verification by default. Admin and
     // superadmin accounts are trusted after password authentication.
-    if (
-      !requirePhoneVerification ||
-      userRole === 'admin' ||
-      userRole === 'super_admin'
-    ) {
+    if (!requirePhoneVerification || userRole === 'admin' || userRole === 'super_admin') {
       const walletId = user.wallets[0]?.id;
       const tokens = await this.issueTokens(user.id, userRole, walletId);
       const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
@@ -519,39 +377,20 @@ export class AuthService {
     };
   }
 
-  async supabaseLogin(
-    supabaseToken: string,
-    ip: string,
-    userAgent: string,
-    turnstileToken?: string,
-  ) {
+
+  async supabaseLogin(supabaseToken: string, ip: string, userAgent: string, turnstileToken?: string) {
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
     }
-    return {
-      message: 'Supabase auth is not configured in this environment',
-      data: {},
-    };
+    return { message: 'Supabase auth is not configured in this environment', data: {} };
   }
 
-  async firebaseLogin(
-    dto: {
-      identifier: string;
-      firebase_token?: string;
-      firebaseIdToken?: string;
-      country_code?: string;
-      cf_turnstile_response?: string;
-      turnstile_token?: string;
-    },
-    ip: string,
-    userAgent: string,
-  ) {
+  async firebaseLogin(dto: { identifier: string; firebase_token?: string; firebaseIdToken?: string; country_code?: string; cf_turnstile_response?: string; turnstile_token?: string }, ip: string, userAgent: string) {
     if (dto.turnstile_token) {
       await this.turnstile.verifyToken(dto.turnstile_token, ip);
     }
     const firebaseToken = dto.firebase_token || dto.firebaseIdToken;
-    if (!firebaseToken)
-      throw new UnauthorizedException('Firebase authentication required');
+    if (!firebaseToken) throw new UnauthorizedException('Firebase authentication required');
 
     let decoded: admin.auth.DecodedIdToken;
     try {
@@ -563,16 +402,15 @@ export class AuthService {
     const email = decoded.email?.trim().toLowerCase();
     if (!email) throw new UnauthorizedException('A Firebase email is required');
 
-    const user = (await this.prisma.users.findFirst({
+    const user = await this.prisma.users.findFirst({
       where: {
         OR: [{ firebase_uid: decoded.uid }, { email }],
         is_deleted: false,
       },
       include: { wallets: { where: { is_active: true }, take: 1 } },
-    })) as any;
+    }) as any;
     if (!user) throw new UnauthorizedException('FARM account not found');
-    if (user.is_suspended)
-      throw new ForbiddenException('Account suspended. Contact support.');
+    if (user.is_suspended) throw new ForbiddenException('Account suspended. Contact support.');
     if (!user.is_active) throw new ForbiddenException('Account is inactive.');
     if (user.firebase_uid !== decoded.uid) {
       await this.prisma.users.update({
@@ -583,20 +421,12 @@ export class AuthService {
 
     await this.prisma.users.update({
       where: { id: user.id },
-      data: {
-        failed_login_attempts: 0,
-        last_login_at: new Date(),
-        last_seen_at: new Date(),
-      },
+      data: { failed_login_attempts: 0, last_login_at: new Date(), last_seen_at: new Date() },
     });
 
     const userRole = (user.role ?? 'user').toString().toLowerCase();
     if (userRole === 'admin' || userRole === 'super_admin') {
-      const tokens = await this.issueTokens(
-        user.id,
-        userRole,
-        user.wallets[0]?.id,
-      );
+      const tokens = await this.issueTokens(user.id, userRole, user.wallets[0]?.id);
       const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
       await this.prisma.user_sessions.create({
         data: {
@@ -644,18 +474,12 @@ export class AuthService {
       select: { email: true, firebase_uid: true },
     });
     if (!user?.email || !user.firebase_uid) {
-      throw new UnauthorizedException(
-        'Firebase login is not available for this account',
-      );
+      throw new UnauthorizedException('Firebase login is not available for this account');
     }
     return { data: { email: user.email } };
   }
 
-  private firebaseLoginResponse(
-    user: any,
-    tokens: { access_token: string; refresh_token: string },
-    requiresPhoneVerification: boolean,
-  ) {
+  private firebaseLoginResponse(user: any, tokens: { access_token: string; refresh_token: string }, requiresPhoneVerification: boolean) {
     return {
       success: true,
       data: {
@@ -683,13 +507,10 @@ export class AuthService {
     };
   }
 
-  private async ensureFirebaseAccount(
-    email: string,
-    password?: string,
-  ): Promise<string> {
+  private async ensureFirebaseAccount(email: string, password?: string): Promise<string> {
     const normalizedEmail = email.trim().toLowerCase();
-    const existingFarmUser = await this.prisma.users.findFirst({
-      where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+    const existingFarmUser = await this.prisma.users.findUnique({
+      where: { email: normalizedEmail },
       select: { firebase_uid: true },
     });
     if (existingFarmUser?.firebase_uid) return existingFarmUser.firebase_uid;
@@ -714,20 +535,12 @@ export class AuthService {
     ip: string,
     userAgent: string,
   ) {
-    const pending = (await this.prisma.pending_login_verifications.findUnique({
+    const pending = await this.prisma.pending_login_verifications.findUnique({
       where: { id: pendingLoginId },
-      include: {
-        users: {
-          include: { wallets: { where: { is_active: true }, take: 1 } },
-        },
-      },
-    })) as any;
+      include: { users: { include: { wallets: { where: { is_active: true }, take: 1 } } } },
+    }) as any;
 
-    if (
-      !pending ||
-      pending.status !== 'pending' ||
-      pending.expires_at <= new Date()
-    ) {
+    if (!pending || pending.status !== 'pending' || pending.expires_at <= new Date()) {
       throw new UnauthorizedException('Login verification session expired');
     }
 
@@ -744,23 +557,15 @@ export class AuthService {
         where: { id: pending.id },
         data: { attempt_count: { increment: 1 } },
       });
-      throw new ForbiddenException(
-        'Phone verification does not match this account.',
-      );
+      throw new ForbiddenException('Phone verification does not match this account.');
     }
 
     const claimed = await this.prisma.pending_login_verifications.updateMany({
-      where: {
-        id: pending.id,
-        status: 'pending',
-        expires_at: { gt: new Date() },
-      },
+      where: { id: pending.id, status: 'pending', expires_at: { gt: new Date() } },
       data: { status: 'verified', verified_at: new Date() },
     });
     if (claimed.count !== 1) {
-      throw new UnauthorizedException(
-        'Login verification session has already been used',
-      );
+      throw new UnauthorizedException('Login verification session has already been used');
     }
 
     const user = pending.users;
@@ -769,11 +574,7 @@ export class AuthService {
     }
 
     const walletId = user.wallets[0]?.id;
-    const tokens = await this.issueTokens(
-      user.id,
-      pending.role.toString().toLowerCase(),
-      walletId,
-    );
+    const tokens = await this.issueTokens(user.id, pending.role.toString().toLowerCase(), walletId);
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
     await this.prisma.user_sessions.create({
       data: {
@@ -817,222 +618,42 @@ export class AuthService {
     };
   }
 
-  async sendPasswordResetOtp(
-    email: string,
-    ip: string,
-    turnstileToken?: string,
-  ) {
+  async sendPasswordResetOtp(email: string, ip: string, turnstileToken?: string) {
     // Validate Turnstile token (bot protection)
     if (turnstileToken) {
       await this.turnstile.verifyToken(turnstileToken, ip);
     }
-    return this.sendPasswordResetLink(email);
-  }
-
-  async resetPassword(dto: ResetPasswordDto) {
-    return {
-      message: 'Password reset flow is not configured in this environment',
-    };
-  }
-
-  async sendPasswordResetLink(email: string) {
     const normalizedEmail = email.trim().toLowerCase();
-    if (
-      normalizedEmail.length > 254 ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
-    ) {
-      throw new BadRequestException('Enter a valid email address');
-    }
-
-    const genericResponse = {
-      message: 'If an account exists, we have sent a reset link',
-    };
-    const requestId = createHash('sha256')
-      .update(normalizedEmail)
-      .digest('hex');
-    const redis = this.redis.getClient();
-    if (!redis) {
-      throw new Error('Password reset rate limiting is unavailable');
-    }
-    const rateLimitKey = `password-reset:${requestId}`;
-    const allowed = await redis.set(
-      rateLimitKey,
-      '1',
-      'EX',
-      3 * 60,
-      'NX',
-    );
-    if (!allowed) {
-      return genericResponse;
-    }
-
-    try {
-      const user = await this.prisma.users.findFirst({
-        where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
-        select: {
-          id: true,
-          email: true,
-          firebase_uid: true,
-          role: true,
-          is_active: true,
-          is_deleted: true,
-        },
-      });
-      const role = String(user?.role ?? '').toLowerCase();
-      if (
-        !user ||
-        !user.email ||
-        user.is_deleted ||
-        !user.is_active ||
-        !['user', 'admin', 'super_admin'].includes(role)
-      ) {
-        return genericResponse;
-      }
-
-      const firebaseUid =
-        user.firebase_uid || (await this.ensureFirebaseAccount(user.email));
+    const user = await this.prisma.users.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, firebase_uid: true, email: true, is_deleted: true },
+    });
+    if (user && !user.is_deleted && user.email) {
+      const firebaseUid = user.firebase_uid || await this.ensureFirebaseAccount(user.email);
       if (!user.firebase_uid) {
         await this.prisma.users.update({
           where: { id: user.id },
           data: { firebase_uid: firebaseUid },
         });
       }
-
-      const continueUrl =
-        this.cfg.get<string>('FIREBASE_PASSWORD_RESET_CONTINUE_URL') ||
-        'https://farmapp-e2145.firebaseapp.com/admin-reset-password';
-      const resetLink =
-        await this.firebase.auth.generatePasswordResetLink(user.email, {
-          url: continueUrl,
-          handleCodeInApp: true,
-          android: {
-            packageName: 'farmapp.africa',
-            installApp: true,
-          },
-          iOS: { bundleId: 'com.mycompany.farm' },
-        });
-      const escapedResetLink = resetLink
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-      await this.notifications.sendEmailOrThrow(
-        user.email,
-        'Reset your FARM password',
-        this.buildPasswordResetEmail(escapedResetLink),
-        'You requested a password reset for FARM. Open this email in an HTML-capable email app and tap the orange SET A NEW PASSWORD button to continue.',
-      );
-      return genericResponse;
-    } catch (error) {
-      try {
-        await redis.del(rateLimitKey);
-      } catch {
-        this.logger.warn(
-          'Could not release password-reset rate limit after request failure',
-        );
-      }
-
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        error.code === 'auth/user-not-found'
-      ) {
-        return genericResponse;
-      }
-      throw error;
     }
+    return { message: 'If an account exists for this email, a password reset link has been sent.' };
   }
 
-  private buildPasswordResetEmail(resetLink: string): string {
-    return `<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-  <body style="margin:0;padding:32px 16px;background:#f4f4f4;color:#111;font-family:Arial,Helvetica,sans-serif">
-    <table role="presentation" style="width:100%;max-width:560px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:8px">
-      <tr><td style="padding:32px">
-        <div style="font-size:22px;font-weight:700;letter-spacing:2px">FARM</div>
-        <div style="height:3px;width:44px;margin:14px 0 26px;background:#111"></div>
-        <h1 style="font-size:22px;margin:0 0 16px">Reset your password</h1>
-        <p style="font-size:15px;line-height:1.6;margin:0 0 10px">You requested a password reset for FARM.</p>
-        <p style="font-size:16px;line-height:1.6;font-weight:700;margin:0 0 18px">To set your new password, tap the orange button below.</p>
-        <table role="presentation" style="margin:0 0 24px"><tr><td align="center" bgcolor="#ff9800" style="border-radius:8px">
-          <a href="${resetLink}" style="display:inline-block;padding:18px 32px;background-color:#ff9800;border:2px solid #ff9800;border-radius:8px;color:#171717;text-decoration:none;font-size:17px;line-height:1.3;font-weight:700;letter-spacing:.3px">SET A NEW PASSWORD</a>
-        </td></tr></table>
-        <p style="font-size:12px;line-height:1.6;color:#555;margin:26px 0 6px">If you did not request this change, you can ignore this email.</p>
-      </td></tr>
-    </table>
-  </body>
-</html>`;
-  }
-
-  async completePasswordReset(dto: AdminPasswordResetCompleteDto) {
-    if (dto.password !== dto.confirm_password) {
-      throw new BadRequestException('Passwords do not match');
-    }
-
-    let decoded: admin.auth.DecodedIdToken;
-    try {
-      decoded = await this.firebase.verifyIdToken(dto.firebase_id_token);
-    } catch {
-      throw new UnauthorizedException('Invalid Firebase authentication token');
-    }
-
-    const user = await this.prisma.users.findUnique({
-      where: { firebase_uid: decoded.uid },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        is_active: true,
-        is_deleted: true,
-      },
-    });
-    const role = String(user?.role ?? '').toLowerCase();
-    if (
-      !user ||
-      user.is_deleted ||
-      !user.is_active ||
-      !['user', 'admin', 'super_admin'].includes(role) ||
-      !user.email ||
-      user.email.toLowerCase() !== decoded.email?.toLowerCase()
-    ) {
-      throw new UnauthorizedException(
-        'Firebase account is not linked to an active user',
-      );
-    }
-
-    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
-    const passwordHash = await bcrypt.hash(dto.password, rounds);
-    await this.prisma.$transaction(async (tx) => {
-      await tx.users.update({
-        where: { id: user.id },
-        data: { password_hash: passwordHash, failed_login_attempts: 0 },
-      });
-      await tx.user_sessions.updateMany({
-        where: { user_id: user.id, is_revoked: false },
-        data: { is_revoked: true, expires_at: new Date() },
-      });
-    });
-    return { message: 'Password reset successfully' };
+  async resetPassword(dto: ResetPasswordDto) {
+    return { message: 'Password reset flow is not configured in this environment' };
   }
 
   async resendEmailVerification(email: string) {
-    return {
-      message: 'Email verification flow is not configured in this environment',
-    };
+    return { message: 'Email verification flow is not configured in this environment' };
   }
 
   async verifyEmail(token: string) {
-    return {
-      message: 'Email verification flow is not configured in this environment',
-    };
+    return { message: 'Email verification flow is not configured in this environment' };
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto) {
-    return {
-      message: 'Password change flow is not configured in this environment',
-    };
+    return { message: 'Password change flow is not configured in this environment' };
   }
 
   async deleteAccount(userId: string, dto: DeleteAccountDto) {
@@ -1046,24 +667,17 @@ export class AuthService {
     }
 
     if (!dto?.password || !dto?.acknowledged || !dto?.confirm_delete) {
-      throw new BadRequestException(
-        'Password, acknowledgment, and final confirmation are required',
-      );
+      throw new BadRequestException('Password, acknowledgment, and final confirmation are required');
     }
 
-    const passwordMatches = await bcrypt.compare(
-      dto.password,
-      user.password_hash,
-    );
+    const passwordMatches = await bcrypt.compare(dto.password, user.password_hash);
     if (!passwordMatches) {
       throw new UnauthorizedException('Incorrect password');
     }
 
     const wallet = user.wallets?.[0];
     if (wallet && Number(wallet.balance ?? 0) !== 0) {
-      throw new ForbiddenException(
-        'Account cannot be deleted while wallet balance is not zero',
-      );
+      throw new ForbiddenException('Account cannot be deleted while wallet balance is not zero');
     }
 
     const pendingWithdrawals = await this.prisma.withdrawal.count({
@@ -1074,9 +688,7 @@ export class AuthService {
     });
 
     if (pendingWithdrawals > 0) {
-      throw new ForbiddenException(
-        'Please clear pending withdrawals before deleting your account',
-      );
+      throw new ForbiddenException('Please clear pending withdrawals before deleting your account');
     }
 
     const pendingDeposits = await this.prisma.deposit.count({
@@ -1087,9 +699,7 @@ export class AuthService {
     });
 
     if (pendingDeposits > 0) {
-      throw new ForbiddenException(
-        'Please clear pending deposits before deleting your account',
-      );
+      throw new ForbiddenException('Please clear pending deposits before deleting your account');
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -1107,10 +717,7 @@ export class AuthService {
           email: null,
           phone: `deleted_${userId.slice(0, 12)}`,
           username: `deleted_${userId}`,
-          password_hash: await bcrypt.hash(
-            `deleted-${userId}-${Date.now()}`,
-            12,
-          ),
+          password_hash: await bcrypt.hash(`deleted-${userId}-${Date.now()}`, 12),
           profile_image: null,
           bio: null,
           country: null,
@@ -1146,11 +753,7 @@ export class AuthService {
     if (existing) {
       await this.prisma.device_tokens.update({
         where: { id: existing.id },
-        data: {
-          is_active: true,
-          platform: platform || existing.platform,
-          last_seen: new Date(),
-        },
+        data: { is_active: true, platform: platform || existing.platform, last_seen: new Date() },
       });
       return { message: 'Device token updated' };
     }
@@ -1172,19 +775,22 @@ export class AuthService {
   async refresh(userId: string, rawRefreshToken: string, ip?: string) {
     // Match the presented token to its own active session. This prevents a
     // refresh on one device from consuming another device's session.
-    const sessions = (await this.prisma.user_sessions.findMany({
+    const sessions = await this.prisma.user_sessions.findMany({
       where: {
         user_id: userId,
         expires_at: { gt: new Date() },
-        OR: [{ is_revoked: false }, { is_revoked: null }],
+        OR: [
+          { is_revoked: false },
+          { is_revoked: null },
+        ],
       },
       orderBy: { created_at: 'desc' },
       include: {
         users: {
-          include: { wallets: { take: 1 } },
-        },
+          include: { wallets: { take: 1 } }
+        }
       },
-    })) as any[];
+    }) as any[];
 
     let session: any = null;
     for (const candidate of sessions) {
@@ -1195,13 +801,7 @@ export class AuthService {
     }
 
     if (!session) {
-      await this.logSecurityEvent(
-        userId,
-        'REFRESH_TOKEN_INVALID',
-        'No valid session found',
-        'high',
-        ip,
-      );
+      await this.logSecurityEvent(userId, 'REFRESH_TOKEN_INVALID', 'No valid session found', 'high', ip);
       throw new UnauthorizedException('Session not found or expired');
     }
 
@@ -1209,9 +809,7 @@ export class AuthService {
     if (session.used_at) {
       // Token has been used before - possible theft!
       await this.handleTokenTheft(userId, session, ip);
-      throw new UnauthorizedException(
-        'Refresh token has been compromised. All sessions revoked.',
-      );
+      throw new UnauthorizedException('Refresh token has been compromised. All sessions revoked.');
     }
 
     // Atomically claim the token. A concurrent request that loses this
@@ -1229,9 +827,7 @@ export class AuthService {
     });
     if (claimed.count !== 1) {
       await this.handleTokenTheft(userId, session, ip);
-      throw new UnauthorizedException(
-        'Refresh token has been compromised. All sessions revoked.',
-      );
+      throw new UnauthorizedException('Refresh token has been compromised. All sessions revoked.');
     }
 
     // Check for suspicious activity (different IP, user agent, etc.)
@@ -1241,7 +837,7 @@ export class AuthService {
         'SUSPICIOUS_ACTIVITY',
         `Refresh token used from different IP: ${ip} (original: ${session.ip_address})`,
         'medium',
-        ip,
+        ip
       );
     }
 
@@ -1265,13 +861,7 @@ export class AuthService {
       },
     });
 
-    await this.logSecurityEvent(
-      userId,
-      'TOKEN_REFRESHED',
-      'Refresh token rotated successfully',
-      'low',
-      ip,
-    );
+    await this.logSecurityEvent(userId, 'TOKEN_REFRESHED', 'Refresh token rotated successfully', 'low', ip);
 
     return {
       data: {
@@ -1296,7 +886,10 @@ export class AuthService {
         where: {
           user_id: userId,
           jwt_id: currentJti,
-          OR: [{ is_revoked: false }, { is_revoked: null }],
+          OR: [
+            { is_revoked: false },
+            { is_revoked: null },
+          ],
         },
         data: { is_revoked: true },
       });
@@ -1322,7 +915,10 @@ export class AuthService {
       where: {
         user_id: userId,
         jwt_id: { not: currentJti },
-        OR: [{ is_revoked: false }, { is_revoked: null }],
+        OR: [
+          { is_revoked: false },
+          { is_revoked: null },
+        ],
       },
       data: { is_revoked: true },
     });
@@ -1399,56 +995,56 @@ export class AuthService {
   }
 
   // ── Set PIN ───────────────────────────────────────────────────────────────────
-  async setPin(userId: string, dto: SetPinDto) {
-    if (dto.pin !== dto.confirm_pin) {
-      throw new BadRequestException('PINs do not match');
-    }
+ async setPin(userId: string, dto: SetPinDto) {
+if (dto.pin !== dto.confirm_pin) {
+throw new BadRequestException('PINs do not match');
+}
 
-    if (!/^\d{4,6}$/.test(dto.pin)) {
-      throw new BadRequestException('PIN must be 4-6 digits');
-    }
+if (!/^\d{4,6}$/.test(dto.pin)) {
+throw new BadRequestException('PIN must be 4-6 digits');
+}
 
-    const user = await this.prisma.users.findUnique({
-      where: { id: userId },
-      select: { pin_hash: true },
-    });
+const user = await this.prisma.users.findUnique({
+where: { id: userId },
+select: { pin_hash: true },
+});
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
+if (!user) {
+throw new NotFoundException('User not found');
+}
 
-    // 🚨 Prevent overwriting existing PIN
-    if (user.pin_hash) {
-      throw new ForbiddenException(
-        'PIN already exists. Use Change PIN instead.',
-      );
-    }
+// 🚨 Prevent overwriting existing PIN
+if (user.pin_hash) {
+throw new ForbiddenException(
+'PIN already exists. Use Change PIN instead.',
+);
+}
 
-    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
 
-    // Security fix: Do NOT concatenate userId with PIN
-    // bcrypt generates its own salt - userId is public anyway
-    const pin_hash = await bcrypt.hash(dto.pin, rounds);
+// Security fix: Do NOT concatenate userId with PIN
+// bcrypt generates its own salt - userId is public anyway
+const pin_hash = await bcrypt.hash(dto.pin, rounds);
 
-    await this.prisma.users.update({
-      where: { id: userId },
-      data: {
-        pin_hash,
-        failed_pin_attempts: 0,
-      },
-    });
+await this.prisma.users.update({
+where: { id: userId },
+data: {
+pin_hash,
+failed_pin_attempts: 0,
+},
+});
 
-    await this.prisma.activity_logs.create({
-      data: {
-        user_id: userId,
-        activity: 'SET_PIN',
-      },
-    });
+await this.prisma.activity_logs.create({
+data: {
+user_id: userId,
+activity: 'SET_PIN',
+},
+});
 
-    return {
-      message: 'PIN set successfully',
-    };
-  }
+return {
+message: 'PIN set successfully',
+};
+}
 
   // ── Verify PIN (used by other services) ──────────────────────────────────────
   async verifyPin(userId: string, pin: string): Promise<void> {
@@ -1456,8 +1052,7 @@ export class AuthService {
       where: { id: userId },
       select: { pin_hash: true, failed_pin_attempts: true },
     });
-    if (!user?.pin_hash)
-      throw new BadRequestException('PIN not set. Please set a PIN first.');
+    if (!user?.pin_hash) throw new BadRequestException('PIN not set. Please set a PIN first.');
 
     const failedPinAttempts = user.failed_pin_attempts ?? 0;
 
@@ -1471,230 +1066,202 @@ export class AuthService {
     const valid = await bcrypt.compare(pin, user.pin_hash);
     if (!valid) {
       await this.prisma.users.update({
-        where: { id: userId },
-        data: { failed_pin_attempts: { increment: 1 } },
+        where: { id: userId }, data: { failed_pin_attempts: { increment: 1 } },
       });
       const left = MAX_PIN_ATTEMPTS - failedPinAttempts - 1;
-      throw new UnauthorizedException(
-        `Incorrect PIN. ${left} attempt(s) remaining.`,
-      );
+      throw new UnauthorizedException(`Incorrect PIN. ${left} attempt(s) remaining.`);
     }
     await this.prisma.users.update({
-      where: { id: userId },
-      data: { failed_pin_attempts: 0 },
+      where: { id: userId }, data: { failed_pin_attempts: 0 },
     });
   }
 
   async changePin(userId: string, dto: ChangePinDto) {
-    if (dto.new_pin !== dto.confirm_pin) {
-      throw new BadRequestException('New PINs do not match');
-    }
-    if (!/^\d{4,6}$/.test(dto.new_pin)) {
-      throw new BadRequestException('PIN must be 4-6 digits');
-    }
+if (dto.new_pin !== dto.confirm_pin) {
+throw new BadRequestException('New PINs do not match');
+}
+if (!/^\d{4,6}$/.test(dto.new_pin)) {
+  throw new BadRequestException(
+    'PIN must be 4-6 digits',
+  );
+}
 
-    const user = await this.prisma.users.findUnique({
-      where: { id: userId },
-      select: {
-        pin_hash: true,
-      },
-    });
+const user = await this.prisma.users.findUnique({
+where: { id: userId },
+select: {
+pin_hash: true,
+},
+});
 
-    if (!user?.pin_hash) {
-      throw new BadRequestException('No PIN found');
-    }
+if (!user?.pin_hash) {
+throw new BadRequestException('No PIN found');
+}
 
-    // Security fix: Don't concatenate userId with PIN
-    const validOldPin = await bcrypt.compare(dto.old_pin, user.pin_hash);
+// Security fix: Don't concatenate userId with PIN
+const validOldPin = await bcrypt.compare(dto.old_pin, user.pin_hash);
 
-    if (!validOldPin) {
-      throw new UnauthorizedException('Old PIN is incorrect');
-    }
+if (!validOldPin) {
+  throw new UnauthorizedException('Old PIN is incorrect');
+}
 
-    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
 
-    const newHash = await bcrypt.hash(dto.new_pin, rounds);
+const newHash = await bcrypt.hash(dto.new_pin, rounds);
 
-    await this.prisma.users.update({
-      where: { id: userId },
-      data: {
-        pin_hash: newHash,
-        failed_pin_attempts: 0,
-      },
-    });
+await this.prisma.users.update({
+where: { id: userId },
+data: {
+pin_hash: newHash,
+failed_pin_attempts: 0,
+},
+});
 
-    await this.prisma.activity_logs.create({
-      data: {
-        user_id: userId,
-        activity: 'CHANGE_PIN',
-      },
-    });
+await this.prisma.activity_logs.create({
+data: {
+user_id: userId,
+activity: 'CHANGE_PIN',
+},
+});
 
-    return {
-      message: 'PIN changed successfully',
-    };
-  }
+return {
+message: 'PIN changed successfully',
+};
+}
 
-  async resetForgottenPin(userId: string, dto: ResetPinDto) {
-    if (dto.new_pin !== dto.confirm_pin) {
-      throw new BadRequestException('PINs do not match');
-    }
-    if (!/^\d{4,6}$/.test(dto.new_pin)) {
-      throw new BadRequestException('PIN must be 4-6 digits');
-    }
-
-    const user = await this.prisma.users.findUnique({
-      where: { id: userId },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    if (
-      !user.phone ||
-      this.normalizePhoneNumber(dto.phone) !==
-        this.normalizePhoneNumber(user.phone)
-    ) {
-      throw new UnauthorizedException(
-        'Phone number does not match this account',
-      );
-    }
-
-    const validPassword = await bcrypt.compare(
-      dto.password,
-      user.password_hash,
+async resetForgottenPin(
+  userId: string,
+  dto: ResetPinDto,
+) {
+  if (dto.new_pin !== dto.confirm_pin) {
+    throw new BadRequestException(
+      'PINs do not match',
     );
-
-    if (!validPassword) {
-      throw new UnauthorizedException('Incorrect password');
-    }
-
-    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
-
-    // Security fix: Don't concatenate userId with PIN
-    const pin_hash = await bcrypt.hash(dto.new_pin, rounds);
-
-    await this.prisma.users.update({
-      where: { id: userId },
-      data: {
-        pin_hash,
-        failed_pin_attempts: 0,
-      },
-    });
-
-    await this.prisma.activity_logs.create({
-      data: {
-        user_id: userId,
-        activity: 'RESET_FORGOTTEN_PIN',
-      },
-    });
-
-    return {
-      message: 'PIN reset successfully',
-    };
+  }
+  if (!/^\d{4,6}$/.test(dto.new_pin)) {
+    throw new BadRequestException(
+      'PIN must be 4-6 digits',
+    );
   }
 
-  // ── Send OTP ─────────────────────────────────────────────────────────────────
-  async sendOtp(
-    userId: string,
-    phone: string,
-    purpose: string,
-    deferDelivery = false,
-  ) {
-    const recent = await this.prisma.otp_verifications.findFirst({
-      where: {
-        user_id: userId,
-        purpose,
-        verified: false,
-        created_at: { gte: new Date(Date.now() - 60_000) },
-      },
-    });
+  const user = await this.prisma.users.findUnique({
+    where: { id: userId },
+  });
 
-    if (recent)
-      throw new BadRequestException(
-        'Please wait 60 seconds before requesting a new OTP',
-      );
-
-    const code = generateOtp(6);
-
-    const expires_at = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60_000);
-
-    await this.prisma.otp_verifications.create({
-      data: {
-        user_id: userId,
-        otp_code: code,
-        purpose,
-        expires_at,
-      },
-    });
-    const delivery = this.deliverOtp(userId, phone, purpose, code);
-    if (deferDelivery) {
-      void delivery.catch((error) => {
-        this.logger.error(
-          `OTP delivery failed for user ${userId}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      });
-      return { message: 'OTP delivery started' };
-    }
-
-    await delivery;
-    return { message: 'OTP sent to your phone' };
+  if (!user) {
+    throw new NotFoundException('User not found');
   }
 
-  private async deliverOtp(
-    userId: string,
-    phone: string,
-    purpose: string,
-    code: string,
-  ) {
-    // Send OTP via configured SMS provider (do not log OTP contents)
+  // VERIFY OTP
+  await this.verifyOtp(
+    user.phone,
+    dto.otp,
+    'forgot_pin',
+  );
+
+  // VERIFY PASSWORD
+  const validPassword = await bcrypt.compare(
+    dto.password,
+    user.password_hash,
+  );
+
+  if (!validPassword) {
+    throw new UnauthorizedException(
+      'Incorrect password',
+    );
+  }
+
+  const rounds =
+    Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+
+  // Security fix: Don't concatenate userId with PIN
+  const pin_hash = await bcrypt.hash(dto.new_pin, rounds);
+
+  await this.prisma.users.update({
+    where: { id: userId },
+    data: {
+      pin_hash,
+      failed_pin_attempts: 0,
+    },
+  });
+
+  await this.prisma.activity_logs.create({
+    data: {
+      user_id: userId,
+      activity: 'RESET_FORGOTTEN_PIN',
+    },
+  });
+
+  return {
+    message: 'PIN reset successfully',
+  };
+}
+
+// ── Send OTP ─────────────────────────────────────────────────────────────────
+async sendOtp(userId: string, phone: string, purpose: string) {
+  const recent = await this.prisma.otp_verifications.findFirst({
+    where: {
+      user_id: userId,
+      purpose,
+      verified: false,
+      created_at: { gte: new Date(Date.now() - 60_000) },
+    },
+  });
+
+  if (recent)
+    throw new BadRequestException('Please wait 60 seconds before requesting a new OTP');
+
+  const code = generateOtp(6);
+
+  const expires_at = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60_000);
+
+  await this.prisma.otp_verifications.create({
+    data: {
+      user_id: userId,
+      otp_code: code,
+      purpose,
+      expires_at,
+    },
+  });
+  // Send OTP via configured SMS provider (do not log OTP contents)
+  try {
+    const message = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
+    // Prefer push if user has push notifications enabled and device tokens registered
     try {
-      const message = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
-      // Prefer push if user has push notifications enabled and device tokens registered
-      try {
-        const settings = await this.prisma.user_settings.findUnique({
-          where: { user_id: userId },
+      const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
+      if (settings?.push_notifications) {
+        const pushBody = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
+        const pushed = await this.notifications.sendPush(userId, 'Your FARM OTP', pushBody, {
+          otp_code: code,
+          otp_expires: String(OTP_EXPIRY_MINUTES),
+          purpose,
+          auto_fill: 'true',
         });
-        if (settings?.push_notifications) {
-          const pushBody = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
-          const pushed = await this.notifications.sendPush(
-            userId,
-            'Your FARM OTP',
-            pushBody,
-            {
-              otp_code: code,
-              otp_expires: String(OTP_EXPIRY_MINUTES),
-              purpose,
-              auto_fill: 'true',
-            },
-          );
-          if (pushed) {
-            return { message: 'OTP sent to your device' };
-          }
+        if (pushed) {
+          return { message: 'OTP sent to your device' };
         }
-      } catch (e) {
-        this.logger.debug('Push attempt failed or not configured: ' + e);
       }
-
-      await this.notifications.sendSms(phone, message);
     } catch (e) {
-      this.logger.error('OTP SMS send failed: ' + e);
+      this.logger.debug('Push attempt failed or not configured: ' + e);
     }
+
+    await this.notifications.sendSms(phone, message);
+  } catch (e) {
+    this.logger.error('OTP SMS send failed: ' + e);
   }
+
+  return { message: 'OTP sent to your phone' };
+}
 
   // Add this method inside the AuthService class
 
-  async resendOtp(userId: string) {
-    const user = await this.prisma.users.findUnique({
-      where: { id: userId },
-      select: { phone: true },
-    });
-    if (!user) throw new NotFoundException('User not found');
-    return this.sendOtp(userId, user.phone, 'phone_verification');
-  }
+async resendOtp(userId: string) {
+  const user = await this.prisma.users.findUnique({
+    where: { id: userId },
+    select: { phone: true },
+  });
+  if (!user) throw new NotFoundException('User not found');
+  return this.sendOtp(userId, user.phone, 'phone_verification');
+}
   // ── Private helpers ───────────────────────────────────────────────────────────
   private normalizePhoneNumber(phone?: string | null) {
     if (!phone) return '';
@@ -1738,13 +1305,10 @@ export class AuthService {
   }
 
   private refreshSessionExpiry(): Date {
-    const configuredDays = Number(
-      this.cfg.get('JWT_REFRESH_SESSION_DAYS', '3650'),
-    );
-    const days =
-      Number.isFinite(configuredDays) && configuredDays > 0
-        ? configuredDays
-        : 365;
+    const configuredDays = Number(this.cfg.get('JWT_REFRESH_SESSION_DAYS', '3650'));
+    const days = Number.isFinite(configuredDays) && configuredDays > 0
+      ? configuredDays
+      : 365;
     return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 
@@ -1761,14 +1325,12 @@ export class AuthService {
       'TOKEN_THEFT_DETECTED',
       `Refresh token reuse detected. Session ID: ${session.id}. All sessions revoked.`,
       'critical',
-      ip,
+      ip
     );
-
+    
     // Optional: Send alert email/SMS to user
     // TODO: Implement notification service call
-    this.logger.warn(
-      `🚨 TOKEN THEFT DETECTED for user ${userId} from IP ${ip}`,
-    );
+    this.logger.warn(`🚨 TOKEN THEFT DETECTED for user ${userId} from IP ${ip}`);
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
@@ -1793,7 +1355,7 @@ export class AuthService {
     eventType: string,
     description: string,
     severity: 'low' | 'medium' | 'high' | 'critical',
-    ip?: string,
+    ip?: string
   ) {
     try {
       await this.prisma.security_events.create({
@@ -1806,11 +1368,7 @@ export class AuthService {
         },
       });
 
-      if (
-        severity === 'medium' ||
-        severity === 'high' ||
-        severity === 'critical'
-      ) {
+      if (severity === 'medium' || severity === 'high' || severity === 'critical') {
         const logMessage = `[SECURITY EVENT] ${severity.toUpperCase()} ${eventType} user=${userId} ip=${ip ?? 'unknown'} description=${description}`;
         if (severity === 'critical') {
           this.logger.error(logMessage, 'AuthService');
