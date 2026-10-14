@@ -508,8 +508,17 @@ export class WithdrawService {
     return true;
   }
 
-  private async creditPlatformFeeInTx(tx: any, platformFee: number, description: string) {
+  async creditPlatformFeeInTx(
+    tx: any,
+    platformFee: number,
+    referenceOrDescription: string,
+    transactionId?: string,
+  ) {
     if (platformFee <= 0) return;
+
+    const description = transactionId
+      ? `Platform withdrawal fee credited — ref: ${referenceOrDescription}`
+      : referenceOrDescription;
 
     const superadminUser = await tx.users.findFirst({
       where: { role: 'super_admin', is_deleted: false },
@@ -527,7 +536,7 @@ export class WithdrawService {
     });
     await tx.ledger_entries.create({
       data: {
-        transaction_id: null,
+        transaction_id: transactionId ?? null,
         wallet_id: superWallet.id,
         entry_type: 'credit',
         amount: platformFee,
@@ -606,6 +615,30 @@ export class WithdrawService {
     });
 
     return true;
+  }
+
+  async getPaystackDestinations(type?: string) {
+    return this.paystack.getBanks('KES', type);
+  }
+
+  async adminApproveWithdrawal(idOrReference: string) {
+    const withdrawal = await this.prisma.withdrawal.findFirst({
+      where: { OR: [{ id: idOrReference }, { reference: idOrReference }] },
+    });
+    if (!withdrawal) throw new BadRequestException('Withdrawal not found');
+    if (withdrawal.status === 'COMPLETED') return true;
+    if (withdrawal.status === 'FAILED') {
+      throw new BadRequestException('A rejected withdrawal cannot be approved');
+    }
+    return this.markAsSuccess(withdrawal.reference);
+  }
+
+  async adminRejectWithdrawal(idOrReference: string, reason: string) {
+    const withdrawal = await this.prisma.withdrawal.findFirst({
+      where: { OR: [{ id: idOrReference }, { reference: idOrReference }] },
+    });
+    if (!withdrawal) throw new BadRequestException('Withdrawal not found');
+    return this.rejectWithdrawal(withdrawal.reference, reason);
   }
 
   private formatMpesaNumber(phone: string | null) {

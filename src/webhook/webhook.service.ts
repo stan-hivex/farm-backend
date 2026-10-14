@@ -2812,14 +2812,8 @@ export class WebhookService {
         // The HTTP webhook guard verifies Paystack's signature before this event
         // is queued; its success event is authoritative once reference and amount
         // have matched the pending deposit.
-        const finalized = await this.depositService.finalizeSuccessfulDeposit(
-          reference,
-          {
-            ...payload.data,
-            reference,
-            status: 'success',
-          },
-        );
+        const finalized =
+          await this.depositService.finalizeSuccessfulDeposit(reference);
         this.logger.log(
           `Paystack verification result ref=${reference} status=${finalized ? 'success' : 'pending'}`,
         );

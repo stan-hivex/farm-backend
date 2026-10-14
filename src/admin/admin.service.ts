@@ -1490,4 +1490,92 @@ export class AdminService {
 
     return result;
   }
+
+  async listAdmins(query: any) {
+    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const where: any = { role: 'admin', is_deleted: false };
+    if (query.search) {
+      where.OR = [
+        { username: { contains: query.search, mode: 'insensitive' } },
+        { email: { contains: query.search, mode: 'insensitive' } },
+        { first_name: { contains: query.search, mode: 'insensitive' } },
+        { last_name: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+    const [data, total] = await Promise.all([
+      this.prisma.users.findMany({
+        where, skip, take, orderBy: { created_at: 'desc' },
+        select: {
+          id: true, first_name: true, last_name: true, username: true,
+          email: true, phone: true, role: true, is_active: true,
+          is_suspended: true, created_at: true, updated_at: true,
+        },
+      }),
+      this.prisma.users.count({ where }),
+    ]);
+    return { data, meta: paginate(total, page, limit) };
+  }
+
+  async setAdminStatus(adminId: string, action: 'suspend' | 'approve', actorId: string) {
+    const admin = await this.prisma.users.findFirst({
+      where: { id: adminId, role: 'admin', is_deleted: false },
+    });
+    if (!admin) throw new NotFoundException('Admin not found');
+    const suspended = action === 'suspend';
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.users.update({
+        where: { id: adminId },
+        data: { is_suspended: suspended },
+      });
+      if (suspended) {
+        await tx.user_sessions.updateMany({
+          where: { user_id: adminId, OR: [{ is_revoked: false }, { is_revoked: null }] },
+          data: { is_revoked: true },
+        });
+      }
+      await tx.audit_logs.create({
+        data: {
+          user_id: actorId,
+          action: suspended ? 'SUSPEND_ADMIN' : 'APPROVE_ADMIN',
+          entity_type: 'users',
+          entity_id: adminId,
+        },
+      });
+      return updated;
+    });
+    return { data: result };
+  }
+
+  async deleteAdmin(adminId: string, actorId: string) {
+    const admin = await this.prisma.users.findFirst({
+      where: { id: adminId, role: 'admin', is_deleted: false },
+    });
+    if (!admin) throw new NotFoundException('Admin not found');
+    return this.prisma.$transaction(async (tx) => {
+      const deleted = await tx.users.update({
+        where: { id: adminId },
+        data: { is_deleted: true, is_active: false, is_suspended: true },
+      });
+      await tx.user_sessions.updateMany({
+        where: { user_id: adminId, OR: [{ is_revoked: false }, { is_revoked: null }] },
+        data: { is_revoked: true },
+      });
+      await tx.audit_logs.create({
+        data: { user_id: actorId, action: 'DELETE_ADMIN', entity_type: 'users', entity_id: adminId },
+      });
+      return { data: deleted };
+    });
+  }
+
+  async getKycDocument(id: string) {
+    const document = await this.prisma.kyc_documents.findUnique({ where: { id } });
+    if (!document) throw new NotFoundException('KYC document not found');
+    return {
+      data: {
+        ...document,
+        address_document_url:
+          (document as any).address_document_url ?? (document as any).address_document ?? null,
+      },
+    };
+  }
 }

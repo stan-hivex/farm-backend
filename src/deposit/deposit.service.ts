@@ -239,6 +239,64 @@ export class DepositService {
     return deposit;
   }
 
+  async getDepositStatus(userId: string, reference: string) {
+    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    if (deposit) assertResourceAccess(deposit.userId, userId, 'deposit');
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+      select: { status: true, transaction_type: true, metadata: true },
+    });
+    if (!deposit && (transaction as any)?.metadata?.user_id !== userId) {
+      throw new BadRequestException('Deposit not found');
+    }
+    if (!deposit && !transaction) throw new BadRequestException('Deposit not found');
+    return {
+      data: {
+        reference,
+        status: deposit?.status ?? transaction?.status?.toUpperCase() ?? 'PENDING',
+        amount: Number(deposit?.amount ?? 0),
+        currency: deposit?.currency ?? 'FARM',
+      },
+    };
+  }
+
+  async verifyDepositStatus(userId: string, reference: string) {
+    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    if (deposit) assertResourceAccess(deposit.userId, userId, 'deposit');
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
+    if (!deposit && (transaction?.metadata as any)?.user_id !== userId) {
+      throw new BadRequestException('Deposit not found');
+    }
+    if (!deposit && !transaction) throw new BadRequestException('Deposit not found');
+    const completed = await this.finalizeSuccessfulDeposit(reference);
+    return {
+      data: {
+        reference,
+        status: completed ? 'SUCCESS' : (deposit?.status ?? transaction?.status?.toUpperCase() ?? 'PENDING'),
+        credited: completed,
+      },
+    };
+  }
+
+  async finalizeMerchantQrPayment(reference: string) {
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
+    const metadata = (transaction?.metadata as Record<string, unknown> | null) ?? {};
+    if (!transaction || metadata.qr_guest_payment !== true) return false;
+    if (transaction.status?.toLowerCase() !== 'completed') return false;
+    const result = await this.prisma.qr_payments.updateMany({
+      where: { transaction_id: transaction.id, status: { not: 'completed' } },
+      data: { status: 'completed' },
+    });
+    return result.count > 0 || !!(await this.prisma.qr_payments.findFirst({
+      where: { transaction_id: transaction.id, status: 'completed' },
+      select: { id: true },
+    }));
+  }
+
   // Called ONLY from webhook
   async finalizeSuccessfulDeposit(reference: string) {
     this.logger.log(`finalizeSuccessfulDeposit: start for reference=${reference}`);
