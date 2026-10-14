@@ -4,10 +4,12 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import * as QRCode from 'qrcode';
+import { CacheService } from '../common/cache/cache.service';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -27,6 +29,7 @@ export class QrService {
     private cfg: ConfigService,
     private notificationsService: NotificationsService,
     private websocket: WebsocketGateway,
+    @Optional() private readonly cache?: CacheService,
   ) {}
 
   async generateMerchantQr(merchantId: string) {
@@ -318,8 +321,11 @@ export class QrService {
     if (!customerWallet || !merchantWallet)
       throw new NotFoundException('Wallet not found');
 
-    const fee = dto.amount * (Number(merchant.transaction_fee_percent) / 100);
-    const totalOut = dto.amount + fee;
+    const customerFee =
+      dto.amount * (Number(merchant.transaction_fee_percent || 0) / 100);
+    const saleFee = Number((dto.amount * 0.01).toFixed(8));
+    const merchantNet = dto.amount - saleFee;
+    const totalOut = dto.amount + customerFee;
     const available =
       Number(customerWallet.balance) - Number(customerWallet.locked_balance);
     if (available < totalOut)
@@ -337,11 +343,18 @@ export class QrService {
           transaction_type: 'merchant_payment',
           status: 'completed',
           amount: dto.amount,
-          fee,
-          net_amount: dto.amount - fee,
+          fee: saleFee,
+          net_amount: merchantNet,
           currency: 'FARM',
           description: `Payment to ${merchant.business_name}`,
-          metadata: { user_id: customerId, merchant_id: merchant.id },
+          metadata: {
+            user_id: customerId,
+            merchant_id: merchant.id,
+            platform_fee_type: 'merchant_sale',
+            platform_fee_percent: 1,
+            platform_fee: saleFee,
+            customer_fee: customerFee,
+          },
           processed_at: new Date(),
         },
       });
@@ -351,12 +364,22 @@ export class QrService {
       });
       const updatedMerchantWallet = await tx.wallets.update({
         where: { id: merchantWallet.id },
-        data: { balance: { increment: dto.amount } },
+        data: { balance: { increment: merchantNet } },
       });
-      // Also credit the platform/main wallet so the application's
-      // aggregate/main balance reflects incoming merchant payments.
-      // We look for a dedicated platform wallet (wallet_type = 'platform')
-      // or fallback to any wallet with no owner (user_id = null) marked active.
+      const superadmin = await tx.users.findFirst({
+        where: { role: 'super_admin', is_deleted: false },
+        include: { wallets: { where: { is_active: true }, take: 1 } },
+      });
+      const superadminWallet = superadmin?.wallets[0];
+      if (!superadmin || !superadminWallet) {
+        throw new NotFoundException('Superadmin wallet not found');
+      }
+      const updatedSuperadminWallet = await tx.wallets.update({
+        where: { id: superadminWallet.id },
+        data: { balance: { increment: saleFee } },
+      });
+
+      // Preserve the existing customer-paid merchant surcharge separately.
       const platformWallet = await tx.wallets.findFirst({
         where: {
           OR: [
@@ -366,10 +389,9 @@ export class QrService {
         },
       });
       if (platformWallet) {
-        // Platform receives only the fee portion, not the full amount.
         await tx.wallets.update({
           where: { id: platformWallet.id },
-          data: { balance: { increment: fee } },
+          data: { balance: { increment: customerFee } },
         });
       }
       await tx.merchants.update({
@@ -400,18 +422,24 @@ export class QrService {
             transaction_id: txn.id,
             wallet_id: merchantWallet.id,
             entry_type: 'credit',
-            amount: dto.amount,
-            description: 'QR payment received',
+            amount: merchantNet,
+            description: 'QR payment received after 1% platform sales fee',
           },
-          // ledger entry for platform/main wallet credit (if present)
+          {
+            transaction_id: txn.id,
+            wallet_id: superadminWallet.id,
+            entry_type: 'credit',
+            amount: saleFee,
+            description: '1% platform fee from merchant QR sale',
+          },
           ...(platformWallet
             ? [
                 {
                   transaction_id: txn.id,
                   wallet_id: platformWallet.id,
                   entry_type: 'credit',
-                  amount: fee,
-                  description: 'Platform fee from merchant QR payment',
+                  amount: customerFee,
+                  description: 'Customer-paid merchant QR surcharge',
                 },
               ]
             : []),
@@ -421,6 +449,10 @@ export class QrService {
         transaction: txn,
         customerBalance: Number(updatedCustomerWallet.balance),
         merchantBalance: Number(updatedMerchantWallet.balance),
+        superadminId: superadmin.id,
+        superadminBalance: Number(updatedSuperadminWallet.balance),
+        merchantNet,
+        saleFee,
       };
     });
 
@@ -440,6 +472,14 @@ export class QrService {
           status: 'SUCCESS',
         });
       }
+      this.websocket.emitBalanceUpdate(
+        result.superadminId,
+        result.superadminBalance,
+      );
+      this.websocket.emitTransactionUpdate(result.superadminId, {
+        reference: result.transaction.transaction_reference,
+        status: 'SUCCESS',
+      });
     } catch (error) {
       this.logger.warn(
         `Merchant payment realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -452,6 +492,21 @@ export class QrService {
     });
     const payerName =
       customer?.username != null ? `@${customer.username}` : 'A customer';
+
+    if (this.cache) {
+      try {
+        await Promise.all([
+          this.cache.invalidateWallet(customerId),
+          this.cache.invalidateWallet(merchant.user_id),
+          this.cache.invalidateWallet(result.superadminId),
+          this.cache.cacheDelete('admin:superadmin-dashboard'),
+        ]);
+      } catch (error) {
+        this.logger.error(
+          `Merchant payment cache invalidation failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
 
     await Promise.all([
       this.notificationsService.sendNotification(customerId, {
@@ -471,12 +526,14 @@ export class QrService {
             type: 'merchant',
             entityId: result.transaction.transaction_reference,
             title: 'Merchant payment received',
-            body: `You received ${dto.amount} FARM from ${payerName}.`,
+            body: `You received ${result.merchantNet} FARM after the 1% sales fee from ${payerName}.`,
             metadata: {
               merchant_id: merchant.id,
               customer_id: customerId,
               customer_username: customer?.username,
               amount: dto.amount,
+              fee: result.saleFee,
+              net_amount: result.merchantNet,
               event: 'merchant_payment_received',
             },
           })
@@ -489,7 +546,9 @@ export class QrService {
       data: {
         reference: result.transaction.transaction_reference,
         amount: dto.amount,
-        fee,
+        fee: customerFee,
+        platform_fee: result.saleFee,
+        merchant_net: result.merchantNet,
         status: 'completed',
       },
       message: `Payment to ${merchant.business_name} successful`,

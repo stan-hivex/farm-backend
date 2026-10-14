@@ -9,7 +9,10 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
-import { PaystackService } from '../paystack/paystack.service';
+import {
+  PaystackService,
+  PaystackTransferInitiationError,
+} from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { v4 as uuidv4 } from 'uuid';
@@ -18,6 +21,13 @@ import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+
+const ORIGINAL_WITHDRAWAL_MINIMUMS = {
+  BANK_TRANSFER: 4999,
+  MOBILE_MONEY: 1499,
+  CRYPTO: 100,
+} as const;
+const TEMPORARY_WITHDRAWAL_MINIMUM: number | null = 10;
 
 @Injectable()
 export class WithdrawService {
@@ -66,22 +76,37 @@ export class WithdrawService {
     const normalizedNetwork = dto.network?.trim();
     const method = dto.method;
     if (method === 'BANK_TRANSFER') {
-      if (amount < 4999) {
-        throw new BadRequestException('Minimum withdrawal amount for bank transfer is 4,999 FARM');
+      const minimum =
+        TEMPORARY_WITHDRAWAL_MINIMUM ??
+        ORIGINAL_WITHDRAWAL_MINIMUMS.BANK_TRANSFER;
+      if (amount < minimum) {
+        throw new BadRequestException(
+          `Minimum withdrawal amount for bank transfer is ${minimum} FARM`,
+        );
       }
       if (amount > 999999) {
         throw new BadRequestException('Maximum withdrawal amount for bank transfer is 999,999 FARM');
       }
     } else if (method === 'MOBILE_MONEY') {
-      if (amount < 1499) {
-        throw new BadRequestException('Minimum withdrawal amount for mobile money is 1,499 FARM');
+      const minimum =
+        TEMPORARY_WITHDRAWAL_MINIMUM ??
+        ORIGINAL_WITHDRAWAL_MINIMUMS.MOBILE_MONEY;
+      if (amount < minimum) {
+        throw new BadRequestException(
+          `Minimum withdrawal amount for mobile money is ${minimum} FARM`,
+        );
       }
       if (amount > 249999) {
         throw new BadRequestException('Maximum withdrawal amount for mobile money is 249,999 FARM');
       }
     } else if (method === 'CRYPTO') {
-      if (amount < 100) {
-        throw new BadRequestException('Minimum withdrawal amount for crypto is 100 FARM');
+      const minimum =
+        TEMPORARY_WITHDRAWAL_MINIMUM ??
+        ORIGINAL_WITHDRAWAL_MINIMUMS.CRYPTO;
+      if (amount < minimum) {
+        throw new BadRequestException(
+          `Minimum withdrawal amount for crypto is ${minimum} FARM`,
+        );
       }
     }
 
@@ -576,14 +601,60 @@ export class WithdrawService {
       statusResult.paystack_transfer_code = metadata.paystack_transfer_code;
       statusResult.paystack_transfer_status = metadata.paystack_transfer_status;
       statusResult.paystack_failure_reason = metadata.paystack_failure_reason;
-      if (metadata.paystack_transfer_code) {
+      const isAwaitingProvider =
+        ['PENDING', 'PROCESSING'].includes(
+          String(withdrawal.status).toUpperCase(),
+        );
+      if (metadata.paystack_transfer_code || isAwaitingProvider) {
         try {
-          const transferStatus = await this.paystack.getTransferStatus(metadata.paystack_transfer_code);
+          const transferStatus = metadata.paystack_transfer_code
+            ? await this.paystack.getTransferStatus(
+                metadata.paystack_transfer_code,
+              )
+            : await this.paystack.getTransferByReference(reference);
           statusResult.paystack_transfer_details = transferStatus;
-          statusResult.paystack_transfer_status = transferStatus.status || statusResult.paystack_transfer_status;
+          statusResult.paystack_transfer_status =
+            transferStatus.status || statusResult.paystack_transfer_status;
+
+          if (
+            transferStatus.reference !== reference &&
+            isAwaitingProvider
+          ) {
+            throw new BadRequestException(
+              'Paystack transfer reference did not match the withdrawal',
+            );
+          }
+
+          const providerStatus = String(
+            transferStatus.status ?? '',
+          ).toLowerCase();
+          if (isAwaitingProvider && providerStatus === 'success') {
+            await this.markAsSuccess(reference);
+          } else if (
+            isAwaitingProvider &&
+            ['failed', 'reversed'].includes(providerStatus)
+          ) {
+            await this.rejectWithdrawal(
+              reference,
+              transferStatus.reason ||
+                transferStatus.failure_reason ||
+                `Paystack transfer ${providerStatus}`,
+            );
+          }
         } catch (e: any) {
-          statusResult.paystack_transfer_status_error = e.message || 'Unable to query paystack transfer status';
+          statusResult.paystack_transfer_status_error =
+            e.message || 'Unable to query Paystack transfer status';
         }
+      }
+    }
+
+    if (['PENDING', 'PROCESSING'].includes(String(withdrawal.status).toUpperCase())) {
+      const latest = await this.prisma.withdrawal.findFirst({
+        where: { reference, userId },
+      });
+      if (latest) {
+        statusResult.withdrawal_status = latest.status;
+        statusResult.rejection_reason = latest.rejectionReason;
       }
     }
 
@@ -689,6 +760,41 @@ export class WithdrawService {
       }
       // Do NOT mark success here – wait for webhook or provider callback
     } catch (e: any) {
+      if (
+        e instanceof PaystackTransferInitiationError &&
+        e.outcome === 'unknown'
+      ) {
+        this.logger.error(
+          `Paystack transfer outcome is unknown for ${reference}; retaining reserved funds for reconciliation: ${e.message}`,
+        );
+        try {
+          const pendingTransaction =
+            await this.prisma.transactions.findUnique({
+              where: { transaction_reference: reference },
+            });
+          if (pendingTransaction) {
+            const pendingMetadata =
+              (pendingTransaction.metadata as Record<string, unknown>) ?? {};
+            await this.prisma.transactions.update({
+              where: { id: pendingTransaction.id },
+              data: {
+                metadata: {
+                  ...pendingMetadata,
+                  paystack_transfer_status: 'unknown',
+                  paystack_transfer_outcome_unknown_at:
+                    new Date().toISOString(),
+                  paystack_transfer_outcome_unknown_reason: e.message,
+                },
+              },
+            });
+          }
+        } catch (metadataError: any) {
+          this.logger.error(
+            `Could not save unknown Paystack transfer outcome for ${reference}: ${metadataError?.message ?? metadataError}`,
+          );
+        }
+        return;
+      }
       await this.rejectWithdrawal(reference, e.message || 'Withdrawal transfer failed');
     }
   }

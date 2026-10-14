@@ -2,6 +2,42 @@ import { NotFoundException } from '@nestjs/common';
 import { ReceiptsService } from './receipts.service';
 
 describe('ReceiptsService merchant ownership', () => {
+  it('stores the merchant sales fee on the generated receipt', async () => {
+    const receipt = { id: 'receipt-1' };
+    const tx = {
+      payment_receipts: {
+        create: jest.fn().mockResolvedValue(receipt),
+      },
+    };
+    const service = new ReceiptsService(
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const createdAt = new Date('2026-10-13T10:00:00Z');
+
+    await expect(
+      service.createForTransaction(
+        tx as any,
+        'transaction-1',
+        'merchant-1',
+        100,
+        createdAt,
+        1,
+      ),
+    ).resolves.toBe(receipt);
+    expect(tx.payment_receipts.create).toHaveBeenCalledWith({
+      data: {
+        receipt_number: 'FARM-2026-TRANSACTION-1',
+        transaction_id: 'transaction-1',
+        merchant_id: 'merchant-1',
+        amount: 100,
+        fee: 1,
+        created_at: createdAt,
+      },
+    });
+  });
+
   it('lists only receipts belonging to the authenticated user merchant', async () => {
     const prisma = {
       merchants: {

@@ -311,7 +311,7 @@ describe('AdminService admin management', () => {
       {} as any,
     );
 
-    await service.getSuperadminDashboard();
+    const result = await service.getSuperadminDashboard();
 
     expect(prisma.users.count).toHaveBeenCalledWith({
       where: {
@@ -319,6 +319,25 @@ describe('AdminService admin management', () => {
         OR: [{ role: { notIn: ['admin', 'super_admin'] } }, { role: null }],
       },
     });
+    expect(prisma.transactions.aggregate).toHaveBeenCalledWith({
+      where: {
+        transaction_type: 'merchant_payment',
+        status: 'completed',
+        fee: { gt: 0 },
+        metadata: {
+          path: ['platform_fee_type'],
+          equals: 'merchant_sale',
+        },
+      },
+      _sum: { fee: true },
+      _count: { id: true },
+    });
+    expect(result.data).toEqual(
+      expect.objectContaining({
+        merchant_sales_fee_earnings: 0,
+        merchant_sales_count: 0,
+      }),
+    );
   });
 });
 

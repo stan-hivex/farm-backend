@@ -2,6 +2,16 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
+export class PaystackTransferInitiationError extends Error {
+  constructor(
+    message: string,
+    readonly outcome: 'rejected' | 'unknown',
+  ) {
+    super(message);
+    this.name = PaystackTransferInitiationError.name;
+  }
+}
+
 @Injectable()
 export class PaystackService {
   private readonly logger = new Logger(PaystackService.name);
@@ -416,7 +426,10 @@ export class PaystackService {
       );
 
       if (!response.data.status) {
-        throw new BadRequestException('Failed to initiate transfer');
+        throw new PaystackTransferInitiationError(
+          response.data.message || 'Paystack rejected the transfer',
+          'rejected',
+        );
       }
 
       this.logger.debug(
@@ -424,15 +437,31 @@ export class PaystackService {
       );
       return response.data;
     } catch (e: any) {
-      this.logger.error(`Paystack transfer error: ${e.response?.data?.message || e.message}`);
-      throw new BadRequestException(`Paystack transfer failed: ${e.response?.data?.message || e.message}`);
+      if (e instanceof PaystackTransferInitiationError) throw e;
+
+      const apiMessage = e.response?.data?.message || e.message;
+      const statusCode = Number(e.response?.status);
+      const duplicateReference =
+        /reference.{0,30}(already|exist|used|duplicate)|(already|duplicate).{0,30}reference/i.test(
+          String(apiMessage),
+        );
+      const outcome =
+        !e.response || statusCode >= 500 || statusCode === 409 || duplicateReference
+          ? 'unknown'
+          : 'rejected';
+      this.logger.error(
+        `Paystack transfer error: outcome=${outcome} status=${statusCode || 'no response'} message=${apiMessage}`,
+      );
+      throw new PaystackTransferInitiationError(
+        `Paystack transfer ${outcome === 'unknown' ? 'outcome is unknown' : 'failed'}: ${apiMessage}`,
+        outcome,
+      );
     }
   }
 
   async getTransferStatus(transferCode: string) {
     if (!this.secretKey) {
-      this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock transfer status');
-      return { transfer_code: transferCode, status: 'success' };
+      throw new BadRequestException('Paystack payouts are not configured');
     }
 
     try {
@@ -449,6 +478,35 @@ export class PaystackService {
     } catch (e: any) {
       this.logger.error(`Paystack transfer status error: ${e.response?.data?.message || e.message}`);
       throw new BadRequestException(`Paystack transfer status lookup failed: ${e.response?.data?.message || e.message}`);
+    }
+  }
+
+  async getTransferByReference(reference: string) {
+    if (!this.secretKey) {
+      throw new BadRequestException('Paystack payouts are not configured');
+    }
+
+    try {
+      const response = await axios.get(
+        `${this.paystackBaseUrl}/transfer/verify/${encodeURIComponent(reference)}`,
+        {
+          headers: { Authorization: 'Bearer ' + this.secretKey },
+        },
+      );
+      if (!response.data?.status || !response.data?.data) {
+        throw new BadRequestException(
+          'Paystack did not return a transfer for this reference',
+        );
+      }
+      return response.data.data;
+    } catch (e: any) {
+      this.logger.error(
+        `Paystack transfer reference lookup error: ${e.response?.data?.message || e.message}`,
+      );
+      if (e instanceof BadRequestException) throw e;
+      throw new BadRequestException(
+        `Paystack transfer reference lookup failed: ${e.response?.data?.message || e.message}`,
+      );
     }
   }
 }

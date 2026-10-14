@@ -1,3 +1,7 @@
+jest.mock('../paystack/paystack.service', () => ({
+  PaystackService: class PaystackService {},
+}));
+
 import { QrPaymentsService } from './qr-payments.service';
 
 describe('QrPaymentsService checkout initialization', () => {
@@ -147,6 +151,43 @@ describe('QrPaymentsService checkout initialization', () => {
     );
   });
 
+  it('persists IvoryPay identifiers so provider callback references can be resolved', async () => {
+    const { service, ivorypay, prisma } = createService();
+    ivorypay.createPayment.mockResolvedValue({
+      payment_link: 'https://checkout.ivorypay.io/reference',
+      providerReference: 'provider-reference',
+      providerTransactionId: 'transaction-id',
+      providerIdentifiers: {
+        transaction_id: 'transaction-id',
+        payment_id: 'payment-id',
+        checkout_id: 'checkout-id',
+        provider_reference: 'provider-reference',
+        payment_reference: 'payment-reference',
+      },
+    });
+
+    await service.initialize({
+      merchantId: merchant.id,
+      amount: 100,
+      method: 'crypto',
+      guestEmail: 'customer@example.com',
+    });
+
+    expect(prisma.transactions.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          metadata: expect.objectContaining({
+            provider_transaction_id: 'transaction-id',
+            provider_payment_id: 'payment-id',
+            provider_checkout_id: 'checkout-id',
+            provider_reference: 'provider-reference',
+            payment_reference: 'payment-reference',
+          }),
+        },
+      }),
+    );
+  });
+
   it('chooses an active IvoryPay token and network when none are supplied', async () => {
     const { service, ivorypay } = createService();
 
@@ -189,9 +230,159 @@ describe('QrPaymentsService checkout initialization', () => {
 describe('QrPaymentsService settlement', () => {
   const reference = 'QR-123-payment';
 
+  it('resolves IvoryPay callback IDs and verifies against the internal transaction', async () => {
+    const internalReference = 'internal-ivory-reference';
+    const payment = {
+      id: 'transaction-1',
+      transaction_reference: internalReference,
+      status: 'pending',
+      metadata: {
+        type: 'qr_sale',
+        isQrSale: true,
+        provider: 'ivorypay',
+        provider_ref: 'provider-transaction-id',
+        provider_checkout_id: 'provider-checkout-id',
+        amount_fiat: 100,
+        amount_usd: 1,
+      },
+    };
+    const prisma: any = {
+      transactions: {
+        findFirst: jest.fn().mockResolvedValue(payment),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'transaction-1',
+          status: 'completed',
+        }),
+      },
+      qr_payments: {
+        findFirst: jest.fn().mockResolvedValue({ merchant_id: 'merchant-1' }),
+      },
+      merchants: {
+        findUnique: jest.fn().mockResolvedValue({ business_name: 'Farm Shop' }),
+      },
+    };
+    const ivorypay = {
+      verifyTransaction: jest.fn().mockResolvedValue({
+        status: 'COMPLETED',
+        amount: 1,
+        currency: 'USD',
+      }),
+    };
+    const service = new QrPaymentsService(
+      prisma,
+      {} as any,
+      ivorypay as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const complete = jest.spyOn(service, 'complete').mockResolvedValue(true);
+
+    await expect(service.verify('provider-checkout-id')).resolves.toEqual({
+      data: {
+        status: 'completed',
+        business_name: 'Farm Shop',
+        amount: 100,
+        currency: 'KES',
+      },
+    });
+    expect(prisma.transactions.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            expect.objectContaining({
+              OR: expect.arrayContaining([
+                expect.objectContaining({
+                  metadata: {
+                    path: ['provider_checkout_id'],
+                    equals: 'provider-checkout-id',
+                  },
+                }),
+              ]),
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(ivorypay.verifyTransaction).toHaveBeenCalledWith(
+      internalReference,
+      'provider-transaction-id',
+      expect.arrayContaining([
+        'provider-transaction-id',
+        'provider-checkout-id',
+      ]),
+    );
+    expect(complete).toHaveBeenCalledWith(
+      internalReference,
+      'ivorypay',
+      expect.objectContaining({ status: 'COMPLETED' }),
+    );
+  });
+
+  it('recovers a failed but unsettled crypto payment after IvoryPay confirms success', async () => {
+    const internalReference = 'failed-ivory-reference';
+    const payment = {
+      id: 'transaction-2',
+      transaction_reference: internalReference,
+      status: 'failed',
+      metadata: {
+        type: 'qr_sale',
+        isQrSale: true,
+        provider: 'ivorypay',
+        provider_ref: 'provider-transaction-id',
+        amount_fiat: 100,
+        amount_usd: 1,
+      },
+    };
+    const prisma: any = {
+      transactions: {
+        findFirst: jest.fn().mockResolvedValue(payment),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'transaction-2',
+          status: 'completed',
+        }),
+      },
+      qr_payments: {
+        findFirst: jest.fn().mockResolvedValue({ merchant_id: 'merchant-1' }),
+      },
+      merchants: {
+        findUnique: jest.fn().mockResolvedValue({ business_name: 'Farm Shop' }),
+      },
+    };
+    const ivorypay = {
+      verifyTransaction: jest.fn().mockResolvedValue({
+        status: 'SUCCESS',
+        amount: 1,
+        currency: 'USD',
+      }),
+    };
+    const service = new QrPaymentsService(
+      prisma,
+      {} as any,
+      ivorypay as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const complete = jest.spyOn(service, 'complete').mockResolvedValue(true);
+
+    await service.verify('provider-transaction-id');
+
+    expect(complete).toHaveBeenCalledWith(
+      internalReference,
+      'ivorypay',
+      expect.objectContaining({ status: 'SUCCESS' }),
+    );
+  });
+
   it('settles successful Paystack verification and reports completed status', async () => {
     const pendingTransaction = {
       id: 'transaction-1',
+      transaction_reference: reference,
       status: 'pending',
       metadata: {
         type: 'qr_sale',
@@ -203,13 +394,11 @@ describe('QrPaymentsService settlement', () => {
     };
     const prisma: any = {
       transactions: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValueOnce(pendingTransaction)
-          .mockResolvedValueOnce({
-            id: 'transaction-1',
-            status: 'completed',
-          }),
+        findFirst: jest.fn().mockResolvedValue(pendingTransaction),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'transaction-1',
+          status: 'completed',
+        }),
       },
       qr_payments: {
         findFirst: jest.fn().mockResolvedValue({ merchant_id: 'merchant-1' }),
@@ -311,22 +500,33 @@ describe('QrPaymentsService settlement', () => {
     const tx = {
       transactions: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       wallets: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'wallet-1',
-          user_id: 'owner-1',
-          balance: 12.5,
-        }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({
+            id: 'wallet-1',
+            user_id: 'owner-1',
+            balance: 12.5,
+          }),
         update: jest.fn().mockResolvedValue({ balance: 20 }),
       },
       ledger_entries: { create: jest.fn().mockResolvedValue({}) },
       qr_payments: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       merchants: { update: jest.fn().mockResolvedValue({}) },
+      users: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'superadmin-1',
+          wallets: [{ id: 'superadmin-wallet-1', balance: 100 }],
+        }),
+      },
     };
     const prisma: any = {
       transactions: { findUnique: jest.fn().mockResolvedValue(transaction) },
       $transaction: jest.fn((callback) => callback(tx)),
     };
-    const cache = { invalidateWallet: jest.fn().mockResolvedValue(undefined) };
+    const cache = {
+      invalidateWallet: jest.fn().mockResolvedValue(undefined),
+      cacheDelete: jest.fn().mockResolvedValue(undefined),
+    };
     const websocket = {
       emitBalanceUpdate: jest.fn(),
       emitTransactionUpdate: jest.fn(),
@@ -365,13 +565,27 @@ describe('QrPaymentsService settlement', () => {
 
     expect(settled).toBe(true);
     expect(duplicate).toBe(false);
-    expect(tx.wallets.update).toHaveBeenCalledTimes(1);
+    expect(tx.wallets.update).toHaveBeenCalledTimes(2);
     expect(tx.wallets.update).toHaveBeenCalledWith({
       where: { id: 'wallet-1' },
-      data: { balance: { increment: 7.5 } },
+      data: { balance: { increment: 7.425 } },
       select: { balance: true },
     });
-    expect(tx.ledger_entries.create).toHaveBeenCalledTimes(1);
+    expect(tx.wallets.update).toHaveBeenCalledWith({
+      where: { id: 'superadmin-wallet-1' },
+      data: { balance: { increment: 0.075 } },
+      select: { balance: true },
+    });
+    expect(tx.transactions.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'completed',
+          fee: 0.075,
+          net_amount: 7.425,
+        }),
+      }),
+    );
+    expect(tx.ledger_entries.create).toHaveBeenCalledTimes(2);
     expect(tx.merchants.update).toHaveBeenCalledTimes(1);
     expect(receipts.createForTransaction).toHaveBeenCalledWith(
       tx,
@@ -379,9 +593,14 @@ describe('QrPaymentsService settlement', () => {
       'merchant-1',
       7.5,
       expect.any(Date),
+      0.075,
     );
     expect(receipts.enqueuePdfAndEmail).toHaveBeenCalledWith('receipt-1');
     expect(cache.invalidateWallet).toHaveBeenCalledWith('owner-1');
+    expect(cache.invalidateWallet).toHaveBeenCalledWith('superadmin-1');
+    expect(cache.cacheDelete).toHaveBeenCalledWith(
+      'admin:superadmin-dashboard',
+    );
     expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('owner-1', 20);
     expect(
       websocket.emitBalanceUpdate.mock.invocationCallOrder[0],

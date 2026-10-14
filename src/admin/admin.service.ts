@@ -1901,7 +1901,11 @@ export class AdminService {
       },
     });
     // Compute escrow fee aggregates: creation (escrow_lock) and release (escrow_release)
-    const [escrowCreationAgg, escrowReleaseAgg] = await Promise.all([
+    const [
+      escrowCreationAgg,
+      escrowReleaseAgg,
+      merchantSalesFeeAgg,
+    ] = await Promise.all([
       this.prisma.transactions.aggregate({
         where: { transaction_type: 'escrow_lock', status: 'completed' },
         _sum: { fee: true },
@@ -1909,6 +1913,19 @@ export class AdminService {
       }),
       this.prisma.transactions.aggregate({
         where: { transaction_type: 'escrow_release', status: 'completed' },
+        _sum: { fee: true },
+        _count: { id: true },
+      }),
+      this.prisma.transactions.aggregate({
+        where: {
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          fee: { gt: 0 },
+          metadata: {
+            path: ['platform_fee_type'],
+            equals: 'merchant_sale',
+          },
+        },
         _sum: { fee: true },
         _count: { id: true },
       }),
@@ -1927,8 +1944,13 @@ export class AdminService {
       _count: { id: true },
     });
     const withdrawal_total_earnings = Number(withdrawalAgg._sum.fee ?? 0);
+    const merchant_sales_fee_earnings = Number(
+      merchantSalesFeeAgg._sum.fee ?? 0,
+    );
     const total_platform_fee_earnings = Number(
-      escrow_total_earnings + withdrawal_total_earnings,
+      escrow_total_earnings +
+        withdrawal_total_earnings +
+        merchant_sales_fee_earnings,
     );
 
     return {
@@ -1951,6 +1973,8 @@ export class AdminService {
         escrow_total_earnings,
         withdrawal_total_earnings,
         withdraw_fee_earnings: withdrawal_total_earnings,
+        merchant_sales_fee_earnings,
+        merchant_sales_count: merchantSalesFeeAgg._count.id ?? 0,
         withdraw_transaction_count: withdrawalAgg._count.id ?? 0,
         platform_fee_total_earnings: total_platform_fee_earnings,
         escrow_creation_earnings,
@@ -2060,7 +2084,12 @@ export class AdminService {
       _sum: { settlement: true },
     });
 
-    const [creationFees, releaseFees, withdrawalFees] = await Promise.all([
+    const [
+      creationFees,
+      releaseFees,
+      withdrawalFees,
+      merchantSalesFees,
+    ] = await Promise.all([
       this.prisma.transactions.aggregate({
         where: {
           transaction_type: 'escrow_lock',
@@ -2088,13 +2117,30 @@ export class AdminService {
         _sum: { fee: true },
         _count: { id: true },
       }),
+      this.prisma.transactions.aggregate({
+        where: {
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          fee: { gt: 0 },
+          metadata: {
+            path: ['platform_fee_type'],
+            equals: 'merchant_sale',
+          },
+        },
+        _sum: { fee: true },
+        _count: { id: true },
+      }),
     ]);
 
     const escrowCreationRevenue = Number(creationFees._sum.fee ?? 0);
     const escrowReleaseRevenue = Number(releaseFees._sum.fee ?? 0);
     const withdrawalRevenue = Number(withdrawalFees._sum.fee ?? 0);
+    const merchantSalesRevenue = Number(merchantSalesFees._sum.fee ?? 0);
     const totalPlatformRevenue =
-      escrowCreationRevenue + escrowReleaseRevenue + withdrawalRevenue;
+      escrowCreationRevenue +
+      escrowReleaseRevenue +
+      withdrawalRevenue +
+      merchantSalesRevenue;
 
     const availableBalance = Math.max(
       0,
@@ -2112,10 +2158,12 @@ export class AdminService {
         escrow_creation_revenue: escrowCreationRevenue,
         escrow_release_revenue: escrowReleaseRevenue,
         withdrawal_revenue: withdrawalRevenue,
+        merchant_sales_revenue: merchantSalesRevenue,
         total_platform_revenue: totalPlatformRevenue,
         escrow_creation_count: creationFees._count.id ?? 0,
         escrow_release_count: releaseFees._count.id ?? 0,
         withdrawal_fee_count: withdrawalFees._count.id ?? 0,
+        merchant_sales_count: merchantSalesFees._count.id ?? 0,
         currency: currentWallet.currency ?? 'FARM',
         wallet_address: currentWallet.wallet_address,
       },

@@ -29,6 +29,7 @@ export class ReceiptsService {
     merchantId: string,
     amount: Prisma.Decimal | number,
     createdAt = new Date(),
+    fee: Prisma.Decimal | number = 0,
   ): Promise<payment_receipts> {
     const receiptNumber =
       `FARM-${createdAt.getUTCFullYear()}-${transactionId.toUpperCase()}`;
@@ -38,7 +39,7 @@ export class ReceiptsService {
         transaction_id: transactionId,
         merchant_id: merchantId,
         amount,
-        fee: 0,
+        fee,
         created_at: createdAt,
       },
     });

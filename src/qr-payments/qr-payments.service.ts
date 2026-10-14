@@ -199,6 +199,8 @@ export class QrPaymentsService {
       payment_method: dto.method,
       guest_email: email,
       guest_phone: dto.guestPhone ?? null,
+      platform_fee_type: 'merchant_sale',
+      platform_fee_percent: 1,
       ...(amountUsd !== undefined ? { amount_usd: amountUsd } : {}),
       ...(crypto ? { crypto } : {}),
       ...(chain ? { chain } : {}),
@@ -237,6 +239,9 @@ export class QrPaymentsService {
       const callbackUrl = `${DEFAULT_PUBLIC_PAY_SUCCESS_URL}?reference=${encodeURIComponent(reference)}`;
       let paymentUrl: string | undefined;
       let providerReference = reference;
+      const providerMetadata: Record<string, string> = {
+        provider_ref: reference,
+      };
 
       if (provider === 'paystack') {
         const channels =
@@ -288,6 +293,28 @@ export class QrPaymentsService {
           initialized.providerTransactionId ??
           initialized.providerReference ??
           reference;
+        providerMetadata.provider_ref = providerReference;
+        const identifierMetadataKeys: Record<string, string> = {
+          transaction_id: 'provider_transaction_id',
+          payment_id: 'provider_payment_id',
+          checkout_id: 'provider_checkout_id',
+          provider_reference: 'provider_reference',
+          merchant_reference: 'provider_merchant_reference',
+          invoice_id: 'provider_invoice_id',
+          tx_ref: 'provider_tx_ref',
+          trxref: 'provider_trxref',
+          transaction_reference: 'provider_transaction_reference',
+          payment_reference: 'payment_reference',
+          id: 'provider_id',
+        };
+        for (const [identifierKey, metadataKey] of Object.entries(
+          identifierMetadataKeys,
+        )) {
+          const identifier = initialized.providerIdentifiers?.[identifierKey];
+          if (typeof identifier === 'string' && identifier.trim()) {
+            providerMetadata[metadataKey] = identifier.trim();
+          }
+        }
       }
 
       if (!paymentUrl || !/^https:\/\//i.test(paymentUrl)) {
@@ -301,10 +328,7 @@ export class QrPaymentsService {
         data: {
           metadata: {
             ...metadata,
-            provider_ref: providerReference,
-            ...(provider === 'ivorypay'
-              ? { provider_reference: providerReference }
-              : {}),
+            ...providerMetadata,
           } as Prisma.InputJsonObject,
         },
       });
@@ -330,10 +354,7 @@ export class QrPaymentsService {
   }
 
   async verify(reference: string) {
-    const transaction = await this.prisma.transactions.findUnique({
-      where: { transaction_reference: reference },
-      include: { qr_payments: { take: 1 } },
-    });
+    const transaction = await this.findQrTransaction(reference);
     const metadata =
       (transaction?.metadata as Record<string, unknown> | null) ?? {};
     if (
@@ -344,38 +365,76 @@ export class QrPaymentsService {
       throw new NotFoundException('Merchant QR payment was not found');
     }
 
-    if (transaction.status === 'pending') {
-      const provider = metadata.provider as QrProvider | undefined;
+    const provider = metadata.provider as QrProvider | undefined;
+    const canVerify =
+      transaction.status === 'pending' ||
+      (provider === 'ivorypay' && transaction.status === 'failed');
+    if (canVerify) {
+      const internalReference = transaction.transaction_reference;
       if (provider === 'paystack') {
-        const verified = await this.paystack.verifyTransaction(reference);
+        const verified =
+          await this.paystack.verifyTransaction(internalReference);
         if (verified?.status?.toString().toLowerCase() === 'success') {
-          await this.complete(reference, 'paystack', verified);
+          await this.complete(internalReference, 'paystack', verified);
         } else if (
           ['failed', 'abandoned', 'reversed'].includes(
             verified?.status?.toString().toLowerCase() ?? '',
           )
         ) {
-          await this.markFailed(reference, 'Payment provider reported failure');
+          await this.markFailed(
+            internalReference,
+            'Payment provider reported failure',
+          );
         }
       } else if (provider === 'ivorypay') {
-        const verified = await this.ivorypay.verifyTransaction(
+        const providerReferences = [
+          metadata.provider_ref,
+          metadata.provider_reference,
+          metadata.provider_transaction_id,
+          metadata.provider_checkout_id,
+          metadata.provider_payment_id,
+          metadata.payment_reference,
+          metadata.provider_id,
+          metadata.provider_merchant_reference,
+          metadata.provider_invoice_id,
+          metadata.provider_tx_ref,
+          metadata.provider_trxref,
+          metadata.provider_transaction_reference,
           reference,
+        ]
+          .filter(
+            (value): value is string =>
+              typeof value === 'string' && value.trim().length > 0,
+          )
+          .map((value) => value.trim());
+        const verified = await this.ivorypay.verifyTransaction(
+          internalReference,
           String(metadata.provider_ref ?? ''),
-          [reference],
+          providerReferences,
         );
-        const status = verified?.status?.toString().toLowerCase();
+        const verifiedData = verified?.data ?? verified;
+        const status = (
+          verifiedData?.status ??
+          verified?.status ??
+          ''
+        )
+          .toString()
+          .toLowerCase();
         if (['success', 'completed'].includes(status ?? '')) {
-          await this.complete(reference, 'ivorypay', verified);
+          await this.complete(internalReference, 'ivorypay', verifiedData);
         } else if (
           ['failed', 'cancelled', 'expired', 'reversed'].includes(status ?? '')
         ) {
-          await this.markFailed(reference, 'Payment provider reported failure');
+          await this.markFailed(
+            internalReference,
+            'Payment provider reported failure',
+          );
         }
       }
     }
 
     const current = await this.prisma.transactions.findUnique({
-      where: { transaction_reference: reference },
+      where: { transaction_reference: transaction.transaction_reference },
       select: { id: true, status: true },
     });
     const qrPayment = current
@@ -405,6 +464,42 @@ export class QrPaymentsService {
         currency: 'KES',
       },
     };
+  }
+
+  private findQrTransaction(reference: string) {
+    return this.prisma.transactions.findFirst({
+      where: {
+        AND: [
+          { metadata: { path: ['type'], equals: 'qr_sale' } },
+          { metadata: { path: ['isQrSale'], equals: true } },
+          {
+            OR: [
+              { transaction_reference: reference },
+              ...[
+                'provider_ref',
+                'provider_reference',
+                'provider_transaction_id',
+                'provider_checkout_id',
+                'provider_payment_id',
+                'payment_reference',
+                'provider_id',
+                'provider_merchant_reference',
+                'provider_invoice_id',
+                'provider_tx_ref',
+                'provider_trxref',
+                'provider_transaction_reference',
+              ].map((key) => ({
+                metadata: {
+                  path: [key],
+                  equals: reference,
+                },
+              })),
+            ],
+          },
+        ],
+      },
+      include: { qr_payments: { take: 1 } },
+    });
   }
 
   async complete(
@@ -456,12 +551,14 @@ export class QrPaymentsService {
       );
       const expectedUsd = Number(metadata.amount_usd);
       if (
-        Number.isFinite(verifiedUsd) &&
-        Number.isFinite(expectedUsd) &&
+        !Number.isFinite(verifiedUsd) ||
+        !Number.isFinite(expectedUsd) ||
+        verifiedUsd <= 0 ||
+        expectedUsd <= 0 ||
         Math.abs(verifiedUsd - expectedUsd) > 0.5
       ) {
-        this.logger.error(
-          `IvoryPay QR amount mismatch ref=${reference} expected=${expectedUsd} received=${verifiedUsd}`,
+        this.logger.warn(
+          `IvoryPay QR amount could not be verified ref=${reference} expected=${expectedUsd} received=${verifiedUsd}`,
         );
         return false;
       }
@@ -479,9 +576,20 @@ export class QrPaymentsService {
 
     const settled = await this.prisma.$transaction(async (tx) => {
       const settledAt = new Date();
+      const amount = Number(transaction.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new BadRequestException('QR payment amount is invalid');
+      }
+      const saleFee = Number((amount * 0.01).toFixed(8));
+      const merchantNet = amount - saleFee;
       const claim = await tx.transactions.updateMany({
-        where: { id: transaction.id, status: 'pending' },
-        data: { status: 'completed', processed_at: settledAt },
+        where: { id: transaction.id, status: { in: ['pending', 'failed'] } },
+        data: {
+          status: 'completed',
+          processed_at: settledAt,
+          fee: saleFee,
+          net_amount: merchantNet,
+        },
       });
       if (claim.count !== 1) return null;
 
@@ -492,11 +600,10 @@ export class QrPaymentsService {
       if (!wallet?.user_id) {
         throw new BadRequestException('Merchant wallet is unavailable');
       }
-      const amount = Number(transaction.amount);
       const balanceBefore = Number(wallet.balance ?? 0);
       const updatedWallet = await tx.wallets.update({
         where: { id: wallet.id },
-        data: { balance: { increment: amount } },
+        data: { balance: { increment: merchantNet } },
         select: { balance: true },
       });
       await tx.ledger_entries.create({
@@ -504,17 +611,42 @@ export class QrPaymentsService {
           transaction_id: transaction.id,
           wallet_id: wallet.id,
           entry_type: 'credit',
-          amount,
+          amount: merchantNet,
           balance_before: balanceBefore,
           balance_after: Number(updatedWallet.balance),
-          description: 'Public QR merchant payment received',
+          description: 'Public QR payment after 1% platform sales fee',
+        },
+      });
+      const superadmin = await tx.users.findFirst({
+        where: { role: 'super_admin', is_deleted: false },
+        include: { wallets: { where: { is_active: true }, take: 1 } },
+      });
+      const superadminWallet = superadmin?.wallets[0];
+      if (!superadmin || !superadminWallet) {
+        throw new NotFoundException('Superadmin wallet not found');
+      }
+      const superadminBalanceBefore = Number(superadminWallet.balance ?? 0);
+      const updatedSuperadminWallet = await tx.wallets.update({
+        where: { id: superadminWallet.id },
+        data: { balance: { increment: saleFee } },
+        select: { balance: true },
+      });
+      await tx.ledger_entries.create({
+        data: {
+          transaction_id: transaction.id,
+          wallet_id: superadminWallet.id,
+          entry_type: 'credit',
+          amount: saleFee,
+          balance_before: superadminBalanceBefore,
+          balance_after: Number(updatedSuperadminWallet.balance),
+          description: '1% platform fee from public QR merchant sale',
         },
       });
       const completedPayment = await tx.qr_payments.updateMany({
         where: {
           transaction_id: transaction.id,
           merchant_id: merchantId,
-          status: 'pending',
+          status: { in: ['pending', 'failed'] },
         },
         data: { status: 'completed' },
       });
@@ -533,12 +665,17 @@ export class QrPaymentsService {
         merchantId,
         transaction.amount,
         settledAt,
+        saleFee,
       );
       return {
         userId: wallet.user_id,
         balance: Number(updatedWallet.balance),
         amount,
+        saleFee,
+        merchantNet,
         merchantId,
+        superadminId: superadmin.id,
+        superadminBalance: Number(updatedSuperadminWallet.balance),
         receiptId: receipt.id,
       };
     });
@@ -558,6 +695,14 @@ export class QrPaymentsService {
         reference,
         status: 'SUCCESS',
       });
+      this.websocket.emitBalanceUpdate(
+        settled.superadminId,
+        settled.superadminBalance,
+      );
+      this.websocket.emitTransactionUpdate(settled.superadminId, {
+        reference,
+        status: 'SUCCESS',
+      });
     } catch (error) {
       this.logger.error(
         `QR payment realtime update failed ref=${reference}`,
@@ -573,16 +718,27 @@ export class QrPaymentsService {
           error instanceof Error ? error.stack : String(error),
         );
       });
+    const superadminCacheInvalidation = Promise.all([
+      this.cache.invalidateWallet(settled.superadminId),
+      this.cache.cacheDelete('admin:superadmin-dashboard'),
+    ]).catch((error) => {
+      this.logger.error(
+        `QR payment superadmin cache invalidation failed ref=${reference}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    });
     const notificationDelivery = this.notifications
       .sendNotification(settled.userId, {
         type: 'merchant',
         entityId: reference,
         title: 'Merchant payment received',
-        body: `Your business received ${settled.amount} FARM from a QR payment.`,
+        body: `Your business received ${settled.merchantNet} FARM after the 1% sales fee from a QR payment.`,
         metadata: {
           event: 'merchant_payment_received',
           merchant_id: settled.merchantId,
           amount: settled.amount,
+          fee: settled.saleFee,
+          net_amount: settled.merchantNet,
           currency: 'FARM',
           reference,
         },
@@ -593,7 +749,11 @@ export class QrPaymentsService {
           error instanceof Error ? error.stack : String(error),
         );
       });
-    await Promise.all([cacheInvalidation, notificationDelivery]);
+    await Promise.all([
+      cacheInvalidation,
+      superadminCacheInvalidation,
+      notificationDelivery,
+    ]);
 
     this.logger.log(
       `QR payment credited ref=${reference} merchant=${settled.merchantId}`,
