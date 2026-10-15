@@ -102,16 +102,38 @@ export class MerchantCheckoutController {
       throw new BadRequestException('A valid payment reference is required');
     }
 
-    const transaction = await this.prisma.transactions.findUnique({
+    let transaction = await this.prisma.transactions.findUnique({
       where: { transaction_reference: reference },
       select: {
         id: true,
+        transaction_reference: true,
         status: true,
         amount: true,
         currency: true,
         metadata: true,
       },
     });
+    if (!transaction) {
+      const deposit = await this.prisma.deposit.findFirst({
+        where: {
+          OR: [{ providerRef: reference }, { providerReference: reference }],
+        },
+        select: { reference: true },
+      });
+      if (deposit) {
+        transaction = await this.prisma.transactions.findUnique({
+          where: { transaction_reference: deposit.reference },
+          select: {
+            id: true,
+            transaction_reference: true,
+            status: true,
+            amount: true,
+            currency: true,
+            metadata: true,
+          },
+        });
+      }
+    }
     const metadata =
       (transaction?.metadata as Record<string, unknown> | null) ?? {};
     if (!transaction || metadata.qr_guest_payment !== true) {
@@ -120,7 +142,9 @@ export class MerchantCheckoutController {
 
     if (transaction.status?.toLowerCase() === 'completed') {
       try {
-        await this.depositService.finalizeMerchantQrPayment(reference);
+        await this.depositService.finalizeMerchantQrPayment(
+          transaction.transaction_reference,
+        );
       } catch (error) {
         this.logger.error(
           `Could not finalize merchant QR record for ${reference}`,
@@ -188,6 +212,7 @@ export class MerchantCheckoutController {
         crypto: dto.crypto,
         chain: dto.chain,
         callbackUrl: MERCHANT_CHECKOUT_URL,
+        merchantQrCheckout: true,
       },
       { ip },
     );

@@ -119,6 +119,8 @@ describe('PaymentsService crypto deposits', () => {
       firstName: 'Test',
       lastName: 'Customer',
       crypto: 'USDC',
+      callbackUrl: 'https://farmapp-e2145.web.app/merchant-payment/',
+      merchantQrCheckout: true,
     });
 
     const paymentOptions = ivorypay.createPayment.mock.calls[0][0];
@@ -131,6 +133,13 @@ describe('PaymentsService crypto deposits', () => {
       baseFiat: 'USD',
     });
     expect(paymentOptions.amount).toBe(1);
+    const callback = new URL(paymentOptions.redirect_url);
+    expect(callback.searchParams.get('reference')).toBe(
+      paymentOptions.reference,
+    );
+    expect(callback.searchParams.get('farm_reference')).toBe(
+      paymentOptions.reference,
+    );
     expect(prisma.transactions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

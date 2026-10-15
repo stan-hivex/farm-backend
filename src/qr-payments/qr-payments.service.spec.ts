@@ -149,6 +149,15 @@ describe('QrPaymentsService checkout initialization', () => {
     expect(ivorypay.createPayment.mock.calls[0][0].reference).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
+    const callback = new URL(
+      ivorypay.createPayment.mock.calls[0][0].redirect_url,
+    );
+    expect(callback.searchParams.get('reference')).toBe(
+      ivorypay.createPayment.mock.calls[0][0].reference,
+    );
+    expect(callback.searchParams.get('farm_reference')).toBe(
+      ivorypay.createPayment.mock.calls[0][0].reference,
+    );
   });
 
   it('persists IvoryPay identifiers so provider callback references can be resolved', async () => {

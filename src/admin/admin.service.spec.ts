@@ -1,5 +1,102 @@
 import { AdminService } from './admin.service';
 
+describe('AdminService transaction list details', () => {
+  it('resolves deposit users from metadata and returns display timestamps and parties', async () => {
+    const tx = {
+      id: 'tx-1',
+      transaction_reference: 'deposit-ref-1',
+      transaction_type: 'deposit',
+      status: 'completed',
+      amount: 250,
+      fee: 0,
+      net_amount: 250,
+      currency: 'KES',
+      description: 'Crypto deposit',
+      metadata: { user_id: 'user-1', payment_method: 'CRYPTO', payment_provider: 'IvoryPay' },
+      created_at: new Date('2024-05-01T10:15:30.000Z'),
+      processed_at: null,
+      wallets_transactions_sender_wallet_idTowallets: null,
+      wallets_transactions_receiver_wallet_idTowallets: null,
+    };
+    const prisma: any = {
+      transactions: {
+        findMany: jest.fn().mockResolvedValue([tx]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+      users: {
+        findMany: jest.fn().mockResolvedValue([{
+          id: 'user-1',
+          username: 'alice',
+          first_name: 'Alice',
+          last_name: 'Example',
+          email: 'alice@example.com',
+          phone: '+254700000000',
+        }]),
+      },
+    };
+    const service = new AdminService(prisma, {} as any, {} as any, {} as any, {} as any);
+
+    const result = await service.listTransactions({ transaction_type: 'deposit' });
+
+    expect(result.data[0]).toEqual(expect.objectContaining({
+      user_id: 'user-1',
+      username: 'alice',
+      user_name: 'Alice Example',
+      method: 'CRYPTO',
+      date: '2024-05-01',
+      time: '10:15:30',
+      sender_name: 'IvoryPay',
+      receiver_name: 'Alice Example',
+    }));
+  });
+
+  it('includes withdrawal owner, destination, method, and timestamp in admin withdrawal rows', async () => {
+    const withdrawal = {
+      id: 'withdrawal-1',
+      userId: 'user-2',
+      amount: 125,
+      fee: 2,
+      settlement: 123,
+      total: 127,
+      currency: 'KES',
+      method: 'MOBILE_MONEY',
+      phoneNumber: '+254700000001',
+      reference: 'withdrawal-ref-1',
+      status: 'PENDING',
+      createdAt: new Date('2024-05-02T11:16:17.000Z'),
+      user: {
+        id: 'user-2',
+        username: 'bob',
+        first_name: 'Bob',
+        last_name: 'Example',
+        email: 'bob@example.com',
+        phone: '+254700000000',
+      },
+    };
+    const prisma: any = {
+      withdrawal: {
+        findMany: jest.fn().mockResolvedValue([withdrawal]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+    };
+    const service = new AdminService(prisma, {} as any, {} as any, {} as any, {} as any);
+
+    const result = await service.listAllWithdrawals({});
+
+    expect(result.data[0]).toEqual(expect.objectContaining({
+      user_id: 'user-2',
+      username: 'bob',
+      user_name: 'Bob Example',
+      transaction_reference: 'withdrawal-ref-1',
+      method: 'MOBILE_MONEY',
+      sender_name: 'Bob Example',
+      receiver_name: '+254700000001',
+      date: '2024-05-02',
+      time: '11:16:17',
+    }));
+  });
+});
+
 describe('AdminService.broadcastNotification', () => {
   it('maps the audience selector to the correct user filter and sends a notification', async () => {
     const prisma = {
@@ -150,10 +247,10 @@ describe('AdminService admin management', () => {
   describe('AdminService superadmin wallet revenue', () => {
     it('includes merchant sale fees and counts in total platform revenue', async () => {
       const revenueByType: Record<string, { fee: number; count: number }> = {
-        escrow_lock: { fee: 2.5, count: 1 },
-        escrow_release: { fee: 1.5, count: 1 },
-        withdrawal: { fee: 2, count: 2 },
-        merchant_payment: { fee: 1, count: 3 },
+        escrow_lock: { fee: 9.78, count: 4 },
+        escrow_release: { fee: 8.6, count: 2 },
+        withdrawal: { fee: 4.35, count: 3 },
+        merchant_payment: { fee: 2.5, count: 5 },
       };
       const prisma: any = {
         users: {
@@ -162,7 +259,7 @@ describe('AdminService admin management', () => {
             wallets: [
               {
                 balance: 107,
-                locked_balance: 0,
+                locked_balance: 7,
                 currency: 'FARM',
                 wallet_address: 'superadmin-wallet',
               },
@@ -194,9 +291,12 @@ describe('AdminService admin management', () => {
 
       expect(result.data).toEqual(
         expect.objectContaining({
-          merchant_sales_revenue: 1,
-          merchant_sales_count: 3,
-          total_platform_revenue: 7,
+          balance: 107,
+          available_balance: 100,
+          locked_balance: 7,
+          merchant_sales_revenue: 2.5,
+          merchant_sales_count: 5,
+          total_platform_revenue: 25.23,
         }),
       );
       expect(prisma.transactions.aggregate).toHaveBeenCalledWith(
@@ -439,13 +539,28 @@ describe('AdminService admin management', () => {
   });
 
   it('excludes admin and superadmin roles from the superadmin dashboard total', async () => {
+    const revenueByType: Record<
+      string,
+      { fee: number; count: number }
+    > = {
+      escrow_lock: { fee: 9.78, count: 4 },
+      escrow_release: { fee: 8.6, count: 2 },
+      withdrawal: { fee: 4.35, count: 3 },
+      merchant_payment: { fee: 2.5, count: 5 },
+    };
     const prisma = {
       users: { count: jest.fn().mockResolvedValue(0) },
       transactions: {
         count: jest.fn().mockResolvedValue(0),
-        aggregate: jest.fn().mockResolvedValue({
-          _sum: { amount: 0, fee: 0 },
-          _count: { id: 0 },
+        aggregate: jest.fn(({ where }) => {
+          const revenue = revenueByType[where.transaction_type] ?? {
+            fee: 0,
+            count: 0,
+          };
+          return Promise.resolve({
+            _sum: { amount: 0, fee: revenue.fee },
+            _count: { id: revenue.count },
+          });
         }),
         findMany: jest.fn().mockResolvedValue([]),
       },
@@ -484,8 +599,16 @@ describe('AdminService admin management', () => {
     });
     expect(result.data).toEqual(
       expect.objectContaining({
-        merchant_sales_fee_earnings: 0,
-        merchant_sales_count: 0,
+        escrow_creation_earnings: 9.78,
+        escrow_creation_count: 4,
+        escrow_release_earnings: 8.6,
+        escrow_release_count: 2,
+        withdraw_fee_earnings: 4.35,
+        withdrawal_fee_count: 3,
+        merchant_sales_fee_earnings: 2.5,
+        merchant_sales_count: 5,
+        platform_fee_total_earnings: 25.23,
+        total_revenue: 25.23,
       }),
     );
   });

@@ -37,6 +37,7 @@ export class PaymentsService {
       chain?: string;
       walletAddress?: string;
       callbackUrl?: string;
+      merchantQrCheckout?: boolean;
     },
     ctx?: { deviceRisk?: number; ip?: string; country?: string },
   ) {
@@ -61,7 +62,11 @@ export class PaymentsService {
     const reference =
       paymentMethod === 'CRYPTO' ? randomUUID() : generateTxReference();
     const callbackUrl = dto.callbackUrl
-      ? `${dto.callbackUrl}${dto.callbackUrl.includes('?') ? '&' : '?'}reference=${encodeURIComponent(reference)}`
+      ? `${dto.callbackUrl}${dto.callbackUrl.includes('?') ? '&' : '?'}reference=${encodeURIComponent(reference)}${
+          paymentMethod === 'CRYPTO' && dto.merchantQrCheckout
+            ? `&farm_reference=${encodeURIComponent(reference)}`
+            : ''
+        }`
       : undefined;
     const rate = await this.getExchangeRate(dto.currency, 'FARM');
     const amount_farm = dto.amount_fiat / rate;

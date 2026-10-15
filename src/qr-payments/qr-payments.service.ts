@@ -236,7 +236,11 @@ export class QrPaymentsService {
     });
 
     try {
-      const callbackUrl = `${DEFAULT_PUBLIC_PAY_SUCCESS_URL}?reference=${encodeURIComponent(reference)}`;
+      const callbackUrl = new URL(DEFAULT_PUBLIC_PAY_SUCCESS_URL);
+      callbackUrl.searchParams.set('reference', reference);
+      if (provider === 'ivorypay') {
+        callbackUrl.searchParams.set('farm_reference', reference);
+      }
       let paymentUrl: string | undefined;
       let providerReference = reference;
       const providerMetadata: Record<string, string> = {
@@ -257,7 +261,7 @@ export class QrPaymentsService {
           reference,
           channels,
           ...(dto.guestPhone ? { phone: dto.guestPhone } : {}),
-          callback_url: callbackUrl,
+          callback_url: callbackUrl.toString(),
           metadata: {
             type: 'qr_sale',
             merchantId: merchant.id,
@@ -277,7 +281,7 @@ export class QrPaymentsService {
           baseFiat: 'USD',
           crypto,
           chain,
-          redirect_url: callbackUrl,
+          redirect_url: callbackUrl.toString(),
           metadata: {
             type: 'qr_sale',
             merchantId: merchant.id,

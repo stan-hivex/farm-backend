@@ -5,6 +5,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { WithdrawService } from '../withdraw/withdraw.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
+import { enrichAdminListItem } from './admin-response-utils';
 
 @Injectable()
 export class AdminService {
@@ -113,38 +114,98 @@ export class AdminService {
         orderBy: { created_at: 'desc' },
         include: {
           wallets_transactions_sender_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
+            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true, email: true, phone: true } } },
           },
           wallets_transactions_receiver_wallet_idTowallets: {
-            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true } } },
+            select: { wallet_address: true, user_id: true, users: { select: { id: true, username: true, first_name: true, last_name: true, email: true, phone: true } } },
           },
         },
       }),
       this.prisma.transactions.count({ where }),
     ]);
 
+    const metadataUserIds = items
+      .map((tx) => {
+        const metadata = tx.metadata;
+        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+        const values = metadata as Record<string, unknown>;
+        return values.user_id ?? values.userId;
+      })
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    const walletUserIds = new Set(
+      items.flatMap((tx) => [
+        tx.wallets_transactions_sender_wallet_idTowallets?.user_id,
+        tx.wallets_transactions_receiver_wallet_idTowallets?.user_id,
+      ]).filter((id): id is string => Boolean(id)),
+    );
+    const missingUserIds = [...new Set(metadataUserIds)].filter((id) => !walletUserIds.has(id));
+    const metadataUsers = missingUserIds.length
+      ? await this.prisma.users.findMany({
+        where: { id: { in: missingUserIds } },
+        select: { id: true, username: true, first_name: true, last_name: true, email: true, phone: true },
+      })
+      : [];
+    const metadataUsersById = new Map(metadataUsers.map((user) => [user.id, user]));
+    const userName = (user: { first_name?: string | null; last_name?: string | null; username?: string | null } | null | undefined) =>
+      user
+        ? [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || null
+        : null;
+
     return {
-      data: items.map((tx) => ({
-        id: tx.id,
-        transaction_reference: tx.transaction_reference,
-        transaction_type: tx.transaction_type,
-        status: tx.status,
-        amount: Number(tx.amount),
-        fee: Number(tx.fee ?? 0),
-        net_amount: Number(tx.net_amount ?? 0),
-        currency: tx.currency,
-        description: tx.description,
-        created_at: tx.created_at,
-        processed_at: tx.processed_at,
-        sender_wallet: tx.wallets_transactions_sender_wallet_idTowallets?.wallet_address,
-        receiver_wallet: tx.wallets_transactions_receiver_wallet_idTowallets?.wallet_address,
-        user_id: tx.wallets_transactions_sender_wallet_idTowallets?.user_id ?? tx.wallets_transactions_receiver_wallet_idTowallets?.user_id,
-        username: tx.wallets_transactions_sender_wallet_idTowallets?.users?.username ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.username,
-        user_name: [
-          tx.wallets_transactions_sender_wallet_idTowallets?.users?.first_name ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.first_name,
-          tx.wallets_transactions_sender_wallet_idTowallets?.users?.last_name ?? tx.wallets_transactions_receiver_wallet_idTowallets?.users?.last_name,
-        ].filter(Boolean).join(' '),
-      })),
+      data: items.map((tx) => {
+        const senderWallet = tx.wallets_transactions_sender_wallet_idTowallets;
+        const receiverWallet = tx.wallets_transactions_receiver_wallet_idTowallets;
+        const metadata = tx.metadata && typeof tx.metadata === 'object' && !Array.isArray(tx.metadata)
+          ? tx.metadata as Record<string, any>
+          : {};
+        const metadataUserId = metadata.user_id ?? metadata.userId;
+        const linkedUserId = senderWallet?.user_id ?? receiverWallet?.user_id ?? metadataUserId;
+        const linkedUser = senderWallet?.users
+          ?? receiverWallet?.users
+          ?? (typeof metadataUserId === 'string' ? metadataUsersById.get(metadataUserId) : undefined);
+        const type = String(tx.transaction_type).toLowerCase();
+        const userDisplayName = userName(linkedUser);
+        const senderName = userName(senderWallet?.users)
+          ?? metadata.sender_name
+          ?? metadata.sender_username
+          ?? senderWallet?.wallet_address
+          ?? (type === 'deposit'
+            ? metadata.payment_provider ?? metadata.provider ?? 'External payment provider'
+            : type.includes('withdraw')
+              ? userDisplayName ?? 'Account holder'
+              : 'External sender');
+        const receiverName = userName(receiverWallet?.users)
+          ?? metadata.receiver_name
+          ?? metadata.recipient_name
+          ?? receiverWallet?.wallet_address
+          ?? (type === 'deposit'
+            ? userDisplayName ?? 'Deposit account'
+            : type.includes('withdraw')
+              ? metadata.destination ?? metadata.crypto_address ?? metadata.account_number ?? 'Withdrawal destination'
+              : 'External recipient');
+
+        return enrichAdminListItem({
+          id: tx.id,
+          transaction_reference: tx.transaction_reference,
+          transaction_type: tx.transaction_type,
+          status: tx.status,
+          amount: Number(tx.amount),
+          fee: Number(tx.fee ?? 0),
+          net_amount: Number(tx.net_amount ?? 0),
+          currency: tx.currency,
+          description: tx.description,
+          metadata,
+          created_at: tx.created_at,
+          processed_at: tx.processed_at,
+          sender_wallet: senderWallet?.wallet_address,
+          receiver_wallet: receiverWallet?.wallet_address,
+          sender_user_id: senderWallet?.user_id ?? (type.includes('withdraw') ? linkedUserId : null),
+          receiver_user_id: receiverWallet?.user_id ?? (type === 'deposit' ? linkedUserId : null),
+          sender_name: String(senderName),
+          receiver_name: String(receiverName),
+          user_id: linkedUserId,
+        }, linkedUser);
+      }),
       meta: paginate(total, page, limit),
     };
   }
@@ -415,11 +476,43 @@ export class AdminService {
     const where: any = {};
     if (query.status) where.status = query.status;
     const [items, total] = await Promise.all([
-      this.prisma.withdrawal.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
+      this.prisma.withdrawal.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: { select: { id: true, username: true, first_name: true, last_name: true, email: true, phone: true } },
+        },
+      }),
       this.prisma.withdrawal.count({ where }),
     ]);
     return {
-      data: items.map((w) => ({ ...w, amount: Number(w.amount) })),
+      data: items.map((w) => {
+        const { user, ...withdrawal } = w;
+        const destination = [
+          w.cryptoAsset,
+          w.network,
+          w.cryptoAddress,
+          w.bankName,
+          w.accountName,
+          w.accountNumber ? `Account ${w.accountNumber}` : null,
+          w.phoneNumber,
+        ].filter(Boolean).join(' · ');
+        const senderName = [user.first_name, user.last_name].filter(Boolean).join(' ')
+          || user.username
+          || user.email
+          || user.phone;
+        return enrichAdminListItem({
+          ...withdrawal,
+          amount: Number(w.amount),
+          currency: w.currency,
+          sender_name: senderName,
+          sender_user_id: user.id,
+          receiver_name: destination || 'Withdrawal destination unavailable',
+          receiver_identifier: destination || null,
+        }, user);
+      }),
       meta: paginate(total, page, limit),
     };
   }
@@ -1044,9 +1137,12 @@ export class AdminService {
           email: dto.email,
           password_hash,
           country: dto.country,
-          role: 'admin',
+          role: 'super_admin',
           phone_verified: true,
           email_verified: true,
+          is_active: true,
+          is_suspended: false,
+          is_deleted: false,
           referral_code: generateReferralCode(),
         },
       });
@@ -1064,10 +1160,15 @@ export class AdminService {
       await tx.audit_logs.create({
         data: {
           user_id: adminId,
-          action: 'CREATE_ADMIN',
+          action: 'CREATE_SUPERADMIN',
           entity_type: 'users',
           entity_id: u.id,
-          new_values: { first_name: u.first_name, last_name: u.last_name, username: u.username, role: 'admin' } as any,
+          new_values: {
+            first_name: u.first_name,
+            last_name: u.last_name,
+            username: u.username,
+            role: 'super_admin',
+          } as any,
         },
       });
 
@@ -1084,7 +1185,7 @@ export class AdminService {
         email: user.email,
         role: user.role,
       },
-      message: 'Admin created successfully',
+      message: 'Superadmin created successfully',
     };
   }
 
@@ -1285,15 +1386,46 @@ export class AdminService {
         created_at: true,
       },
     });
-    // Compute escrow fee aggregates: creation (escrow_lock) and release (escrow_release)
-    const [escrowCreationAgg, escrowReleaseAgg] = await Promise.all([
+    // Aggregate only completed transactions that actually contributed platform fees.
+    const [escrowCreationAgg, escrowReleaseAgg, withdrawalAgg, merchantSalesAgg] =
+      await Promise.all([
       this.prisma.transactions.aggregate({
-        where: { transaction_type: 'escrow_lock', status: 'completed' },
+        where: {
+          transaction_type: 'escrow_lock',
+          status: 'completed',
+          fee: { gt: 0 },
+        },
         _sum: { fee: true },
         _count: { id: true },
       }),
       this.prisma.transactions.aggregate({
-        where: { transaction_type: 'escrow_release', status: 'completed' },
+        where: {
+          transaction_type: 'escrow_release',
+          status: 'completed',
+          fee: { gt: 0 },
+        },
+        _sum: { fee: true },
+        _count: { id: true },
+      }),
+      this.prisma.transactions.aggregate({
+        where: {
+          transaction_type: 'withdrawal',
+          status: 'completed',
+          fee: { gt: 0 },
+        },
+        _sum: { fee: true },
+        _count: { id: true },
+      }),
+      this.prisma.transactions.aggregate({
+        where: {
+          transaction_type: 'merchant_payment',
+          status: 'completed',
+          fee: { gt: 0 },
+          metadata: {
+            path: ['platform_fee_type'],
+            equals: 'merchant_sale',
+          },
+        },
         _sum: { fee: true },
         _count: { id: true },
       }),
@@ -1301,16 +1433,17 @@ export class AdminService {
 
     const escrow_creation_earnings = Number(escrowCreationAgg._sum.fee ?? 0);
     const escrow_release_earnings = Number(escrowReleaseAgg._sum.fee ?? 0);
-    const escrow_total_earnings = Number(escrow_creation_earnings + escrow_release_earnings);
-
-    // Compute withdrawal fee aggregates (platform fees collected on withdrawals)
-    const withdrawalAgg = await this.prisma.transactions.aggregate({
-      where: { transaction_type: 'withdrawal', status: 'completed' },
-      _sum: { fee: true },
-      _count: { id: true },
-    });
     const withdrawal_total_earnings = Number(withdrawalAgg._sum.fee ?? 0);
-    const total_platform_fee_earnings = Number(escrow_total_earnings + withdrawal_total_earnings);
+    const merchant_sales_fee_earnings = Number(merchantSalesAgg._sum.fee ?? 0);
+    const escrow_total_earnings =
+      escrow_creation_earnings + escrow_release_earnings;
+    const total_platform_fee_earnings = Number(
+      (
+        escrow_total_earnings +
+        withdrawal_total_earnings +
+        merchant_sales_fee_earnings
+      ).toFixed(2),
+    );
 
     return {
       data: {
@@ -1336,6 +1469,11 @@ export class AdminService {
         platform_fee_total_earnings: total_platform_fee_earnings,
         escrow_creation_earnings,
         escrow_release_earnings,
+        escrow_creation_count: escrowCreationAgg._count.id ?? 0,
+        escrow_release_count: escrowReleaseAgg._count.id ?? 0,
+        withdrawal_fee_count: withdrawalAgg._count.id ?? 0,
+        merchant_sales_fee_earnings,
+        merchant_sales_count: merchantSalesAgg._count.id ?? 0,
         total_escrow_count: (escrowCreationAgg._count.id ?? 0) + (escrowReleaseAgg._count.id ?? 0),
       },
     };
@@ -1475,11 +1613,14 @@ export class AdminService {
     const escrowReleaseRevenue = Number(releaseFees._sum.fee ?? 0);
     const withdrawalRevenue = Number(withdrawalFees._sum.fee ?? 0);
     const merchantSalesRevenue = Number(merchantSalesFees._sum.fee ?? 0);
-    const totalPlatformRevenue =
-      escrowCreationRevenue +
-      escrowReleaseRevenue +
-      withdrawalRevenue +
-      merchantSalesRevenue;
+    const totalPlatformRevenue = Number(
+      (
+        escrowCreationRevenue +
+        escrowReleaseRevenue +
+        withdrawalRevenue +
+        merchantSalesRevenue
+      ).toFixed(8),
+    );
 
     const availableBalance = Math.max(
       0,
