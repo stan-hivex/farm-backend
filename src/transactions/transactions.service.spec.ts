@@ -155,6 +155,15 @@ describe('TransactionsService', () => {
           .fn()
           .mockResolvedValue({ id: 'wallet-current', user_id: 'user-1' }),
       },
+      users: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user-1',
+          username: 'deposit-owner',
+          first_name: 'Deposit',
+          last_name: 'Owner',
+          profile_image: null,
+        }),
+      },
       transactions: {
         findFirst: transactionFindFirst,
       },
@@ -196,10 +205,14 @@ describe('TransactionsService', () => {
     expect(transactionFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          transaction_reference: 'tx-deposit',
-          OR: [
-            { sender_wallet_id: 'wallet-current' },
-            { receiver_wallet_id: 'wallet-current' },
+          OR: [{ transaction_reference: 'tx-deposit' }],
+          AND: [
+            {
+              OR: [
+                { sender_wallet_id: 'wallet-current' },
+                { receiver_wallet_id: 'wallet-current' },
+              ],
+            },
           ],
         },
       }),
@@ -213,6 +226,10 @@ describe('TransactionsService', () => {
       fiat_currency: 'USD',
       payment_method: 'CRYPTO',
       payment_provider: 'ivorypay',
+      sender_name: 'IvoryPay',
+      receiver_name: 'Deposit Owner',
+      sender_username: '',
+      recipient_username: 'deposit-owner',
       provider_reference: 'ivorypay-reference',
       provider_transaction_id: 'ivorypay-transaction-id',
       payment_reference: 'payment-reference',
@@ -222,6 +239,59 @@ describe('TransactionsService', () => {
       deposit_status: 'SUCCESS',
       deposit_verification_attempts: 1,
     });
+  });
+
+  it('looks up UUID identifiers by either transaction id or reference', async () => {
+    const transactionId = '086c42f6-8fd1-42c7-8dc8-fb08e45839eb';
+    const transaction = {
+      id: '3f4a0b92-fcf8-46ac-a42d-9ec71f4ac182',
+      transaction_reference: transactionId,
+      sender_wallet_id: null,
+      receiver_wallet_id: 'wallet-current',
+      transaction_type: 'deposit',
+      status: 'completed',
+      amount: 20,
+      fee: 0,
+      net_amount: 20,
+      currency: 'FARM',
+      description: 'Successful deposit',
+      metadata: {},
+      wallets_transactions_sender_wallet_idTowallets: null,
+      wallets_transactions_receiver_wallet_idTowallets: null,
+    };
+    const transactionFindFirst = jest.fn().mockResolvedValue(transaction);
+    const prisma = {
+      wallets: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'wallet-current' }),
+      },
+      transactions: { findFirst: transactionFindFirst },
+      deposit: { findFirst: jest.fn().mockResolvedValue(null) },
+      withdrawal: { findUnique: jest.fn() },
+      merchants: { findUnique: jest.fn() },
+    };
+    const detailedService = new TransactionsService(
+      prisma as any,
+      { cacheGet: jest.fn(), cacheSet: jest.fn() } as any,
+    );
+
+    const result = await detailedService.findOne('user-1', transactionId);
+
+    expect(transactionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [{ id: transactionId }, { transaction_reference: transactionId }],
+          AND: [
+            {
+              OR: [
+                { sender_wallet_id: 'wallet-current' },
+                { receiver_wallet_id: 'wallet-current' },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    expect(result.data.id).toBe(transaction.id);
   });
 
   it('returns the persisted withdrawal fee and settlement for a transaction receipt', async () => {

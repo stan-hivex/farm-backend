@@ -245,15 +245,15 @@ describe('QrPaymentsService settlement', () => {
       id: 'transaction-1',
       transaction_reference: internalReference,
       status: 'pending',
+      transaction_type: 'merchant_payment',
       metadata: {
-        type: 'qr_sale',
-        isQrSale: true,
         provider: 'ivorypay',
         provider_ref: 'provider-transaction-id',
         provider_checkout_id: 'provider-checkout-id',
         amount_fiat: 100,
         amount_usd: 1,
       },
+      qr_payments: [{ merchant_id: 'merchant-1' }],
     };
     const prisma: any = {
       transactions: {
@@ -287,7 +287,9 @@ describe('QrPaymentsService settlement', () => {
       {} as any,
       {} as any,
     );
-    const complete = jest.spyOn(service, 'complete').mockResolvedValue(true);
+    const complete = jest
+      .spyOn(service, 'complete')
+      .mockResolvedValue(true);
 
     await expect(service.verify('provider-checkout-id')).resolves.toEqual({
       data: {
@@ -308,6 +310,22 @@ describe('QrPaymentsService settlement', () => {
                     path: ['provider_checkout_id'],
                     equals: 'provider-checkout-id',
                   },
+                }),
+              ]),
+            }),
+            expect.objectContaining({
+              OR: expect.arrayContaining([
+                expect.objectContaining({
+                  AND: expect.arrayContaining([
+                    expect.objectContaining({
+                      transaction_type: 'merchant_payment',
+                    }),
+                    expect.objectContaining({
+                      qr_payments: {
+                        some: { merchant_id: { not: null } },
+                      },
+                    }),
+                  ]),
                 }),
               ]),
             }),
@@ -433,9 +451,7 @@ describe('QrPaymentsService settlement', () => {
       {} as any,
       {} as any,
     );
-    const complete = jest
-      .spyOn(service, 'complete')
-      .mockResolvedValue(true);
+    const complete = jest.spyOn(service, 'complete').mockResolvedValue(true);
 
     await expect(service.verify(reference)).resolves.toEqual({
       data: {
@@ -498,9 +514,8 @@ describe('QrPaymentsService settlement', () => {
       id: 'transaction-1',
       amount: 7.5,
       receiver_wallet_id: 'wallet-1',
+      transaction_type: 'merchant_payment',
       metadata: {
-        type: 'qr_sale',
-        isQrSale: true,
         provider: 'paystack',
         amount_fiat: 100,
       },
@@ -535,6 +550,7 @@ describe('QrPaymentsService settlement', () => {
     const cache = {
       invalidateWallet: jest.fn().mockResolvedValue(undefined),
       cacheDelete: jest.fn().mockResolvedValue(undefined),
+      cacheInvalidatePattern: jest.fn().mockResolvedValue(undefined),
     };
     const websocket = {
       emitBalanceUpdate: jest.fn(),
@@ -606,6 +622,9 @@ describe('QrPaymentsService settlement', () => {
     );
     expect(receipts.enqueuePdfAndEmail).toHaveBeenCalledWith('receipt-1');
     expect(cache.invalidateWallet).toHaveBeenCalledWith('owner-1');
+    expect(cache.cacheInvalidatePattern).toHaveBeenCalledWith(
+      'transactions:owner-1:*',
+    );
     expect(cache.invalidateWallet).toHaveBeenCalledWith('superadmin-1');
     expect(cache.cacheDelete).toHaveBeenCalledWith(
       'admin:superadmin-dashboard',

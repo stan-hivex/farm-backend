@@ -18,6 +18,8 @@ describe('enrichAdminListItem', () => {
     expect(item.user_id).toBe('user-1');
     expect(item.username).toBe('alice');
     expect(item.method).toBe('MOBILE');
+    expect(item.payment_method).toBe('MOBILE');
+    expect(item.payment_provider).toBeNull();
     expect(item.amount).toBe(250);
     expect(item.status).toBe('pending');
     expect(item.date).toBe('2024-05-01');
@@ -51,6 +53,7 @@ describe('enrichAdminListItem', () => {
     expect(item.user_email).toBe('bob@example.com');
     expect(item.transaction_reference).toBe('withdrawal-ref-1');
     expect(item.method).toBe('MOBILE_MONEY');
+    expect(item.payment_method).toBe('MOBILE_MONEY');
     expect(item.amount_display).toBe('125.00 KES');
     expect(item.status).toBe('pending');
     expect(item.date).toBe('2024-05-02');

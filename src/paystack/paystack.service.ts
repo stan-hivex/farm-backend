@@ -20,36 +20,36 @@ export class PaystackService {
   private readonly bankCodeMap: Record<string, Record<string, string>>;
   private readonly kenyaBankCodeFallback: Record<string, string> = {
     'i&m': 'IM',
-    'im': 'IM',
-    'imbank': 'IM',
-    'iandm': 'IM',
-    'iandmbank': 'IM',
+    im: 'IM',
+    imbank: 'IM',
+    iandm: 'IM',
+    iandmbank: 'IM',
     'co-operativebank': 'COOP',
-    'cooperativebank': 'COOP',
+    cooperativebank: 'COOP',
     'cooperative bank': 'COOP',
-    'equity': 'EQB',
-    'kcb': 'KCB',
+    equity: 'EQB',
+    kcb: 'KCB',
     'kenya commercial bank': 'KCB',
-    'stanbic': 'SBK',
-    'barclays': 'BAR',
+    stanbic: 'SBK',
+    barclays: 'BAR',
     'barclays bank': 'BAR',
-    'standardchartered': 'SCB',
+    standardchartered: 'SCB',
     'standard chartered': 'SCB',
-    'scbk': 'SCB',
-    'absa': 'ABSA',
-    'fnb': 'FNB',
-    'dfcu': 'DFCU',
-    'ncb': 'NCB',
-    'ncba': 'NCB',
-    'familybank': 'FBP',
+    scbk: 'SCB',
+    absa: 'ABSA',
+    fnb: 'FNB',
+    dfcu: 'DFCU',
+    ncb: 'NCB',
+    ncba: 'NCB',
+    familybank: 'FBP',
     'family bank': 'FBP',
-    'spencer': 'SCBK',
-    'postbank': 'POSTA',
-    'stanchart': 'SCB',
-    'icbd': 'ICBD',
+    spencer: 'SCBK',
+    postbank: 'POSTA',
+    stanchart: 'SCB',
+    icbd: 'ICBD',
     'diamond trust bank': 'DTB',
-    'dtb': 'DTB',
-    'swift': 'SWIFT'
+    dtb: 'DTB',
+    swift: 'SWIFT',
   };
 
   constructor(private cfg: ConfigService) {
@@ -59,7 +59,9 @@ export class PaystackService {
       try {
         this.bankCodeMap = JSON.parse(rawBankMap);
       } catch (e) {
-        this.logger.warn('PAYSTACK_BANK_CODE_MAP is not valid JSON. Ignoring configured bank mapping.');
+        this.logger.warn(
+          'PAYSTACK_BANK_CODE_MAP is not valid JSON. Ignoring configured bank mapping.',
+        );
         this.bankCodeMap = {};
       }
     } else {
@@ -69,7 +71,9 @@ export class PaystackService {
 
   async initializePayment(options: any) {
     if (!this.secretKey) {
-      this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock response');
+      this.logger.warn(
+        'PAYSTACK_SECRET_KEY not configured, returning mock response',
+      );
       return {
         authorization_url: `https://checkout.paystack.com/mock/${options.reference}`,
         authorizationUrl: `https://checkout.paystack.com/mock/${options.reference}`,
@@ -79,10 +83,10 @@ export class PaystackService {
     try {
       this.logger.log(
         `Paystack: initializing transaction for ${options.reference} | ` +
-        `channels=${JSON.stringify(options.channels)} | ` +
-        `phone=${options.phone || 'N/A'} | ` +
-        `currency=${options.currency || 'N/A'} | ` +
-        `amount=${options.amount}`
+          `channels=${JSON.stringify(options.channels)} | ` +
+          `phone=${options.phone || 'N/A'} | ` +
+          `currency=${options.currency || 'N/A'} | ` +
+          `amount=${options.amount}`,
       );
 
       const requestBody: any = {
@@ -111,11 +115,16 @@ export class PaystackService {
       );
 
       if (!response.data.status || !response.data.data) {
-        this.logger.error('Paystack initialized with invalid response body', response.data);
+        this.logger.error(
+          'Paystack initialized with invalid response body',
+          response.data,
+        );
         throw new BadRequestException('Invalid Paystack response');
       }
 
-      this.logger.log(`Paystack: initialized ${options.reference}, auth_url=${response.data.data.authorization_url}`);
+      this.logger.log(
+        `Paystack: initialized ${options.reference}, auth_url=${response.data.data.authorization_url}`,
+      );
       return {
         authorization_url: response.data.data.authorization_url,
         authorizationUrl: response.data.data.authorization_url,
@@ -126,12 +135,20 @@ export class PaystackService {
       const message = apiData?.message || e.message;
       this.logger.error(`Paystack initialize error: ${message}`);
       if (apiData) {
-        this.logger.debug(`Paystack initialize error details: ${JSON.stringify(apiData)}`);
+        this.logger.debug(
+          `Paystack initialize error details: ${JSON.stringify(apiData)}`,
+        );
       }
 
       // Provide a clearer error when the merchant hasn't enabled the requested channel.
-      if (apiData?.code === 'invalid_params' && typeof message === 'string' && message.toLowerCase().includes('no active channel')) {
-        const nextStep = apiData?.meta?.nextStep || 'Please enable the required channel in your Paystack dashboard or contact Paystack support.';
+      if (
+        apiData?.code === 'invalid_params' &&
+        typeof message === 'string' &&
+        message.toLowerCase().includes('no active channel')
+      ) {
+        const nextStep =
+          apiData?.meta?.nextStep ||
+          'Please enable the required channel in your Paystack dashboard or contact Paystack support.';
         const channelHint = options.channels?.includes('bank')
           ? 'Bank transfers are not enabled for this Paystack account. Enable bank transfer support in Paystack or use CARD instead.'
           : 'Please verify your Paystack channel configuration for the requested payment method.';
@@ -147,25 +164,36 @@ export class PaystackService {
 
   async verifyTransaction(reference: string) {
     if (!this.secretKey) {
-      this.logger.warn('PAYSTACK_SECRET_KEY not configured, returning mock verify');
+      this.logger.warn(
+        'PAYSTACK_SECRET_KEY not configured, returning mock verify',
+      );
       return { status: 'success', reference };
     }
 
     try {
       this.logger.log(`Paystack: verifying transaction ${reference}`);
-      const response = await axios.get(`${this.paystackBaseUrl}/transaction/verify/${reference}`, {
-        headers: { Authorization: `Bearer ${this.secretKey}` },
-      });
+      const response = await axios.get(
+        `${this.paystackBaseUrl}/transaction/verify/${reference}`,
+        {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+        },
+      );
 
       if (!response.data.status) {
         throw new BadRequestException('Transaction verification failed');
       }
 
-      this.logger.log(`Paystack: verified ${reference}, status=${response.data.data?.status}`);
+      this.logger.log(
+        `Paystack: verified ${reference}, status=${response.data.data?.status}`,
+      );
       return response.data.data;
     } catch (e: any) {
-      this.logger.error(`Paystack verify error: ${e.response?.data?.message || e.message}`);
-      throw new BadRequestException(`Paystack verification failed: ${e.response?.data?.message || e.message}`);
+      this.logger.error(
+        `Paystack verify error: ${e.response?.data?.message || e.message}`,
+      );
+      throw new BadRequestException(
+        `Paystack verification failed: ${e.response?.data?.message || e.message}`,
+      );
     }
   }
 
@@ -212,30 +240,45 @@ export class PaystackService {
       }
 
       // Provide actionable guidance for common bank code problems
-      if (responseData?.code === 'invalid_bank_code' || (typeof apiMessage === 'string' && apiMessage.toLowerCase().includes('bank is invalid'))) {
+      if (
+        responseData?.code === 'invalid_bank_code' ||
+        (typeof apiMessage === 'string' &&
+          apiMessage.toLowerCase().includes('bank is invalid'))
+      ) {
         const suggested = (() => {
           try {
-            const normalized = this.normalizeBankName(payload?.bank_name || payload?.name || '');
+            const normalized = this.normalizeBankName(
+              payload?.bank_name || payload?.name || '',
+            );
             const cfgMap = this.bankCodeMap['KE'] || {};
             if (cfgMap[normalized]) return cfgMap[normalized];
-            if (this.kenyaBankCodeFallback[normalized]) return this.kenyaBankCodeFallback[normalized];
+            if (this.kenyaBankCodeFallback[normalized])
+              return this.kenyaBankCodeFallback[normalized];
             return null;
-          } catch { return null; }
+          } catch {
+            return null;
+          }
         })();
 
         const hintParts = [
           `Paystack rejected the bank code for '${payload?.bank_name || payload?.name || ''}'.`,
           "This usually means your Paystack account doesn't have Kenyan bank payouts enabled or the bank code is incorrect.",
-          "Enable Kenyan bank transfers in your Paystack dashboard or use the List Banks endpoint to fetch official bank codes.",
+          'Enable Kenyan bank transfers in your Paystack dashboard or use the List Banks endpoint to fetch official bank codes.',
         ];
 
         if (suggested) {
-          hintParts.push(`Suggested bank_code based on local mapping: '${suggested}'. Verify this in Paystack before retrying.`);
+          hintParts.push(
+            `Suggested bank_code based on local mapping: '${suggested}'. Verify this in Paystack before retrying.`,
+          );
         } else {
-          hintParts.push("To fix quickly, add a mapping to PAYSTACK_BANK_CODE_MAP in your .env.production for the bank name -> bank_code.");
+          hintParts.push(
+            'To fix quickly, add a mapping to PAYSTACK_BANK_CODE_MAP in your .env.production for the bank name -> bank_code.',
+          );
         }
 
-        throw new BadRequestException(`Paystack recipient failed: ${apiMessage}. ${hintParts.join(' ')}`);
+        throw new BadRequestException(
+          `Paystack recipient failed: ${apiMessage}. ${hintParts.join(' ')}`,
+        );
       }
 
       throw new BadRequestException(`Paystack recipient failed: ${apiMessage}`);
@@ -252,25 +295,13 @@ export class PaystackService {
 
     const normalizedCurrency = currency.trim().toUpperCase();
     const normalizedType = type?.trim().toLowerCase();
-    // Map common 3-letter currency codes to 2-letter Paystack country codes
-    const currencyToCountry: Record<string, string> = {
-      KES: 'KE',
-      NGN: 'NG',
-      GHS: 'GH',
-      ZAR: 'ZA',
-    };
-    const countryCode =
-      currencyToCountry[normalizedCurrency] ??
-      (normalizedCurrency.length === 2
-        ? normalizedCurrency
-        : normalizedCurrency.slice(0, 2));
-    const cacheKey = `${countryCode}:${normalizedType ?? 'all'}`;
+    const cacheKey = `${normalizedCurrency}:${normalizedType ?? 'all'}`;
     if (this.banksCache[cacheKey]) return this.banksCache[cacheKey];
 
     try {
       const response = await axios.get(`${this.paystackBaseUrl}/bank`, {
         params: {
-          country: countryCode,
+          currency: normalizedCurrency,
           ...(normalizedType ? { type: normalizedType } : {}),
         },
         headers: { Authorization: `Bearer ${this.secretKey}` },
@@ -280,10 +311,13 @@ export class PaystackService {
           'Paystack returned an invalid payout destination list',
         );
       }
-      this.banksCache[cacheKey] = response.data.data.filter(
+      const destinations = response.data.data.filter(
         (entry: any) => entry?.active !== false,
       );
-      return this.banksCache[cacheKey];
+      if (destinations.length > 0) {
+        this.banksCache[cacheKey] = destinations;
+      }
+      return destinations;
     } catch (error: any) {
       this.logger.error(
         `Failed to fetch Paystack destinations for ${normalizedCurrency}: ${error.response?.data?.message || error.message}`,
@@ -318,15 +352,24 @@ export class PaystackService {
     const key = country.toUpperCase();
     if (!this.banksCache[key]) {
       try {
-        const resp = await axios.get(`${this.paystackBaseUrl}/bank?country=${country}`, {
-          headers: { Authorization: `Bearer ${this.secretKey}` },
-        });
+        const resp = await axios.get(
+          `${this.paystackBaseUrl}/bank?country=${country}`,
+          {
+            headers: { Authorization: `Bearer ${this.secretKey}` },
+          },
+        );
         this.banksCache[key] = resp.data.data || [];
-        this.logger.debug(`Paystack bank list for ${country}: ${JSON.stringify(this.banksCache[key].slice(0, 5))}`);
+        this.logger.debug(
+          `Paystack bank list for ${country}: ${JSON.stringify(this.banksCache[key].slice(0, 5))}`,
+        );
       } catch (e: any) {
-        this.logger.error(`Failed to fetch Paystack banks for ${country}: ${e?.message || e}`);
+        this.logger.error(
+          `Failed to fetch Paystack banks for ${country}: ${e?.message || e}`,
+        );
         if (e.response?.data) {
-          this.logger.debug(`Paystack banks error data: ${JSON.stringify(e.response.data)}`);
+          this.logger.debug(
+            `Paystack banks error data: ${JSON.stringify(e.response.data)}`,
+          );
         }
         this.banksCache[key] = [];
       }
@@ -338,25 +381,35 @@ export class PaystackService {
 
     if (!banks.length) {
       if (configuredMap[normalized]) {
-        this.logger.log(`Bank code resolved from configured map for '${bankName}' -> '${configuredMap[normalized]}'`);
+        this.logger.log(
+          `Bank code resolved from configured map for '${bankName}' -> '${configuredMap[normalized]}'`,
+        );
         return configuredMap[normalized];
       }
 
-      if (country.toUpperCase() === 'KE' && this.kenyaBankCodeFallback[normalized]) {
-        this.logger.log(`Bank code resolved from built-in Kenya fallback for '${bankName}' -> '${this.kenyaBankCodeFallback[normalized]}'`);
+      if (
+        country.toUpperCase() === 'KE' &&
+        this.kenyaBankCodeFallback[normalized]
+      ) {
+        this.logger.log(
+          `Bank code resolved from built-in Kenya fallback for '${bankName}' -> '${this.kenyaBankCodeFallback[normalized]}'`,
+        );
         return this.kenyaBankCodeFallback[normalized];
       }
 
-      const message = country.toUpperCase() === 'KE'
-        ? `Paystack bank code not available for '${bankName}' in Kenya. Configure PAYSTACK_BANK_CODE_MAP for Kenyan bank name → bank_code mappings or use MOBILE_MONEY/CRYPTO instead.`
-        : `No Paystack bank list available for ${country}. Please verify the Paystack configuration and supported countries.`;
+      const message =
+        country.toUpperCase() === 'KE'
+          ? `Paystack bank code not available for '${bankName}' in Kenya. Configure PAYSTACK_BANK_CODE_MAP for Kenyan bank name → bank_code mappings or use MOBILE_MONEY/CRYPTO instead.`
+          : `No Paystack bank list available for ${country}. Please verify the Paystack configuration and supported countries.`;
       this.logger.error(message);
       throw new BadRequestException(message);
     }
 
     // Try exact match first
     for (const b of banks) {
-      if ((b.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') === normalized) {
+      if (
+        (b.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') === normalized
+      ) {
         return b.code;
       }
     }
@@ -369,17 +422,29 @@ export class PaystackService {
     }
 
     if (configuredMap[normalized]) {
-      this.logger.log(`Bank code resolved from configured map for '${bankName}' -> '${configuredMap[normalized]}'`);
+      this.logger.log(
+        `Bank code resolved from configured map for '${bankName}' -> '${configuredMap[normalized]}'`,
+      );
       return configuredMap[normalized];
     }
 
-    if (country.toUpperCase() === 'KE' && this.kenyaBankCodeFallback[normalized]) {
-      this.logger.log(`Bank code resolved from built-in Kenya fallback for '${bankName}' -> '${this.kenyaBankCodeFallback[normalized]}'`);
+    if (
+      country.toUpperCase() === 'KE' &&
+      this.kenyaBankCodeFallback[normalized]
+    ) {
+      this.logger.log(
+        `Bank code resolved from built-in Kenya fallback for '${bankName}' -> '${this.kenyaBankCodeFallback[normalized]}'`,
+      );
       return this.kenyaBankCodeFallback[normalized];
     }
 
-    const sample = banks.slice(0, 8).map((b: any) => `${b.name} (${b.code})`).join(', ');
-    throw new BadRequestException(`Unknown bank name '${bankName}'. Paystack supported examples: ${sample}`);
+    const sample = banks
+      .slice(0, 8)
+      .map((b: any) => `${b.name} (${b.code})`)
+      .join(', ');
+    throw new BadRequestException(
+      `Unknown bank name '${bankName}'. Paystack supported examples: ${sample}`,
+    );
   }
 
   private normalizeBankName(bankName: string) {
@@ -389,7 +454,9 @@ export class PaystackService {
   private toPaystackAmount(amount: number | string) {
     const value = Number(amount);
     if (Number.isNaN(value)) {
-      throw new BadRequestException('Invalid amount for Paystack initialization');
+      throw new BadRequestException(
+        'Invalid amount for Paystack initialization',
+      );
     }
     return Math.round(value * 100);
   }
@@ -416,18 +483,22 @@ export class PaystackService {
 
       // If caller provided a phone_number, include recipient_phone for SMS routing
       if (payload.phone_number) {
-        transferPayload.recipient_phone = this.formatPhoneForPaystack(payload.phone_number);
+        transferPayload.recipient_phone = this.formatPhoneForPaystack(
+          payload.phone_number,
+        );
       }
 
-      this.logger.debug(`Paystack transfer payload: ${JSON.stringify({
-        recipient: transferPayload.recipient,
-        amount: transferPayload.amount,
-        currency: transferPayload.currency,
-        reference: transferPayload.reference,
-        recipient_phone: transferPayload.recipient_phone
-          ? `***${String(transferPayload.recipient_phone).slice(-4)}`
-          : undefined,
-      })}`);
+      this.logger.debug(
+        `Paystack transfer payload: ${JSON.stringify({
+          recipient: transferPayload.recipient,
+          amount: transferPayload.amount,
+          currency: transferPayload.currency,
+          reference: transferPayload.reference,
+          recipient_phone: transferPayload.recipient_phone
+            ? `***${String(transferPayload.recipient_phone).slice(-4)}`
+            : undefined,
+        })}`,
+      );
 
       const response = await axios.post(
         `${this.paystackBaseUrl}/transfer`,
@@ -458,7 +529,10 @@ export class PaystackService {
           String(apiMessage),
         );
       const outcome =
-        !e.response || statusCode >= 500 || statusCode === 409 || duplicateReference
+        !e.response ||
+        statusCode >= 500 ||
+        statusCode === 409 ||
+        duplicateReference
           ? 'unknown'
           : 'rejected';
       this.logger.error(
@@ -477,19 +551,28 @@ export class PaystackService {
     }
 
     try {
-      const response = await axios.get(`${this.paystackBaseUrl}/transfer/${encodeURIComponent(transferCode)}`, {
-        headers: { Authorization: `Bearer ${this.secretKey}` },
-      });
+      const response = await axios.get(
+        `${this.paystackBaseUrl}/transfer/${encodeURIComponent(transferCode)}`,
+        {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+        },
+      );
 
       if (!response.data.status) {
-        throw new BadRequestException('Failed to retrieve transfer status from Paystack');
+        throw new BadRequestException(
+          'Failed to retrieve transfer status from Paystack',
+        );
       }
 
       this.logger.log(`Paystack transfer status fetched for ${transferCode}`);
       return response.data.data;
     } catch (e: any) {
-      this.logger.error(`Paystack transfer status error: ${e.response?.data?.message || e.message}`);
-      throw new BadRequestException(`Paystack transfer status lookup failed: ${e.response?.data?.message || e.message}`);
+      this.logger.error(
+        `Paystack transfer status error: ${e.response?.data?.message || e.message}`,
+      );
+      throw new BadRequestException(
+        `Paystack transfer status lookup failed: ${e.response?.data?.message || e.message}`,
+      );
     }
   }
 

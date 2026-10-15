@@ -23,6 +23,11 @@ export class IvorypayDepositService {
     private readonly cache: CacheService,
   ) {}
 
+  async getSupportedPaymentTokens() {
+    const tokens = await this.ivorypayService.getSupportedPaymentTokens();
+    return { success: true, data: tokens };
+  }
+
   async createDeposit(userId: string, dto: any) {
     const amount = Number(dto.amount_fiat);
     if (!Number.isFinite(amount) || amount < 10) {

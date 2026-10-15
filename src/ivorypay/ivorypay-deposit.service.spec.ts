@@ -60,6 +60,7 @@ describe('IvorypayDepositService', () => {
         { token: 'USDT', network: 'BSC', networkName: 'BSC' },
         { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
       ]),
+      getSupportedPaymentTokens: jest.fn().mockResolvedValue(['USDC', 'USDT']),
     };
 
     const module = await Test.createTestingModule({
@@ -106,6 +107,14 @@ describe('IvorypayDepositService', () => {
         data: { providerRef: expect.any(String) },
       }),
     );
+  });
+
+  it('returns the unique supported payment tokens', async () => {
+    await expect(service.getSupportedPaymentTokens()).resolves.toEqual({
+      success: true,
+      data: ['USDC', 'USDT'],
+    });
+    expect(ivorypay.getSupportedPaymentTokens).toHaveBeenCalledTimes(1);
   });
 
   it('requires a supported token and validates any selected network', async () => {

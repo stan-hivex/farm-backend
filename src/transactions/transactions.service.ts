@@ -177,10 +177,17 @@ export class TransactionsService {
       );
     const txn = await this.prisma.transactions.findFirst({
       where: {
-        ...(isUuid ? { id: txId } : { transaction_reference: txId }),
         OR: [
-          { sender_wallet_id: wallet?.id },
-          { receiver_wallet_id: wallet?.id },
+          ...(isUuid ? [{ id: txId }] : []),
+          { transaction_reference: txId },
+        ],
+        AND: [
+          {
+            OR: [
+              { sender_wallet_id: wallet?.id },
+              { receiver_wallet_id: wallet?.id },
+            ],
+          },
         ],
       },
       include: {
@@ -238,6 +245,23 @@ export class TransactionsService {
             where: { reference: txn.transaction_reference },
           })
         : null;
+    const depositOwner =
+      txn.transaction_type === 'deposit' &&
+      !recipientUser &&
+      wallet?.user_id
+        ? await this.prisma.users.findUnique({
+            where: { id: wallet.user_id },
+            select: {
+              id: true,
+              username: true,
+              first_name: true,
+              last_name: true,
+              profile_image: true,
+            },
+          })
+        : null;
+    const detailRecipientUser =
+      recipientUser ?? this.buildUserSummary(depositOwner);
     const withdrawal =
       txn.transaction_type === 'withdrawal'
         ? await this.prisma.withdrawal.findUnique({
@@ -264,6 +288,25 @@ export class TransactionsService {
         : deposit && deposit.currency !== txn.currency
           ? deposit.currency
           : null);
+    const displayName = (user: TransactionUserSummary | null) =>
+      user
+        ? [user.first_name, user.last_name]
+            .filter((part): part is string => Boolean(part?.trim()))
+            .join(' ') || user.username
+        : '';
+    const provider = (metadata.provider ?? deposit?.provider ?? '')
+      .toString()
+      .trim();
+    const providerLabel = provider
+      ? provider.toLowerCase() === 'ivorypay'
+        ? 'IvoryPay'
+        : provider.charAt(0).toUpperCase() + provider.slice(1)
+      : '';
+    const externalSenderName = [
+      metadata.sender_name,
+      metadata.payer_name,
+      metadata.customer_name,
+    ].find((name) => typeof name === 'string' && name.trim());
 
     let merchantBusinessName = '';
     if (txn.metadata && typeof txn.metadata === 'object') {
@@ -326,11 +369,17 @@ export class TransactionsService {
         failure_reason: withdrawal?.rejectionReason ?? null,
         is_outgoing: txn.sender_wallet_id === wallet?.id,
         sender_username: senderUser?.username ?? '',
-        recipient_username: recipientUser?.username ?? '',
+        recipient_username: detailRecipientUser?.username ?? '',
+        sender_name:
+          displayName(senderUser) ||
+          (txn.transaction_type === 'deposit'
+            ? (externalSenderName ?? providerLabel) || 'External payment'
+            : ''),
+        receiver_name: displayName(detailRecipientUser),
         sender_user: senderUser,
-        recipient_user: recipientUser,
+        recipient_user: detailRecipientUser,
         users_sender: senderUser,
-        users_recipient: recipientUser,
+        users_recipient: detailRecipientUser,
         merchant_business_name: merchantBusinessName,
       },
     };

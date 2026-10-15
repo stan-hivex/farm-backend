@@ -63,18 +63,95 @@ describe('PaymentsService.getExchangeRate', () => {
   });
 });
 
+describe('PaymentsService merchant QR mobile-money checkout', () => {
+  const createService = (phone: string | null = null) => {
+    const prisma = {
+      users: {
+        findUnique: jest.fn().mockResolvedValue({
+          email: 'merchant@example.com',
+          phone,
+          first_name: 'Merchant',
+          last_name: 'Owner',
+        }),
+      },
+      wallets: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'wallet-1' }),
+      },
+      transactions: {
+        create: jest.fn().mockResolvedValue({ id: 'transaction-1' }),
+      },
+      audit_logs: { create: jest.fn().mockResolvedValue({}) },
+      deposit: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const paystack = {
+      initializePayment: jest.fn().mockResolvedValue({
+        authorization_url: 'https://checkout.paystack.com/reference',
+      }),
+    };
+    const service = new PaymentsService(
+      prisma as any,
+      {} as any,
+      {} as any,
+      paystack as any,
+      {} as any,
+      {} as any,
+    );
+    (service as any).getExchangeRate = jest.fn().mockResolvedValue(130);
+    (service as any).assessFraudRisk = jest
+      .fn()
+      .mockResolvedValue({ block: false });
+
+    return { service, paystack };
+  };
+
+  it('uses the payer email and lets hosted checkout collect the phone number', async () => {
+    const { service, paystack } = createService();
+
+    await service.initiateDeposit('merchant-1', {
+      amount_fiat: 100,
+      currency: 'KES',
+      paymentMethod: 'MOBILE_MONEY',
+      email: 'customer@example.com',
+      callbackUrl: 'https://farmapp-e2145.web.app/merchant-payment/',
+      merchantQrCheckout: true,
+    });
+
+    expect(paystack.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'customer@example.com',
+        channels: ['mobile_money'],
+      }),
+    );
+    expect(paystack.initializePayment.mock.calls[0][0]).not.toHaveProperty(
+      'phone',
+    );
+  });
+
+  it('continues requiring a phone number for non-QR mobile-money deposits', async () => {
+    const { service, paystack } = createService();
+
+    await expect(
+      service.initiateDeposit('user-1', {
+        amount_fiat: 100,
+        currency: 'KES',
+        paymentMethod: 'MOBILE_MONEY',
+      }),
+    ).rejects.toThrow('Phone number is required for mobile money deposits');
+
+    expect(paystack.initializePayment).not.toHaveBeenCalled();
+  });
+});
+
 describe('PaymentsService crypto deposits', () => {
   it('sends a UUID reference and the selected token to IvoryPay', async () => {
     const prisma = {
       users: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({
-            email: 'customer@example.com',
-            phone: '+254700000000',
-            first_name: 'Test',
-            last_name: 'Customer',
-          }),
+        findUnique: jest.fn().mockResolvedValue({
+          email: 'customer@example.com',
+          phone: '+254700000000',
+          first_name: 'Test',
+          last_name: 'Customer',
+        }),
       },
       wallets: { findFirst: jest.fn().mockResolvedValue({ id: 'wallet-1' }) },
       transactions: { create: jest.fn().mockResolvedValue({ id: 'tx-1' }) },
@@ -154,12 +231,9 @@ describe('PaymentsService crypto deposits', () => {
     );
     expect(result).toMatchObject({
       data: {
-        payment_link:
-          'https://checkout.ivorypay.io/checkout/reference',
-        checkout_url:
-          'https://checkout.ivorypay.io/checkout/reference',
-        checkoutUrl:
-          'https://checkout.ivorypay.io/checkout/reference',
+        payment_link: 'https://checkout.ivorypay.io/checkout/reference',
+        checkout_url: 'https://checkout.ivorypay.io/checkout/reference',
+        checkoutUrl: 'https://checkout.ivorypay.io/checkout/reference',
       },
     });
   });

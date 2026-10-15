@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { PaystackService } from '../paystack/paystack.service';
@@ -41,10 +46,17 @@ export class PaymentsService {
     },
     ctx?: { deviceRisk?: number; ip?: string; country?: string },
   ) {
-    const supportedPaymentMethods: PaymentMethod[] = ['CARD', 'MOBILE_MONEY', 'CRYPTO', 'BANK_TRANSFER'];
+    const supportedPaymentMethods: PaymentMethod[] = [
+      'CARD',
+      'MOBILE_MONEY',
+      'CRYPTO',
+      'BANK_TRANSFER',
+    ];
     const rawPaymentMethod = (dto.paymentMethod || 'CARD').toUpperCase();
     if (!supportedPaymentMethods.includes(rawPaymentMethod as PaymentMethod)) {
-      throw new BadRequestException(`Unsupported payment method ${dto.paymentMethod}`);
+      throw new BadRequestException(
+        `Unsupported payment method ${dto.paymentMethod}`,
+      );
     }
     const paymentMethod = rawPaymentMethod as PaymentMethod;
 
@@ -100,35 +112,47 @@ export class PaymentsService {
         },
       });
 
-      this.logger.warn(`Deposit blocked for user=${userId} reference=${reference} reason=${fraud.reason} details=${JSON.stringify(fraud)}`);
+      this.logger.warn(
+        `Deposit blocked for user=${userId} reference=${reference} reason=${fraud.reason} details=${JSON.stringify(fraud)}`,
+      );
 
       // Provide a more informative error to the caller while avoiding leaking
       // sensitive internal data. Include the rule/reason id so support can act.
-      const reasonLabel = typeof fraud.reason === 'string' ? fraud.reason : 'unknown_reason';
-      throw new BadRequestException(`Deposit blocked by fraud protection: ${reasonLabel}`);
+      const reasonLabel =
+        typeof fraud.reason === 'string' ? fraud.reason : 'unknown_reason';
+      throw new BadRequestException(
+        `Deposit blocked by fraud protection: ${reasonLabel}`,
+      );
     }
 
-    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId, is_active: true } });
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId, is_active: true },
+    });
 
     if (paymentMethod === 'MOBILE_MONEY') {
-      const phone = dto.phone || user.phone;
-      if (!phone) {
-        throw new BadRequestException('Phone number is required for mobile money deposits');
+      const phone =
+        dto.phone || (dto.merchantQrCheckout ? undefined : user.phone);
+      if (!phone && !dto.merchantQrCheckout) {
+        throw new BadRequestException(
+          'Phone number is required for mobile money deposits',
+        );
       }
 
       // Validate phone format: Paystack mobile-money requires international format (+country code)
-      if (!phone.startsWith('+')) {
-        this.logger.warn(`Mobile-money phone not in international format: ${phone}. Expected format: +254XXXXXXXXX`);
+      if (phone && !phone.startsWith('+')) {
+        this.logger.warn(
+          `Mobile-money phone not in international format: ${phone}. Expected format: +254XXXXXXXXX`,
+        );
       }
 
       const response = await this.paystack.initializePayment({
-        email: user.email || `${user.phone}@farm.app`,
+        email: dto.email?.trim() || user.email || `${user.phone}@farm.app`,
         amount: dto.amount_fiat,
         currency: dto.currency,
         reference,
         channels: ['mobile_money'],
         callback_url: callbackUrl || 'https://farmapp.africa/payment-callback',
-        phone,
+        ...(phone ? { phone } : {}),
         metadata: {
           user_id: userId,
           currency: dto.currency,
@@ -161,7 +185,9 @@ export class PaymentsService {
         },
       });
 
-      this.logger.log(`initiateDeposit: created Paystack mobile-money transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+      this.logger.log(
+        `initiateDeposit: created Paystack mobile-money transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`,
+      );
 
       await this.prisma.audit_logs.create({
         data: {
@@ -192,7 +218,8 @@ export class PaymentsService {
           provider: 'PAYSTACK',
           reference,
           payment_url: response.authorization_url || response.authorizationUrl,
-          authorization_url: response.authorization_url || response.authorizationUrl,
+          authorization_url:
+            response.authorization_url || response.authorizationUrl,
         },
         message: 'Mobile money deposit initiated via Paystack checkout',
       };
@@ -213,7 +240,9 @@ export class PaymentsService {
       const currentRate = await this.currencyConversionService.getCurrentRate();
       const farmToUsdRate = Number(currentRate.farm_usd_rate);
       if (!Number.isFinite(farmToUsdRate) || farmToUsdRate <= 0) {
-        throw new BadRequestException('The FARM/USD conversion rate is unavailable');
+        throw new BadRequestException(
+          'The FARM/USD conversion rate is unavailable',
+        );
       }
       const amountUsd = Number((farmAmount * farmToUsdRate).toFixed(2));
       if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
@@ -290,7 +319,9 @@ export class PaymentsService {
         },
       });
 
-      this.logger.log(`initiateDeposit: created Ivorypay crypto transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+      this.logger.log(
+        `initiateDeposit: created Ivorypay crypto transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`,
+      );
 
       await this.prisma.audit_logs.create({
         data: {
@@ -374,7 +405,9 @@ export class PaymentsService {
         },
       });
 
-      this.logger.log(`initiateDeposit: created Paystack card transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+      this.logger.log(
+        `initiateDeposit: created Paystack card transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`,
+      );
 
       await this.prisma.audit_logs.create({
         data: {
@@ -405,7 +438,8 @@ export class PaymentsService {
           provider: 'PAYSTACK',
           reference,
           payment_url: response.authorization_url || response.authorizationUrl,
-          authorization_url: response.authorization_url || response.authorizationUrl,
+          authorization_url:
+            response.authorization_url || response.authorizationUrl,
         },
         message: 'Card deposit initiated via Paystack checkout',
       };
@@ -455,7 +489,9 @@ export class PaymentsService {
         },
       });
 
-      this.logger.log(`initiateDeposit: created Paystack bank transfer transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`);
+      this.logger.log(
+        `initiateDeposit: created Paystack bank transfer transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`,
+      );
 
       await this.prisma.audit_logs.create({
         data: {
@@ -486,13 +522,16 @@ export class PaymentsService {
           provider: 'PAYSTACK',
           reference,
           payment_url: response.authorization_url || response.authorizationUrl,
-          authorization_url: response.authorization_url || response.authorizationUrl,
+          authorization_url:
+            response.authorization_url || response.authorizationUrl,
         },
         message: 'Bank transfer deposit initiated via Paystack checkout',
       };
     }
 
-    throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
+    throw new BadRequestException(
+      `Unsupported payment method ${paymentMethod}`,
+    );
   }
 
   async getCryptoPaymentOptions() {
@@ -543,22 +582,45 @@ export class PaymentsService {
   }
 
   // Simple fraud assessment: velocity and amount thresholds.
-  private async assessFraudRisk(userId: string, ctx: { amount_fiat: number; currency: string; ip?: string; deviceRisk?: number; country?: string }) {
+  private async assessFraudRisk(
+    userId: string,
+    ctx: {
+      amount_fiat: number;
+      currency: string;
+      ip?: string;
+      deviceRisk?: number;
+      country?: string;
+    },
+  ) {
     // Load configurable thresholds from system_settings
-    const keys = ['fraud.amount_threshold', 'fraud.velocity_limit', 'fraud.max_daily_amount'];
-    const settings = await this.prisma.system_settings.findMany({ where: { setting_key: { in: keys } } });
+    const keys = [
+      'fraud.amount_threshold',
+      'fraud.velocity_limit',
+      'fraud.max_daily_amount',
+    ];
+    const settings = await this.prisma.system_settings.findMany({
+      where: { setting_key: { in: keys } },
+    });
     const getSetting = (k: string) => {
       const s = settings.find((x: any) => x.setting_key === k);
       if (!s || s.setting_value == null) return null;
       // Try parse JSON then number
-      try { return JSON.parse(s.setting_value); } catch { /* ignore */ }
+      try {
+        return JSON.parse(s.setting_value);
+      } catch {
+        /* ignore */
+      }
       const n = Number(s.setting_value);
       return Number.isFinite(n) ? n : s.setting_value;
     };
 
-    const amountThreshold = Number(getSetting('fraud.amount_threshold') ?? 5000);
+    const amountThreshold = Number(
+      getSetting('fraud.amount_threshold') ?? 5000,
+    );
     const velocityLimit = Number(getSetting('fraud.velocity_limit') ?? 5);
-    const maxDailyAmount = Number(getSetting('fraud.max_daily_amount') ?? 20000);
+    const maxDailyAmount = Number(
+      getSetting('fraud.max_daily_amount') ?? 20000,
+    );
 
     // Count recent deposits by this user in the last 1 hour
     const oneHourAgo = new Date(Date.now() - 1000 * 60 * 60);
@@ -585,13 +647,22 @@ export class PaymentsService {
 
     // Apply system settings checks first
     if (ctx.amount_fiat > amountThreshold) {
-      return { block: true, reason: 'amount_exceeds_threshold', threshold: amountThreshold };
+      return {
+        block: true,
+        reason: 'amount_exceeds_threshold',
+        threshold: amountThreshold,
+      };
     }
     if (recent >= velocityLimit) {
       // High velocity deposits: treat as a challenge (require review) rather than
       // an outright block to avoid rejecting legitimate users who make multiple
       // small deposits in quick succession (e.g., during testing).
-      return { block: false, challenge: true, reason: 'high_velocity', limit: velocityLimit };
+      return {
+        block: false,
+        challenge: true,
+        reason: 'high_velocity',
+        limit: velocityLimit,
+      };
     }
     if (todaysSum + ctx.amount_fiat > maxDailyAmount) {
       return { block: true, reason: 'daily_limit_exceeded', maxDailyAmount };
@@ -622,7 +693,8 @@ export class PaymentsService {
             let matched = false;
             for (const pfx of r.ip_prefixes) {
               if (ctx.ip.startsWith(pfx)) {
-                matched = true; break;
+                matched = true;
+                break;
               }
             }
             if (!matched) continue;
@@ -635,19 +707,30 @@ export class PaymentsService {
           }
 
           // matched
-          if (r.action === 'block') return { block: true, reason: r.reason || r.id, rule: r.id };
-          if (r.action === 'challenge') return { block: false, challenge: true, reason: r.reason || r.id, rule: r.id };
+          if (r.action === 'block')
+            return { block: true, reason: r.reason || r.id, rule: r.id };
+          if (r.action === 'challenge')
+            return {
+              block: false,
+              challenge: true,
+              reason: r.reason || r.id,
+              rule: r.id,
+            };
         }
       }
     } catch (err: any) {
-      this.logger.warn(`Failed to evaluate fraud.rules: ${err?.message ?? String(err)}`);
+      this.logger.warn(
+        `Failed to evaluate fraud.rules: ${err?.message ?? String(err)}`,
+      );
     }
 
     return { block: false };
   }
 
   async getDepositHistory(userId: string) {
-    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId },
+    });
     const items = await this.prisma.transactions.findMany({
       where: {
         transaction_type: 'deposit',
@@ -660,27 +743,29 @@ export class PaymentsService {
   }
 
   async getWithdrawalHistory(userId: string) {
-  const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
-  const items = await this.prisma.transactions.findMany({
-    where: {
-      transaction_type: 'withdrawal',
-      sender_wallet_id: wallet?.id,
-      status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES },
-    },
-    orderBy: { created_at: 'desc' },
-  });
-  return {
-    data: items.map((t) => {
-      const meta = t.metadata as any ?? {};
-      const status = (t.status ?? 'UNKNOWN').toUpperCase();
-      return {
-        ...t,
-        amount: Number(t.amount),
-        // Hoist metadata fields to top level so the Flutter widget can read them
-        method: meta.method ?? 'BANK',
-        status: t.status?.toLowerCase() === 'completed' ? 'SUCCESS' : status,
-      };
-    }),
-  };
-}
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId },
+    });
+    const items = await this.prisma.transactions.findMany({
+      where: {
+        transaction_type: 'withdrawal',
+        sender_wallet_id: wallet?.id,
+        status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+    return {
+      data: items.map((t) => {
+        const meta = (t.metadata as any) ?? {};
+        const status = (t.status ?? 'UNKNOWN').toUpperCase();
+        return {
+          ...t,
+          amount: Number(t.amount),
+          // Hoist metadata fields to top level so the Flutter widget can read them
+          method: meta.method ?? 'BANK',
+          status: t.status?.toLowerCase() === 'completed' ? 'SUCCESS' : status,
+        };
+      }),
+    };
+  }
 }

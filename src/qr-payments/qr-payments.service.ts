@@ -361,11 +361,7 @@ export class QrPaymentsService {
     const transaction = await this.findQrTransaction(reference);
     const metadata =
       (transaction?.metadata as Record<string, unknown> | null) ?? {};
-    if (
-      !transaction ||
-      metadata.type !== 'qr_sale' ||
-      metadata.isQrSale !== true
-    ) {
+    if (!transaction || !this.isPublicQrSale(transaction, metadata)) {
       throw new NotFoundException('Merchant QR payment was not found');
     }
 
@@ -474,8 +470,6 @@ export class QrPaymentsService {
     return this.prisma.transactions.findFirst({
       where: {
         AND: [
-          { metadata: { path: ['type'], equals: 'qr_sale' } },
-          { metadata: { path: ['isQrSale'], equals: true } },
           {
             OR: [
               { transaction_reference: reference },
@@ -500,10 +494,45 @@ export class QrPaymentsService {
               })),
             ],
           },
+          {
+            OR: [
+              {
+                AND: [
+                  { metadata: { path: ['type'], equals: 'qr_sale' } },
+                  { metadata: { path: ['isQrSale'], equals: true } },
+                ],
+              },
+              {
+                AND: [
+                  { transaction_type: 'merchant_payment' },
+                  {
+                    qr_payments: {
+                      some: { merchant_id: { not: null } },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
         ],
       },
       include: { qr_payments: { take: 1 } },
     });
+  }
+
+  private isPublicQrSale(
+    transaction: {
+      transaction_type?: string | null;
+      qr_payments?: Array<{ merchant_id: string | null }>;
+    },
+    metadata: Record<string, unknown>,
+  ) {
+    return (
+      (metadata.type === 'qr_sale' && metadata.isQrSale === true) ||
+      (transaction.transaction_type === 'merchant_payment' &&
+        transaction.qr_payments?.some((payment) => payment.merchant_id) ===
+          true)
+    );
   }
 
   async complete(
@@ -519,8 +548,7 @@ export class QrPaymentsService {
       (transaction?.metadata as Record<string, unknown> | null) ?? {};
     if (
       !transaction ||
-      metadata.type !== 'qr_sale' ||
-      metadata.isQrSale !== true ||
+      !this.isPublicQrSale(transaction, metadata) ||
       metadata.provider !== provider
     ) {
       this.logger.warn(
@@ -722,6 +750,14 @@ export class QrPaymentsService {
           error instanceof Error ? error.stack : String(error),
         );
       });
+    const transactionHistoryCacheInvalidation = this.cache
+      .cacheInvalidatePattern(`transactions:${settled.userId}:*`)
+      .catch((error) => {
+        this.logger.error(
+          `QR payment transaction history cache invalidation failed ref=${reference}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      });
     const superadminCacheInvalidation = Promise.all([
       this.cache.invalidateWallet(settled.superadminId),
       this.cache.cacheDelete('admin:superadmin-dashboard'),
@@ -755,6 +791,7 @@ export class QrPaymentsService {
       });
     await Promise.all([
       cacheInvalidation,
+      transactionHistoryCacheInvalidation,
       superadminCacheInvalidation,
       notificationDelivery,
     ]);

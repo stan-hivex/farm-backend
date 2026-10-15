@@ -44,9 +44,8 @@ class MerchantCheckoutPaymentDto {
   @Length(8, 20)
   phone?: string;
 
-  @IsOptional()
   @IsEmail()
-  email?: string;
+  email!: string;
 
   @IsOptional()
   @IsIn(['USDC', 'USDT'])
@@ -75,10 +74,13 @@ export class MerchantCheckoutController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiOperation({ summary: 'Get public details for a signed merchant QR' })
   async getMerchant(@Query('qr_payload') qrPayload: string) {
-    if (!qrPayload) throw new BadRequestException('Merchant QR payload is required');
+    if (!qrPayload)
+      throw new BadRequestException('Merchant QR payload is required');
     const validation = (await this.qrService.validate(qrPayload, '')).data;
     if (validation.type !== 'merchant') {
-      throw new BadRequestException('This QR code is not a merchant payment QR');
+      throw new BadRequestException(
+        'This QR code is not a merchant payment QR',
+      );
     }
 
     return {
@@ -88,7 +90,14 @@ export class MerchantCheckoutController {
         currency: 'KES',
         fiat_methods: ['CARD', 'MOBILE_MONEY', 'BANK_TRANSFER'],
         crypto_tokens: ['USDC', 'USDT'],
-        crypto_networks: ['BSC', 'POLYGON', 'SOL', 'BASE', 'STARKNET', 'ALGORAND'],
+        crypto_networks: [
+          'BSC',
+          'POLYGON',
+          'SOL',
+          'BASE',
+          'STARKNET',
+          'ALGORAND',
+        ],
       },
     };
   }
@@ -96,7 +105,9 @@ export class MerchantCheckoutController {
   @Public()
   @Get('payment-status')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Check the verified status of a merchant QR payment' })
+  @ApiOperation({
+    summary: 'Check the verified status of a merchant QR payment',
+  })
   async getPaymentStatus(@Query('reference') reference: string) {
     if (!reference || reference.length > 128) {
       throw new BadRequestException('A valid payment reference is required');
@@ -171,9 +182,13 @@ export class MerchantCheckoutController {
         status:
           status === 'completed'
             ? 'completed'
-            : ['failed', 'cancelled', 'reversed', 'expired', 'abandoned'].includes(
-                  status ?? '',
-                )
+            : [
+                  'failed',
+                  'cancelled',
+                  'reversed',
+                  'expired',
+                  'abandoned',
+                ].includes(status ?? '')
               ? 'failed'
               : 'pending',
         business_name: merchant?.business_name ?? 'Merchant',
@@ -186,11 +201,18 @@ export class MerchantCheckoutController {
   @Public()
   @Post('payment')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Start a public fiat or crypto merchant QR payment' })
-  async createPayment(@Body() dto: MerchantCheckoutPaymentDto, @Ip() ip: string) {
+  @ApiOperation({
+    summary: 'Start a public fiat or crypto merchant QR payment',
+  })
+  async createPayment(
+    @Body() dto: MerchantCheckoutPaymentDto,
+    @Ip() ip: string,
+  ) {
     const validation = (await this.qrService.validate(dto.qr_payload, '')).data;
     if (validation.type !== 'merchant') {
-      throw new BadRequestException('This QR code is not a merchant payment QR');
+      throw new BadRequestException(
+        'This QR code is not a merchant payment QR',
+      );
     }
 
     const merchant = await this.prisma.merchants.findUnique({
@@ -198,7 +220,9 @@ export class MerchantCheckoutController {
       select: { id: true, user_id: true, business_name: true, status: true },
     });
     if (!merchant?.user_id || merchant.status !== 'approved') {
-      throw new BadRequestException('This merchant cannot currently accept payments');
+      throw new BadRequestException(
+        'This merchant cannot currently accept payments',
+      );
     }
 
     const initiation = await this.paymentsService.initiateDeposit(
@@ -225,7 +249,9 @@ export class MerchantCheckoutController {
       paymentData.payment_link ??
       paymentData.checkout_url;
     if (!reference || typeof paymentUrl !== 'string' || !paymentUrl) {
-      throw new BadRequestException('The payment provider did not return a checkout URL');
+      throw new BadRequestException(
+        'The payment provider did not return a checkout URL',
+      );
     }
 
     const transaction = await this.prisma.transactions.findUnique({
@@ -233,7 +259,9 @@ export class MerchantCheckoutController {
       select: { id: true, metadata: true, amount: true },
     });
     if (!transaction) {
-      throw new BadRequestException('Could not link the initiated payment to this merchant');
+      throw new BadRequestException(
+        'Could not link the initiated payment to this merchant',
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -269,7 +297,8 @@ export class MerchantCheckoutController {
         payment_url: paymentUrl,
         business_name: merchant.business_name,
       },
-      message: 'Payment initiated. The merchant wallet will be credited after provider confirmation.',
+      message:
+        'Payment initiated. The merchant wallet will be credited after provider confirmation.',
     };
   }
 }

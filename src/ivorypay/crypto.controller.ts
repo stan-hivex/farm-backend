@@ -17,6 +17,13 @@ import { IvorypayDepositService } from './ivorypay-deposit.service';
 export class CryptoController {
   constructor(private readonly ivorypayDepositService: IvorypayDepositService) {}
 
+  @Get('payment-options')
+  @UseGuards(JwtAuthGuard)
+  @Permissions('payments:read')
+  getPaymentOptions() {
+    return this.ivorypayDepositService.getSupportedPaymentTokens();
+  }
+
   @UseGuards(JwtAuthGuard)
   @Permissions('payments:write')
   @Throttle({ default: { limit: 10, ttl: 60000 } })

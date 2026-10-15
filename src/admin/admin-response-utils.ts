@@ -10,6 +10,8 @@ export interface AdminListItemShape {
   processed_at?: Date | string | null;
   metadata?: Record<string, any> | null;
   method?: string;
+  payment_method?: string | null;
+  payment_provider?: string | null;
   user_id?: string | null;
   username?: string | null;
   user_name?: string | null;
@@ -70,6 +72,12 @@ export function enrichAdminListItem<T extends Record<string, any>>(
     metadata.provider ??
     null;
   const normalizedMethod = rawMethod?.toString().trim().toUpperCase() || 'UNKNOWN';
+  const rawProvider =
+    metadata.payment_provider ??
+    metadata.provider ??
+    item.payment_provider ??
+    item.provider ??
+    null;
 
   const rawStatus = item.status?.toString().trim().toLowerCase() ?? '';
   const statusValue = rawStatus || 'unknown';
@@ -91,6 +99,8 @@ export function enrichAdminListItem<T extends Record<string, any>>(
     user_email: relatedUser?.email ?? item.user_email ?? null,
     user_phone: relatedUser?.phone ?? item.user_phone ?? null,
     method: normalizedMethod,
+    payment_method: normalizedMethod,
+    payment_provider: rawProvider?.toString() ?? null,
     amount,
     status: statusValue,
     date: dateValue,
