@@ -252,13 +252,25 @@ export class PaystackService {
 
     const normalizedCurrency = currency.trim().toUpperCase();
     const normalizedType = type?.trim().toLowerCase();
-    const cacheKey = `${normalizedCurrency}:${normalizedType ?? 'all'}`;
+    // Map common 3-letter currency codes to 2-letter Paystack country codes
+    const currencyToCountry: Record<string, string> = {
+      KES: 'KE',
+      NGN: 'NG',
+      GHS: 'GH',
+      ZAR: 'ZA',
+    };
+    const countryCode =
+      currencyToCountry[normalizedCurrency] ??
+      (normalizedCurrency.length === 2
+        ? normalizedCurrency
+        : normalizedCurrency.slice(0, 2));
+    const cacheKey = `${countryCode}:${normalizedType ?? 'all'}`;
     if (this.banksCache[cacheKey]) return this.banksCache[cacheKey];
 
     try {
       const response = await axios.get(`${this.paystackBaseUrl}/bank`, {
         params: {
-          currency: normalizedCurrency,
+          country: countryCode,
           ...(normalizedType ? { type: normalizedType } : {}),
         },
         headers: { Authorization: `Bearer ${this.secretKey}` },

@@ -460,7 +460,7 @@ export class DepositService {
         data: { status: 'SUCCESS' },
       });
       if (updatedDeposit.count === 0) {
-        return { ok: false };
+        return { ok: false as const };
       }
 
       const amount = this.normalizeAmount(Number(deposit.amount));
@@ -531,7 +531,7 @@ export class DepositService {
       });
 
       return {
-        ok: true,
+        ok: true as const,
         merchantId: merchant.user_id,
         merchantBalance: merchantBalanceBefore + merchantNet,
         superadminId: superadmin.id,

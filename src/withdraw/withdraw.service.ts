@@ -618,7 +618,8 @@ export class WithdrawService {
   }
 
   async getPaystackDestinations(type?: string) {
-    return this.paystack.getBanks('KES', type);
+    // Use Paystack country code (KE) for Kenyan payout destinations
+    return this.paystack.getBanks('KE', type);
   }
 
   async adminApproveWithdrawal(idOrReference: string) {
