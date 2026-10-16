@@ -1,6 +1,69 @@
 import { AdminService } from './admin.service';
 
 describe('AdminService transaction list details', () => {
+  it('returns admin-accessible details by transaction id with linked parties', async () => {
+    const transaction = {
+      id: '11111111-1111-4111-8111-111111111111',
+      transaction_reference: 'deposit-ref-1',
+      transaction_type: 'deposit',
+      status: 'PENDING',
+      amount: 100,
+      fee: 0,
+      net_amount: 100,
+      currency: 'FARM',
+      description: 'Pending crypto deposit',
+      metadata: { user_id: 'user-1', payment_provider: 'IvoryPay' },
+      created_at: new Date('2024-05-01T10:15:30.000Z'),
+      processed_at: null,
+      wallets_transactions_sender_wallet_idTowallets: null,
+      wallets_transactions_receiver_wallet_idTowallets: null,
+    };
+    const prisma: any = {
+      transactions: {
+        findFirst: jest.fn().mockResolvedValue(transaction),
+      },
+      users: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user-1',
+          username: 'alice',
+          first_name: 'Alice',
+          last_name: 'Example',
+        }),
+      },
+    };
+    const service = new AdminService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    const result = await service.getTransactionDetails(transaction.id);
+
+    expect(prisma.transactions.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { id: transaction.id },
+            { transaction_reference: transaction.id },
+          ],
+        },
+      }),
+    );
+    expect(result.data).toEqual(
+      expect.objectContaining({
+        id: transaction.id,
+        transaction_reference: transaction.transaction_reference,
+        user_id: 'user-1',
+        username: 'alice',
+        sender_name: 'IvoryPay',
+        receiver_name: 'Alice Example',
+        payment_provider: 'IvoryPay',
+      }),
+    );
+  });
+
   it('resolves deposit users from metadata and returns display timestamps and parties', async () => {
     const tx = {
       id: 'tx-1',

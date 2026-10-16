@@ -217,7 +217,7 @@ export class QrPaymentsService {
           fee: 0,
           net_amount: amountFarm,
           currency: 'FARM',
-          description: `Pending public QR payment to ${merchant.business_name}`,
+          description: `Public QR payment to ${merchant.business_name}`,
           exchange_rate: farmPerKes,
           metadata,
         },
@@ -621,6 +621,7 @@ export class QrPaymentsService {
           processed_at: settledAt,
           fee: saleFee,
           net_amount: merchantNet,
+          description: 'Public QR merchant payment',
         },
       });
       if (claim.count !== 1) return null;

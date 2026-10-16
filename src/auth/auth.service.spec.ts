@@ -117,35 +117,104 @@ describe('AuthService', () => {
     );
   });
 
-  it('checks email case-insensitively and phone uniqueness', async () => {
+  it('checks username, email case-insensitively, and phone uniqueness', async () => {
     const prisma = module.get(PrismaService);
-    const findFirst = jest.spyOn(prisma.users, 'findFirst');
-    findFirst
+    const findFirst = jest
+      .spyOn(prisma.users, 'findFirst')
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: 'existing-email' } as any)
       .mockResolvedValueOnce(null);
 
     await expect(
       service.checkRegistrationAvailability({
+        username: '  NewUser ',
         email: '  Person@Example.com ',
         phone: ' +254700123456 ',
       }),
     ).resolves.toEqual({
-      data: { emailAvailable: false, phoneAvailable: true },
+      data: {
+        usernameAvailable: true,
+        emailAvailable: false,
+        phoneAvailable: true,
+      },
     });
     expect(findFirst).toHaveBeenNthCalledWith(1, {
-      where: { email: { equals: 'person@example.com', mode: 'insensitive' } },
+      where: {
+        username: { equals: 'newuser', mode: 'insensitive' },
+      },
       select: { id: true },
     });
     expect(findFirst).toHaveBeenNthCalledWith(2, {
-      where: { phone: '+254700123456' },
+      where: { email: { equals: 'person@example.com', mode: 'insensitive' } },
+      select: { id: true },
+    });
+    expect(findFirst).toHaveBeenNthCalledWith(3, {
+      where: { phone: { in: ['+254700123456', '254700123456'] } },
       select: { id: true },
     });
   });
 
-  it('requires an email or phone for contact availability checks', async () => {
+  it('requires at least one registration field for availability checks', async () => {
     await expect(service.checkRegistrationAvailability({})).rejects.toThrow(
-      'Email or phone number is required',
+      'Username, email, or phone number is required',
     );
+  });
+
+  it.each([
+    [{ id: 'existing-user', phone: '+254700123456', username: 'new_user' }, '+254700123456', 'new_user', 'new@example.com', 'Phone already registered'],
+    [{ id: 'existing-user', phone: '+254711111111', username: 'taken_user' }, '+254700123456', 'taken_user', 'new@example.com', 'Username already registered'],
+    [{ id: 'existing-user', phone: '+254711111111', username: 'other_user' }, '+254700123456', 'new_user', 'taken@example.com', 'Email already registered'],
+  ])('rejects a duplicate registration field', async (
+    existing,
+    phone,
+    username,
+    email,
+    message,
+  ) => {
+    const prisma = module.get(PrismaService);
+    jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(existing as any);
+
+    await expect(
+      service.register(
+        {
+          first_name: 'Test',
+          last_name: 'User',
+          username,
+          phone,
+          email,
+          password: 'NewSecure1!Password',
+        } as any,
+        '203.0.113.1',
+      ),
+    ).rejects.toThrow(message);
+  });
+
+  it('translates database unique races into a field-specific conflict', async () => {
+    const prisma = module.get(PrismaService);
+    const config = module.get(ConfigService);
+    jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(null);
+    jest
+      .spyOn(config, 'get')
+      .mockImplementation((key: string) =>
+        key === 'QR_HMAC_SECRET' ? 'test-secret' : undefined,
+      );
+    jest.spyOn(prisma, '$transaction').mockRejectedValue({
+      code: 'P2002',
+      meta: { target: ['phone'] },
+    });
+
+    await expect(
+      service.register(
+        {
+          first_name: 'Test',
+          last_name: 'User',
+          username: 'new_user',
+          phone: '+254700123456',
+          password: 'NewSecure1!Password',
+        } as any,
+        '203.0.113.1',
+      ),
+    ).rejects.toThrow('Phone already registered');
   });
 
   it('does not wait for SMS or push delivery when registering', async () => {

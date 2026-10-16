@@ -17,12 +17,13 @@ describe('QrPaymentsService checkout initialization', () => {
 
   const createService = () => {
     const transaction = { id: 'transaction-1' };
+    const createTransaction = jest.fn().mockResolvedValue(transaction);
     const prisma: any = {
       merchants: { findUnique: jest.fn().mockResolvedValue(merchant) },
       wallets: { findFirst: jest.fn().mockResolvedValue({ id: 'wallet-1' }) },
       $transaction: jest.fn((callback) =>
         callback({
-          transactions: { create: jest.fn().mockResolvedValue(transaction) },
+          transactions: { create: createTransaction },
           qr_payments: { create: jest.fn().mockResolvedValue({}) },
         }),
       ),
@@ -62,11 +63,11 @@ describe('QrPaymentsService checkout initialization', () => {
       {} as any,
       { createForTransaction: jest.fn(), enqueuePdfAndEmail: jest.fn() } as any,
     );
-    return { service, prisma, paystack, ivorypay };
+    return { service, prisma, paystack, ivorypay, createTransaction };
   };
 
   it('uses the Paystack bank_transfer channel for QR bank checkout', async () => {
-    const { service, paystack } = createService();
+    const { service, paystack, createTransaction } = createService();
 
     await service.initialize({
       merchantId: merchant.id,
@@ -80,6 +81,13 @@ describe('QrPaymentsService checkout initialization', () => {
         amount: 100,
         currency: 'KES',
         channels: ['bank_transfer'],
+      }),
+    );
+    expect(createTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          description: 'Public QR payment to Farm Shop',
+        }),
       }),
     );
   });
@@ -607,6 +615,7 @@ describe('QrPaymentsService settlement', () => {
           status: 'completed',
           fee: 0.075,
           net_amount: 7.425,
+          description: 'Public QR merchant payment',
         }),
       }),
     );

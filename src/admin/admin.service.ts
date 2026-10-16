@@ -210,6 +210,148 @@ export class AdminService {
     };
   }
 
+  async getTransactionDetails(transactionId: string) {
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        transactionId,
+      );
+    const tx = await this.prisma.transactions.findFirst({
+      where: {
+        OR: [
+          ...(isUuid ? [{ id: transactionId }] : []),
+          { transaction_reference: transactionId },
+        ],
+      },
+      include: {
+        wallets_transactions_sender_wallet_idTowallets: {
+          select: {
+            wallet_address: true,
+            user_id: true,
+            users: {
+              select: {
+                id: true,
+                username: true,
+                first_name: true,
+                last_name: true,
+                email: true,
+                phone: true,
+              },
+            },
+          },
+        },
+        wallets_transactions_receiver_wallet_idTowallets: {
+          select: {
+            wallet_address: true,
+            user_id: true,
+            users: {
+              select: {
+                id: true,
+                username: true,
+                first_name: true,
+                last_name: true,
+                email: true,
+                phone: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!tx) throw new NotFoundException('Transaction not found');
+
+    const senderWallet =
+      tx.wallets_transactions_sender_wallet_idTowallets;
+    const receiverWallet =
+      tx.wallets_transactions_receiver_wallet_idTowallets;
+    const metadata =
+      tx.metadata && typeof tx.metadata === 'object' && !Array.isArray(tx.metadata)
+        ? (tx.metadata as Record<string, any>)
+        : {};
+    const metadataUserId = metadata.user_id ?? metadata.userId;
+    const linkedUserId =
+      senderWallet?.user_id ??
+      receiverWallet?.user_id ??
+      (typeof metadataUserId === 'string' ? metadataUserId : null);
+    const linkedUser =
+      senderWallet?.users ??
+      receiverWallet?.users ??
+      (linkedUserId
+        ? await this.prisma.users.findUnique({
+            where: { id: linkedUserId },
+            select: {
+              id: true,
+              username: true,
+              first_name: true,
+              last_name: true,
+              email: true,
+              phone: true,
+            },
+          })
+        : null);
+    const userName = (
+      user:
+        | {
+            first_name?: string | null;
+            last_name?: string | null;
+            username?: string | null;
+          }
+        | null
+        | undefined,
+    ) =>
+      user
+        ? [user.first_name, user.last_name].filter(Boolean).join(' ') ||
+          user.username ||
+          null
+        : null;
+    const type = String(tx.transaction_type).toLowerCase();
+    const userDisplayName = userName(linkedUser);
+    const senderName =
+      userName(senderWallet?.users) ??
+      metadata.sender_name ??
+      metadata.sender_username ??
+      senderWallet?.wallet_address ??
+      (type === 'deposit'
+        ? metadata.payment_provider ??
+          metadata.provider ??
+          'External payment provider'
+        : type.includes('withdraw')
+          ? userDisplayName ?? 'Account holder'
+          : 'External sender');
+    const receiverName =
+      userName(receiverWallet?.users) ??
+      metadata.receiver_name ??
+      metadata.recipient_name ??
+      receiverWallet?.wallet_address ??
+      (type === 'deposit'
+        ? userDisplayName ?? 'Deposit account'
+        : type.includes('withdraw')
+          ? metadata.destination ??
+            metadata.crypto_address ??
+            metadata.account_number ??
+            'Withdrawal destination'
+          : 'External recipient');
+
+    return {
+      data: enrichAdminListItem(
+        {
+          ...tx,
+          amount: Number(tx.amount),
+          fee: Number(tx.fee ?? 0),
+          net_amount: Number(tx.net_amount ?? 0),
+          metadata,
+          sender_wallet: senderWallet?.wallet_address,
+          receiver_wallet: receiverWallet?.wallet_address,
+          sender_user_id: senderWallet?.user_id ?? null,
+          receiver_user_id: receiverWallet?.user_id ?? null,
+          sender_name: String(senderName),
+          receiver_name: String(receiverName),
+          user_id: linkedUserId,
+        },
+        linkedUser,
+      ),
+    };
+  }
+
   async getUserDetail(userId: string) {
     const user = await this.prisma.users.findUnique({
       where: { id: userId },

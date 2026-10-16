@@ -110,6 +110,8 @@ export class AdminController {
   @Permissions('admin:read')
   @Get('transactions')            transactions(@Query() q: any) { return this.svc.listTransactions({ ...q, transaction_type: q.transaction_type ?? q.type }); }
   @Permissions('admin:read')
+  @Get('transactions/:id')        transaction(@Param('id') id: string) { return this.svc.getTransactionDetails(id); }
+  @Permissions('admin:read')
   @Get('users')                   users(@Query() q: any) { return this.svc.listUsers(q); }
   @Permissions('admin:read')
   @Roles(UserRole.SUPER_ADMIN)

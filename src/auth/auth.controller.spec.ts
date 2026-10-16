@@ -53,17 +53,30 @@ describe('AuthController', () => {
     expect(authService.supabaseLogin).toHaveBeenCalledWith('token-123', '127.0.0.1', 'jest');
   });
 
-  it('checks email and phone availability for registration', async () => {
+  it('checks username, email, and phone availability for registration', async () => {
     authService.checkRegistrationAvailability.mockResolvedValue({
-      data: { emailAvailable: false, phoneAvailable: true },
+      data: {
+        usernameAvailable: true,
+        emailAvailable: false,
+        phoneAvailable: true,
+      },
     });
 
     await expect(
-      controller.registrationAvailability('person@example.com', '+254700123456'),
+      controller.registrationAvailability(
+        'person',
+        'person@example.com',
+        '+254700123456',
+      ),
     ).resolves.toEqual({
-      data: { emailAvailable: false, phoneAvailable: true },
+      data: {
+        usernameAvailable: true,
+        emailAvailable: false,
+        phoneAvailable: true,
+      },
     });
     expect(authService.checkRegistrationAvailability).toHaveBeenCalledWith({
+      username: 'person',
       email: 'person@example.com',
       phone: '+254700123456',
     });

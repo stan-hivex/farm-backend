@@ -101,12 +101,19 @@ export class AuthController {
       generateKey: authThrottleKey,
     },
   })
-  @ApiOperation({ summary: 'Check whether a registration email or phone is available' })
+  @ApiOperation({
+    summary: 'Check whether a registration username, email, or phone is available',
+  })
   async registrationAvailability(
+    @Query('username') username?: string,
     @Query('email') email?: string,
     @Query('phone') phone?: string,
   ) {
-    return this.authService.checkRegistrationAvailability({ email, phone });
+    return this.authService.checkRegistrationAvailability({
+      username,
+      email,
+      phone,
+    });
   }
 
   @Public()

@@ -50,26 +50,42 @@ export class AuthService {
       await this.turnstile.verifyToken(turnstileToken, ip);
     }
 
+    const username = dto.username.trim().toLowerCase();
+    const phone = this.normalizeRegistrationPhone(dto.phone);
+    const phoneVariants = [phone, phone.slice(1)];
+    const email = dto.email?.trim().toLowerCase();
     const existing = await this.prisma.users.findFirst({
       where: {
         OR: [
-          { phone: dto.phone },
-          { username: dto.username.toLowerCase() },
-          ...(dto.email ? [{ email: dto.email }] : []),
+          { phone: { in: phoneVariants } },
+          { username: { equals: username, mode: 'insensitive' as const } },
+          ...(email
+            ? [{ email: { equals: email, mode: 'insensitive' as const } }]
+            : []),
         ],
       },
     });
     if (existing) {
-      if (existing.phone === dto.phone) throw new ConflictException('Phone already registered');
-      if (existing.username === dto.username.toLowerCase()) throw new ConflictException('Username taken');
+      if (
+        existing.phone &&
+        this.normalizeRegistrationPhone(existing.phone) === phone
+      ) {
+        throw new ConflictException('Phone already registered');
+      }
+      if (existing.username?.toLowerCase() === username) {
+        throw new ConflictException('Username already registered');
+      }
+      if (email && existing.email?.trim().toLowerCase() === email) {
+        throw new ConflictException('Email already registered');
+      }
       throw new ConflictException('Email already registered');
     }
 
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
     const password_hash = await bcrypt.hash(dto.password, rounds);
 
-    const firebaseUid = dto.email
-      ? await this.ensureFirebaseAccount(dto.email, dto.password)
+    const firebaseUid = email
+      ? await this.ensureFirebaseAccount(email, dto.password)
       : null;
 
     let referred_by: string | undefined;
@@ -86,35 +102,42 @@ export class AuthService {
       throw new Error('QR_HMAC_SECRET not configured - wallet generation impossible');
     }
 
-    const user = await this.prisma.$transaction(async (tx) => {
-      const u = await tx.users.create({
-        data: {
-          first_name: dto.first_name,
-          last_name: dto.last_name,
-          username: dto.username.toLowerCase(),
-          phone: dto.phone,
-          email: dto.email,
-          firebase_uid: firebaseUid,
-          password_hash,
-          country: dto.country,
-          referred_by,
-          referral_code: generateReferralCode(),
-        },
+    let user: { id: string; phone: string };
+    try {
+      user = await this.prisma.$transaction(async (tx) => {
+        const u = await tx.users.create({
+          data: {
+            first_name: dto.first_name,
+            last_name: dto.last_name,
+            username,
+            phone,
+            email,
+            firebase_uid: firebaseUid,
+            password_hash,
+            country: dto.country,
+            referred_by,
+            referral_code: generateReferralCode(),
+          },
+        });
+        await tx.wallets.create({
+          data: {
+            user_id: u.id,
+            wallet_name: `${u.first_name}'s Wallet`,
+            wallet_type: 'user',
+            wallet_address: generateWalletAddress(u.id, qrSecret),
+            currency: 'FARM',
+          },
+        });
+        await tx.activity_logs.create({
+          data: { user_id: u.id, activity: 'REGISTER', ip_address: ip },
+        });
+        return u;
       });
-      await tx.wallets.create({
-        data: {
-          user_id: u.id,
-          wallet_name: `${u.first_name}'s Wallet`,
-          wallet_type: 'user',
-          wallet_address: generateWalletAddress(u.id, qrSecret),
-          currency: 'FARM',
-        },
-      });
-      await tx.activity_logs.create({
-        data: { user_id: u.id, activity: 'REGISTER', ip_address: ip },
-      });
-      return u;
-    });
+    } catch (error) {
+      const conflict = this.registrationUniqueConflict(error);
+      if (conflict) throw conflict;
+      throw error;
+    }
 
     await this.sendOtp(user.id, user.phone, 'phone_verification');
     return { message: 'Registration successful. OTP sent to your phone number.' };
@@ -651,31 +674,51 @@ if (new Date() > expiryDate) {
       throw new BadRequestException('Username is required');
     }
 
-    const existing = await this.prisma.users.findUnique({
-      where: { username: normalized.toLowerCase() },
+    const existing = await this.prisma.users.findFirst({
+      where: {
+        username: {
+          equals: normalized.toLowerCase(),
+          mode: 'insensitive' as const,
+        },
+      },
       select: { id: true },
     });
 
     return { data: { available: !existing } };
   }
 
-  async checkRegistrationAvailability(params: { email?: string; phone?: string }) {
-    const email = params.email?.trim();
-    const phone = params.phone?.trim();
-    if (!email && !phone) {
-      throw new BadRequestException('Email or phone number is required');
+  async checkRegistrationAvailability(params: {
+    username?: string;
+    email?: string;
+    phone?: string;
+  }) {
+    const username = params.username?.trim().toLowerCase();
+    const email = params.email?.trim().toLowerCase();
+    const phone = params.phone
+      ? this.normalizeRegistrationPhone(params.phone)
+      : undefined;
+    if (!username && !email && !phone) {
+      throw new BadRequestException('Username, email, or phone number is required');
     }
 
-    const [emailResult, phoneResult] = await Promise.all([
+    const [usernameResult, emailResult, phoneResult] = await Promise.all([
+      username
+        ? this.prisma.users.findFirst({
+            where: {
+              username: { equals: username, mode: 'insensitive' as const },
+            },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
       email
-        ? this.prisma.users.findUnique({
-            where: { email: email.toLowerCase() },
+        ? this.prisma.users.findFirst({
+            where: { email: { equals: email, mode: 'insensitive' } },
             select: { id: true },
           })
         : Promise.resolve(null),
       phone
-        ? this.prisma.users.findUnique({
-            where: { phone },
+        ? this.prisma.users.findFirst({
+            where: { phone: { in: [phone, phone.slice(1)] } },
             select: { id: true },
           })
         : Promise.resolve(null),
@@ -683,10 +726,46 @@ if (new Date() > expiryDate) {
 
     return {
       data: {
+        usernameAvailable: !usernameResult,
         emailAvailable: !emailResult,
         phoneAvailable: !phoneResult,
       },
     };
+  }
+
+  private registrationUniqueConflict(error: unknown): ConflictException | null {
+    if (
+      typeof error !== 'object' ||
+      error === null ||
+      !('code' in error) ||
+      error.code !== 'P2002'
+    ) {
+      return null;
+    }
+
+    const target =
+      'meta' in error &&
+      typeof error.meta === 'object' &&
+      error.meta !== null &&
+      'target' in error.meta
+        ? error.meta.target
+        : undefined;
+    const fields = Array.isArray(target) ? target.join(' ') : String(target ?? '');
+    if (fields.includes('phone')) {
+      return new ConflictException('Phone already registered');
+    }
+    if (fields.includes('username')) {
+      return new ConflictException('Username already registered');
+    }
+    if (fields.includes('email')) {
+      return new ConflictException('Email already registered');
+    }
+    return null;
+  }
+
+  private normalizeRegistrationPhone(phone: string): string {
+    const trimmed = phone.trim();
+    return trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
   }
 
   async sendPasswordResetLink(email: string) {
