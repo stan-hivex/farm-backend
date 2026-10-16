@@ -1,6 +1,12 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import {
+  getAllKenyanBanks,
+  getBankCode,
+  normalizeKenyanPhoneNumber,
+  type KenyanBankEnvironment,
+} from './ke-bank-mapper';
 
 export class PaystackTransferInitiationError extends Error {
   constructor(
@@ -67,6 +73,17 @@ export class PaystackService {
     } else {
       this.bankCodeMap = {};
     }
+  }
+
+  private getKenyanBankEnvironment(): KenyanBankEnvironment {
+    return {
+      KE: this.cfg.get<string>('KE') ?? process.env.KE,
+      KE_BANKS: this.cfg.get<string>('KE_BANKS') ?? process.env.KE_BANKS,
+      BANK_CODES: this.cfg.get<string>('BANK_CODES') ?? process.env.BANK_CODES,
+      PAYSTACK_BANK_CODE_MAP:
+        this.cfg.get<string>('PAYSTACK_BANK_CODE_MAP') ??
+        process.env.PAYSTACK_BANK_CODE_MAP,
+    };
   }
 
   async initializePayment(options: any) {
@@ -202,20 +219,50 @@ export class PaystackService {
       throw new BadRequestException('Paystack payouts are not configured');
     }
 
+    const requestPayload = { ...payload };
+    if (String(payload.currency ?? '').toUpperCase() === 'KES') {
+      const recipientType = String(payload.type ?? '').toLowerCase();
+      const rawInput =
+        payload.bankName ??
+        payload.bankCode ??
+        payload.bank_name ??
+        payload.bank_code;
+      let code = getBankCode(
+        String(rawInput ?? ''),
+        this.getKenyanBankEnvironment(),
+      );
+      if (!code && recipientType === 'mobile_money') code = 'MPESA';
+      if (!code) {
+        throw new BadRequestException(
+          `Invalid Kenyan bank: ${String(rawInput ?? '')}`,
+        );
+      }
+
+      requestPayload.bank_code = code;
+      delete requestPayload.bankName;
+      delete requestPayload.bankCode;
+      delete requestPayload.bank_name;
+      if (recipientType === 'mobile_money' && requestPayload.account_number) {
+        requestPayload.account_number = normalizeKenyanPhoneNumber(
+          String(requestPayload.account_number),
+        );
+      }
+    }
+
     try {
       this.logger.debug(
         `Paystack transfer recipient request: ${JSON.stringify({
-          type: payload.type,
-          currency: payload.currency,
-          bank_code: payload.bank_code,
-          account_number: payload.account_number
-            ? `***${String(payload.account_number).slice(-4)}`
+          type: requestPayload.type,
+          currency: requestPayload.currency,
+          bank_code: requestPayload.bank_code,
+          account_number: requestPayload.account_number
+            ? `***${String(requestPayload.account_number).slice(-4)}`
             : undefined,
         })}`,
       );
       const response = await axios.post(
         `${this.paystackBaseUrl}/transferrecipient`,
-        payload,
+        requestPayload,
         {
           headers: { Authorization: `Bearer ${this.secretKey}` },
         },
@@ -245,20 +292,17 @@ export class PaystackService {
         (typeof apiMessage === 'string' &&
           apiMessage.toLowerCase().includes('bank is invalid'))
       ) {
-        const suggested = (() => {
-          try {
-            const normalized = this.normalizeBankName(
-              payload?.bank_name || payload?.name || '',
-            );
-            const cfgMap = this.bankCodeMap['KE'] || {};
-            if (cfgMap[normalized]) return cfgMap[normalized];
-            if (this.kenyaBankCodeFallback[normalized])
-              return this.kenyaBankCodeFallback[normalized];
-            return null;
-          } catch {
-            return null;
-          }
-        })();
+        const suggested = getBankCode(
+          String(
+            payload?.bankName ??
+              payload?.bankCode ??
+              payload?.bank_name ??
+              payload?.bank_code ??
+              payload?.name ??
+              '',
+          ),
+          this.getKenyanBankEnvironment(),
+        );
 
         const hintParts = [
           `Paystack rejected the bank code for '${payload?.bank_name || payload?.name || ''}'.`,
@@ -289,12 +333,24 @@ export class PaystackService {
   private banksCache: Record<string, any[]> = {};
 
   async getBanks(currency = 'KES', type?: string) {
+    const normalizedCurrency = currency.trim().toUpperCase();
+    const normalizedType = type?.trim().toLowerCase();
+    if (normalizedCurrency === 'KES') {
+      const destinations = getAllKenyanBanks(
+        this.getKenyanBankEnvironment(),
+        normalizedType,
+      );
+      if (normalizedType === 'kepss' && destinations.length === 0) {
+        throw new BadRequestException(
+          'Kenyan bank mappings are not configured in KE, KE_BANKS, or BANK_CODES',
+        );
+      }
+      return destinations;
+    }
     if (!this.secretKey) {
       throw new BadRequestException('Paystack payouts are not configured');
     }
 
-    const normalizedCurrency = currency.trim().toUpperCase();
-    const normalizedType = type?.trim().toLowerCase();
     const cacheKey = `${normalizedCurrency}:${normalizedType ?? 'all'}`;
     if (this.banksCache[cacheKey]) return this.banksCache[cacheKey];
 
@@ -331,7 +387,13 @@ export class PaystackService {
 
   async getBankCodeByName(bankName: string, country = 'KE') {
     const key = country.toUpperCase();
-    const banks = await this.getBanks(key === 'KE' ? 'KES' : key);
+    if (key === 'KE') {
+      const code = getBankCode(bankName, this.getKenyanBankEnvironment());
+      if (code) return code;
+      throw new BadRequestException(`Invalid Kenyan bank: ${bankName}`);
+    }
+
+    const banks = await this.getBanks(key);
     const normalized = this.normalizeBankName(bankName);
     const match = banks.find(
       (bank: any) => this.normalizeBankName(bank?.name ?? '') === normalized,

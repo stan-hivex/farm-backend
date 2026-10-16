@@ -70,7 +70,7 @@ describe('WithdrawService', () => {
       where: {
         userId: 'user-1',
         status: {
-          notIn: ['PENDING', 'PROCESSING', 'FAILED', 'CANCELLED'],
+          not: 'FAILED',
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -503,6 +503,58 @@ describe('WithdrawService', () => {
         }),
       ]),
     );
+  });
+
+  it('marks a crypto withdrawal as success with IvoryPay metadata', async () => {
+    const userWallet = { id: 'wallet-user', balance: 1000, locked_balance: 1000 };
+    const adminWallet = { id: 'wallet-admin', balance: 500, locked_balance: 0 };
+    let txUpdateData: any;
+
+    prisma.withdrawal.findUnique.mockResolvedValue({
+      id: 'withdrawal-1',
+      reference: 'ref-1',
+      userId: 'user-1',
+      amount: 1000,
+      fee: 0,
+      status: 'PENDING',
+      method: 'CRYPTO',
+    });
+    prisma.transactions.findUnique.mockResolvedValue({ id: 'tx-1', metadata: {} });
+    prisma.wallets.findFirst.mockResolvedValue(userWallet);
+    prisma.users.findFirst.mockResolvedValue({ wallets: [adminWallet] });
+
+    prisma.$transaction.mockImplementation(async (callback: any) => {
+      const tx = {
+        withdrawal: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        users: { findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }) },
+        wallets: {
+          update: jest.fn().mockResolvedValue({}),
+        },
+        transactions: {
+          update: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
+            txUpdateData = data;
+            return {};
+          }),
+        },
+        ledger_entries: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue({}),
+        },
+      };
+
+      return callback(tx);
+    });
+
+    await service.markAsSuccess('ref-1');
+
+    expect(txUpdateData).toMatchObject({
+      status: 'completed',
+      description: 'Successful withdrawal',
+      metadata: expect.objectContaining({
+        provider: 'ivorypay',
+        ivorypay_withdrawal_status: 'success',
+      }),
+    });
   });
 
   it('credits completed withdrawal fees that are missing from the superadmin ledger', async () => {

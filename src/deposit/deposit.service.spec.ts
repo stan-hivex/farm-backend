@@ -78,6 +78,7 @@ describe('DepositService', () => {
   it('charges card deposits only the amount entered by the user', async () => {
     paystack.initializePayment = jest.fn().mockResolvedValue({
       authorization_url: 'https://checkout.example.test/payment',
+      access_code: 'paystack-access-code',
     });
     prisma.deposit.create.mockResolvedValue({
       id: 'deposit-1',
@@ -99,7 +100,7 @@ describe('DepositService', () => {
     });
 
     expect(paystack.initializePayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 10 }),
+      expect.objectContaining({ amount: 10, channels: ['card'] }),
     );
     expect(prisma.deposit.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -108,6 +109,7 @@ describe('DepositService', () => {
     );
     expect(result.deposit.fee).toBe(0);
     expect(result.deposit.total).toBe(10);
+    expect(result.access_code).toBe('paystack-access-code');
   });
 
   it('charges mobile money deposits only the amount entered by the user', async () => {
@@ -135,7 +137,11 @@ describe('DepositService', () => {
     });
 
     expect(paystack.initializePayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 100 }),
+      expect.objectContaining({
+        amount: 100,
+        channels: ['mobile_money'],
+        phone: '+254700000000',
+      }),
     );
     expect(prisma.deposit.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -144,6 +150,42 @@ describe('DepositService', () => {
     );
     expect(result.deposit.fee).toBe(0);
     expect(result.deposit.total).toBe(100);
+  });
+
+  it('initializes bank transfer deposits through Paystack', async () => {
+    paystack.initializePayment = jest.fn().mockResolvedValue({
+      authorization_url: 'https://checkout.example.test/payment',
+      access_code: 'bank-transfer-access-code',
+    });
+    prisma.deposit.create.mockResolvedValue({
+      id: 'deposit-3',
+      amount: 100,
+      fee: 0,
+      total: 100,
+      currency: 'KES',
+      paymentMethod: 'BANK_TRANSFER',
+      provider: 'paystack',
+      reference: 'reference-3',
+      status: 'PENDING',
+    });
+
+    const result = await service.createDeposit('user-1', {
+      amount_fiat: 100,
+      currency: 'KES',
+      paymentMethod: 'BANK_TRANSFER',
+      email: 'user@example.com',
+    });
+
+    expect(paystack.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 100,
+        channels: ['bank_transfer'],
+      }),
+    );
+    expect(result.authorization_url).toBe(
+      'https://checkout.example.test/payment',
+    );
+    expect(result.access_code).toBe('bank-transfer-access-code');
   });
 
   it('deducts the public merchant QR fee before crediting wallets', async () => {

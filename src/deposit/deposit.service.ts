@@ -71,6 +71,7 @@ export class DepositService {
 
     const createdAmount = deposit.amount;
     let paymentUrl: string | null = null;
+    let paystackAccessCode: string | null = null;
 
     if (paymentMethod !== 'CRYPTO') {
       await this.prisma.transactions.create({
@@ -181,6 +182,7 @@ export class DepositService {
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
+      paystackAccessCode = init.access_code || null;
     } else if (paymentMethod === 'CARD') {
       const init = await this.paystack.initializePayment({
         email: dto.email || `${userId}@farm.app`,
@@ -191,6 +193,7 @@ export class DepositService {
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
+      paystackAccessCode = init.access_code || null;
     } else if (paymentMethod === 'BANK_TRANSFER') {
       const init = await this.paystack.initializePayment({
         email: dto.email || `${userId}@farm.app`,
@@ -201,6 +204,7 @@ export class DepositService {
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
+      paystackAccessCode = init.access_code || null;
     } else {
       throw new BadRequestException(`Unsupported payment method ${paymentMethod}`);
     }
@@ -209,6 +213,7 @@ export class DepositService {
       success: true,
       payment_url: paymentUrl,
       authorization_url: paymentUrl,
+      access_code: paystackAccessCode,
       reference,
       deposit,
     };

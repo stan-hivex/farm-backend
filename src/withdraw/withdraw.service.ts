@@ -681,15 +681,18 @@ export class WithdrawService {
             status: 'completed',
             processed_at: new Date(),
             description: 'Successful withdrawal',
-            ...(withdrawal.method === 'CRYPTO'
-              ? {}
-              : {
-                  metadata: {
+            metadata:
+              withdrawal.method === 'CRYPTO'
+                ? {
+                    ...((transaction.metadata as any) ?? {}),
+                    provider: 'ivorypay',
+                    ivorypay_withdrawal_status: 'success',
+                  }
+                : {
                     ...((transaction.metadata as any) ?? {}),
                     provider: 'paystack',
                     paystack_transfer_status: 'success',
                   },
-                }),
           },
         });
 
