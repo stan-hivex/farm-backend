@@ -7,42 +7,16 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { createHmac, timingSafeEqual } from 'crypto';
 
-const SUPPORTED_CRYPTO_TOKENS = ['USDC', 'USDT'] as const;
-const SUPPORTED_NETWORKS_BY_TOKEN: Record<string, Record<string, string>> = {
-  USDC: {
-    BSC: 'BSC',
-    BEP20: 'BSC',
-    'BNB SMART CHAIN': 'BSC',
-    'BNB SMART CHAIN (BEP20)': 'BSC',
-    POLYGON: 'POLYGON',
-    MATIC: 'POLYGON',
-    SOL: 'SOL',
-    SOLANA: 'SOL',
-    BASE: 'BASE',
-    STARKNET: 'STARKNET',
-    ALGORAND: 'ALGORAND',
-  },
-  USDT: {
-    BSC: 'BSC',
-    BEP20: 'BSC',
-    'BNB SMART CHAIN': 'BSC',
-    'BNB SMART CHAIN (BEP20)': 'BSC',
-    POLYGON: 'POLYGON',
-    MATIC: 'POLYGON',
-    SOL: 'SOL',
-    SOLANA: 'SOL',
-    BASE: 'BASE',
-    STARKNET: 'STARKNET',
-    ALGORAND: 'ALGORAND',
-  },
-};
+export class IvorypayPayoutOutcomeUnknownError extends Error {}
 
 @Injectable()
 export class IvorypayService {
   private readonly logger = new Logger(IvorypayService.name);
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
+  private readonly cryptoPayoutsEnabled: boolean;
   private readonly pricingUnavailableMessage =
     'Payment pricing is temporarily unavailable. Try again shortly.';
 
@@ -54,6 +28,9 @@ export class IvorypayService {
       : `${normalizedBaseUrl}/api`;
     const configuredApiKey = this.cfg.get<string>('IVORYPAY_API_KEY');
     this.apiKey = configuredApiKey?.trim() || undefined;
+    this.cryptoPayoutsEnabled =
+      this.cfg.get<string>('IVORYPAY_CRYPTO_PAYOUTS_ENABLED')?.toLowerCase() ===
+      'true';
   }
 
   private maskAddress(address: string | null | undefined): string {
@@ -63,85 +40,299 @@ export class IvorypayService {
     return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
   }
 
-  private normalizeToken(token: string | undefined): string | null {
-    const raw = (token ?? '').toString().trim().toUpperCase();
-    if (!raw) return null;
-    return SUPPORTED_CRYPTO_TOKENS.includes(raw as typeof SUPPORTED_CRYPTO_TOKENS[number]) ? raw : null;
+  private assertCryptoPayoutsEnabled() {
+    if (!this.cryptoPayoutsEnabled || !this.apiKey) {
+      throw new ServiceUnavailableException(
+        'IvoryPay crypto withdrawals are not enabled for this merchant account',
+      );
+    }
   }
 
-  getProviderNetworks(token?: string) {
-    const normalizedToken = this.normalizeToken(token);
-    if (!normalizedToken) {
-      throw new BadRequestException('Unsupported crypto token. Only USDC and USDT are allowed.');
-    }
+  async getCryptoTransferOptions(): Promise<
+    Array<{ token: string; network: string; networkName: string }>
+  > {
+    this.assertCryptoPayoutsEnabled();
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/v1/crypto-transfer/supported/network-tokens`,
+        {
+          headers: {
+            Authorization: this.apiKey,
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000,
+        },
+      );
+      if (response.data?.success !== true) {
+        throw new BadGatewayException(
+          'IvoryPay returned an invalid crypto payout options response',
+        );
+      }
+      const groups = response.data?.data;
+      if (!groups || typeof groups !== 'object') {
+        throw new BadGatewayException(
+          'IvoryPay returned an invalid crypto payout options response',
+        );
+      }
 
+      const options = new Map<
+        string,
+        { token: string; network: string; networkName: string }
+      >();
+      for (const [networkName, entries] of Object.entries(groups)) {
+        if (!Array.isArray(entries)) continue;
+        for (const entry of entries) {
+          const token =
+            typeof entry?.token === 'string'
+              ? entry.token.trim().toUpperCase()
+              : '';
+          const network =
+            typeof entry?.blockchain === 'string'
+              ? entry.blockchain.trim()
+              : '';
+          if (entry?.isActive === true && token && network) {
+            options.set(`${token}:${network}`, {
+              token,
+              network,
+              networkName,
+            });
+          }
+        }
+      }
+      if (options.size === 0) {
+        throw new ServiceUnavailableException(
+          'IvoryPay has no enabled crypto payout networks for this merchant account',
+        );
+      }
+      return [...options.values()].sort(
+        (first, second) =>
+          first.token.localeCompare(second.token) ||
+          first.networkName.localeCompare(second.networkName),
+      );
+    } catch (error) {
+      if (
+        error instanceof BadGatewayException ||
+        error instanceof ServiceUnavailableException
+      ) {
+        throw error;
+      }
+      this.logger.error(
+        `IvoryPay crypto payout options lookup failed: ${
+          (error as any)?.response?.data?.message ??
+          (error as Error)?.message ??
+          'unknown error'
+        }`,
+      );
+      throw new BadGatewayException(
+        'Could not load enabled crypto payout options from IvoryPay',
+      );
+    }
+  }
+
+  async getProviderNetworks(token?: string) {
+    const options = await this.getCryptoTransferOptions();
+    const normalizedToken = token?.trim().toUpperCase();
+    const filtered = normalizedToken
+      ? options.filter((option) => option.token === normalizedToken)
+      : options;
+    if (normalizedToken && filtered.length === 0) {
+      throw new BadRequestException(
+        `IvoryPay does not enable ${normalizedToken} crypto payouts for this account`,
+      );
+    }
     return {
       success: true,
-      token: normalizedToken,
-      networks: Array.from(new Set(Object.values(SUPPORTED_NETWORKS_BY_TOKEN[normalizedToken]))),
+      options: filtered,
+      ...(normalizedToken
+        ? {
+            token: normalizedToken,
+            networks: filtered.map((option) => option.network),
+          }
+        : {}),
     };
-  }
-
-  private normalizeNetwork(token: string | undefined, inputNetwork: string | undefined): string | null {
-    const normalizedToken = this.normalizeToken(token);
-    const raw = (inputNetwork ?? '').toString().trim();
-    if (!normalizedToken || !raw) return null;
-    const lookup = SUPPORTED_NETWORKS_BY_TOKEN[normalizedToken] ?? {};
-    const key = raw.toUpperCase();
-    if (lookup[key]) return lookup[key];
-    const alias = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    for (const [candidate, value] of Object.entries(lookup)) {
-      if (candidate.replace(/[^A-Z0-9]/g, '') === alias) {
-        return value;
-      }
-    }
-    return null;
   }
 
   private validateAddressForNetwork(network: string, address: string): string | null {
     const trimmed = address.trim();
     if (!trimmed) return 'Destination wallet address is required';
 
-    if (['BSC', 'POLYGON', 'BASE', 'STARKNET'].includes(network)) {
-      if (!/^0x[a-fA-F0-9]+$/.test(trimmed) || trimmed.length < 20) {
+    const normalizedNetwork = network.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (
+      ['BSC', 'BNBSMARTCHAIN', 'POLYGON', 'ETHEREUM', 'MAINNET', 'BASE'].some(
+        (value) => normalizedNetwork.includes(value),
+      )
+    ) {
+      if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
         return `Invalid destination address for ${network}.`;
       }
     }
 
-    if (network === 'SOL') {
+    if (normalizedNetwork.includes('SOL')) {
       if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed)) {
         return `Invalid Solana address for ${network}.`;
       }
     }
 
-    if (network === 'ALGORAND') {
+    if (normalizedNetwork.includes('ALGORAND')) {
       if (!/^[A-Z2-7]{58}$/.test(trimmed)) {
         return `Invalid Algorand address for ${network}.`;
+      }
+    }
+
+    if (normalizedNetwork.includes('BITCOIN')) {
+      if (!/^(bc1|tb1)[a-zA-HJ-NP-Z0-9]{20,87}$|^[13mn2][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(trimmed)) {
+        return `Invalid Bitcoin address for ${network}.`;
       }
     }
 
     return null;
   }
 
-  private isTemporaryPricingError(error: any): boolean {
-    const statusCode = error?.response?.status ?? error?.response?.data?.statusCode;
-    const message = (
-      error?.response?.data?.message ??
-      error?.response?.data?.error ??
-      ''
-    )
-      .toString()
-      .trim()
-      .toLowerCase();
+  async quoteCryptoTransfer(options: {
+    amount: number;
+    token: string;
+    network: string;
+    address: string;
+    fiatCurrency: string;
+  }) {
+    this.assertCryptoPayoutsEnabled();
+    const token = options.token.trim().toUpperCase();
+    const network = options.network.trim();
+    const address = options.address.trim();
+    if (!Number.isFinite(options.amount) || options.amount <= 0) {
+      throw new BadRequestException('Invalid crypto payout quote amount');
+    }
+    const addressError = this.validateAddressForNetwork(network, address);
+    if (addressError) throw new BadRequestException(addressError);
 
-    return (
-      statusCode === 400 &&
-      message === this.pricingUnavailableMessage.toLowerCase()
-    );
+    const enabledOptions = await this.getCryptoTransferOptions();
+    if (
+      !enabledOptions.some(
+        (option) => option.token === token && option.network === network,
+      )
+    ) {
+      throw new BadRequestException(
+        `IvoryPay does not enable ${token} on ${network} for this account`,
+      );
+    }
+
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/v1/rates/crypto-transfer`,
+        {
+          headers: {
+            Authorization: this.apiKey,
+            'Content-Type': 'application/json',
+          },
+          params: {
+            amount: options.amount,
+            token,
+            network,
+            fiatCurrency: options.fiatCurrency,
+            address,
+          },
+          timeout: 10000,
+        },
+      );
+      const quote = response.data?.data;
+      const numericFields = [
+        'platformFeeInCrypto',
+        'gasFeeInCrypto',
+        'totalAmountInCrypto',
+        'amountInCryptoLessFee',
+        'minimumAmountInCrypto',
+        'rate',
+      ];
+      if (
+        response.data?.success !== true ||
+        !quote ||
+        numericFields.some(
+          (field) =>
+            !Number.isFinite(Number(quote[field])) || Number(quote[field]) < 0,
+        ) ||
+        Number(quote.totalAmountInCrypto) <= 0 ||
+        Number(quote.amountInCryptoLessFee) <= 0
+      ) {
+        throw new BadGatewayException(
+          'IvoryPay returned an incomplete crypto payout quote',
+        );
+      }
+      return {
+        token,
+        network,
+        ...quote,
+        totalAmountInCrypto: Number(quote.totalAmountInCrypto),
+        amountInCryptoLessFee: Number(quote.amountInCryptoLessFee),
+        gasFeeInCrypto: Number(quote.gasFeeInCrypto),
+        platformFeeInCrypto: Number(quote.platformFeeInCrypto),
+        minimumAmountInCrypto: Number(quote.minimumAmountInCrypto),
+      };
+    } catch (error) {
+      if (
+        error instanceof BadGatewayException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      this.logger.error(
+        `IvoryPay crypto payout quote failed token=${token} network=${network}: ${
+          (error as any)?.response?.data?.message ??
+          (error as Error)?.message ??
+          'unknown error'
+        }`,
+      );
+      throw new BadGatewayException(
+        'Could not obtain a current crypto payout fee quote from IvoryPay',
+      );
+    }
   }
 
-  private waitBeforePricingRetry(milliseconds: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  createCryptoWithdrawalQuoteToken(payload: Record<string, unknown>) {
+    this.assertCryptoPayoutsEnabled();
+    const quote = {
+      ...payload,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    };
+    const encoded = Buffer.from(JSON.stringify(quote)).toString('base64url');
+    const signature = createHmac('sha256', this.apiKey!)
+      .update(encoded)
+      .digest('base64url');
+    return `${encoded}.${signature}`;
+  }
+
+  verifyCryptoWithdrawalQuoteToken(token: string) {
+    this.assertCryptoPayoutsEnabled();
+    const [encoded, signature, extra] = token.split('.');
+    if (!encoded || !signature || extra) {
+      throw new BadRequestException('Invalid or expired crypto withdrawal quote');
+    }
+    const expected = createHmac('sha256', this.apiKey!)
+      .update(encoded)
+      .digest();
+    let supplied: Buffer;
+    try {
+      supplied = Buffer.from(signature, 'base64url');
+    } catch {
+      throw new BadRequestException('Invalid or expired crypto withdrawal quote');
+    }
+    if (
+      supplied.length !== expected.length ||
+      !timingSafeEqual(supplied, expected)
+    ) {
+      throw new BadRequestException('Invalid or expired crypto withdrawal quote');
+    }
+    let payload: Record<string, any>;
+    try {
+      payload = JSON.parse(
+        Buffer.from(encoded, 'base64url').toString('utf8'),
+      );
+    } catch {
+      throw new BadRequestException('Invalid or expired crypto withdrawal quote');
+    }
+    if (!Number.isFinite(payload.expiresAt) || payload.expiresAt < Date.now()) {
+      throw new BadRequestException('Crypto withdrawal quote expired; request a new quote');
+    }
+    return payload;
   }
 
   private scanProviderIdentifiers(data: any) {
@@ -567,25 +758,23 @@ export class IvorypayService {
   }
 
   async createWithdrawal(options: any) {
+    this.assertCryptoPayoutsEnabled();
     const amount = Number(options.amount);
-    const token = this.normalizeToken(options.token || options.crypto || options.cryptoAsset);
-    const address = options.address || options.to_address || options.cryptoAddress || options.walletAddress || options.walletaddress || options.wallet_address;
-    const normalizedNetwork = this.normalizeNetwork(token ?? undefined, options.network ?? options.blockchain ?? options.chain);
+    const token = String(options.token ?? '').trim().toUpperCase();
+    const address = String(options.address ?? '').trim();
+    const network = String(options.network ?? '').trim();
     const reference = options.reference;
 
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('Invalid crypto withdrawal amount');
     }
-    if (!token) {
-      throw new BadRequestException('Unsupported crypto asset for withdrawal. Only USDC and USDT are allowed.');
+    if (!token || !network) {
+      throw new BadRequestException('Crypto token and network are required');
     }
-    if (!address || !address.trim()) {
+    if (!address) {
       throw new BadRequestException('Destination wallet address is required for crypto withdrawal');
     }
-    if (!normalizedNetwork) {
-      throw new BadRequestException(`Unsupported network for ${token}. Please choose a supported network for this asset.`);
-    }
-    const invalidAddressMessage = this.validateAddressForNetwork(normalizedNetwork, address);
+    const invalidAddressMessage = this.validateAddressForNetwork(network, address);
     if (invalidAddressMessage) {
       throw new BadRequestException(invalidAddressMessage);
     }
@@ -593,9 +782,20 @@ export class IvorypayService {
       throw new BadRequestException('Missing withdrawal reference for crypto transfer');
     }
 
+    const enabledOptions = await this.getCryptoTransferOptions();
+    if (
+      !enabledOptions.some(
+        (option) => option.token === token && option.network === network,
+      )
+    ) {
+      throw new BadRequestException(
+        `IvoryPay does not enable ${token} on ${network} for this account`,
+      );
+    }
+
     const requestBody = {
-      network: normalizedNetwork,
-      address: address.trim(),
+      network,
+      address,
       amount,
       token,
       reference,
@@ -603,62 +803,35 @@ export class IvorypayService {
 
     const endpoint = `${this.baseUrl}/v1/crypto-transfer`;
     this.logger.log(
-      `Ivorypay crypto withdrawal request: endpoint=${endpoint} method=POST token=${token} amount=${amount} network=${normalizedNetwork} address=${this.maskAddress(address)} reference=${reference}`,
+      `IvoryPay crypto payout submitted token=${token} amount=${amount} network=${network} address=${this.maskAddress(address)} reference=${reference}`,
     );
 
-    if (!this.apiKey) {
-      this.logger.warn('IVORYPAY_API_KEY not configured, returning mock Ivorypay create withdrawal');
-      return {
-        rawResponse: { status: true, message: 'Mock withdrawal created', data: { id: 'WD_123456', reference, amount, token, network: normalizedNetwork, address, status: 'PENDING' } },
-        data: { id: 'WD_123456', reference, amount, token, network: normalizedNetwork, address, status: 'PENDING' },
-        providerReference: reference,
-        providerTransactionId: 'WD_123456',
-      };
-    }
-
     try {
-      let response;
-      const maxAttempts = 3;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          response = await axios.post(endpoint, requestBody, {
-            headers: {
-              Authorization: `${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          });
-          break;
-        } catch (error) {
-          if (!this.isTemporaryPricingError(error) || attempt === maxAttempts) {
-            throw error;
-          }
-          const delayMs = 500 * 2 ** (attempt - 1);
-          this.logger.warn(
-            `IvoryPay pricing unavailable for crypto withdrawal; retrying attempt ${attempt + 1}/${maxAttempts} in ${delayMs}ms`,
-          );
-          await this.waitBeforePricingRetry(delayMs);
-        }
-      }
-      if (!response) {
-        throw new BadGatewayException(
-          'IvoryPay did not return a crypto withdrawal response',
-        );
-      }
+      const response = await axios.post(endpoint, requestBody, {
+        headers: {
+          Authorization: this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      });
 
       const rawData = response.data;
-      if (!rawData || rawData.status === false) {
-        const message = rawData?.message || rawData?.error || 'Invalid Ivorypay response';
+      if (!rawData || rawData.success !== true || !rawData.data) {
+        const message =
+          rawData?.message || rawData?.error || 'Invalid IvoryPay payout response';
         this.logger.error(
-          `Ivorypay crypto withdrawal failed: endpoint=${endpoint} status=${response.status} message=${message} responseBody=${JSON.stringify(rawData ?? {})}`,
+          `IvoryPay rejected crypto payout reference=${reference} status=${response.status} message=${message}`,
         );
         throw new BadRequestException(message);
       }
 
-      const data = rawData.data ?? rawData;
+      const data = rawData.data;
       const providerReference = data.reference ?? reference;
       const providerTransactionId = data.id ?? null;
 
-      this.logger.log(`Ivorypay crypto withdrawal created: reference=${providerReference}, id=${providerTransactionId}, status=${data.status ?? 'unknown'}`);
+      this.logger.log(
+        `IvoryPay payout accepted reference=${reference} providerReference=${providerReference} providerId=${providerTransactionId ?? 'missing'} status=${data.status ?? 'unknown'}`,
+      );
       return {
         rawResponse: rawData,
         data,
@@ -666,25 +839,24 @@ export class IvorypayService {
         providerTransactionId,
       };
     } catch (e: any) {
-      const providerMessage = e.response?.data?.message || e.response?.data?.error || e.response?.data?.detail || e.message || 'Invalid data';
-      const statusCode = e.response?.status ?? 'unknown';
-      const responseBody = e.response?.data ?? e.response ?? null;
-
+      const statusCode = Number(e.response?.status ?? 0);
+      const providerMessage =
+        e.response?.data?.message ??
+        e.response?.data?.error ??
+        e.message ??
+        'unknown error';
       this.logger.error(
-        `Ivorypay crypto withdrawal request failed: endpoint=${endpoint} method=POST status=${statusCode} request=${JSON.stringify(requestBody)} response=${JSON.stringify(responseBody ?? {})}`,
+        `IvoryPay payout request error reference=${reference} status=${statusCode || 'unknown'} message=${providerMessage}`,
       );
-
-      if (this.isTemporaryPricingError(e)) {
-        throw new ServiceUnavailableException(
-          'IvoryPay pricing is temporarily unavailable. Please try again shortly.',
+      if (e instanceof BadRequestException) throw e;
+      if (statusCode >= 400 && statusCode < 500 && statusCode !== 408 && statusCode !== 429) {
+        throw new BadRequestException(
+          'IvoryPay rejected the crypto payout request. Verify the amount, network and destination, then request a new quote.',
         );
       }
-
-      if (statusCode === 400 || statusCode === 422) {
-        throw new BadRequestException('Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.');
-      }
-
-      throw new BadRequestException(`Ivorypay crypto withdrawal failed: ${providerMessage}`);
+      throw new IvorypayPayoutOutcomeUnknownError(
+        'IvoryPay payout outcome is unknown; funds remain reserved pending reconciliation',
+      );
     }
   }
 }

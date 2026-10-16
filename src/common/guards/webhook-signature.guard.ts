@@ -71,9 +71,13 @@ export class WebhookSignatureGuard implements CanActivate {
   }
 
   private verifyIvorypay(req: Request): boolean {
-    const secret = this.cfg.get<string>('IVORYPAY_WEBHOOK_SECRET');
+    const secret =
+      this.cfg.get<string>('IVORYPAY_API_KEY') ??
+      this.cfg.get<string>('IVORYPAY_WEBHOOK_SECRET');
     if (!secret) {
-      this.logger.error('IVORYPAY_WEBHOOK_SECRET not set — rejecting webhook');
+      this.logger.error(
+        'IVORYPAY_API_KEY not set — rejecting IvoryPay webhook',
+      );
       throw new UnauthorizedException('Webhook secret not configured');
     }
 
@@ -86,7 +90,10 @@ export class WebhookSignatureGuard implements CanActivate {
     let payloadData: string;
     try {
       const parsed = typeof rawBody === 'string' ? JSON.parse(rawBody) : JSON.parse(rawBody.toString('utf8'));
-      payloadData = JSON.stringify(parsed.data ?? parsed);
+      if (!Object.prototype.hasOwnProperty.call(parsed, 'data')) {
+        throw new Error('Missing IvoryPay webhook data');
+      }
+      payloadData = JSON.stringify(parsed.data);
     } catch (e) {
       this.logger.error('Ivorypay signature verification failed: invalid JSON payload');
       throw new UnauthorizedException('Ivorypay signature verification failed');

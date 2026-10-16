@@ -1,4 +1,11 @@
-import { IsEnum, IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class CreateWithdrawDto {
   @IsNumber()
@@ -55,6 +62,18 @@ export class CreateWithdrawDto {
   @IsOptional()
   @IsString()
   network?: string;
+
+  @IsOptional()
+  @IsString()
+  cryptoAddressConfirmation?: string;
+
+  @IsOptional()
+  @IsString()
+  cryptoQuoteToken?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 
   @IsOptional()
   @IsString()
