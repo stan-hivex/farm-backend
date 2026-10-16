@@ -1,5 +1,12 @@
 ﻿import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
-import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsIn,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { RequireOwnership } from '../common/decorators/ownership.decorator';
@@ -48,6 +55,14 @@ class CreateDepositDto {
   @IsOptional()
   @IsString()
   email?: string;
+
+  // Legacy clients may still send channels; the deposit service chooses the
+  // Paystack channel from paymentMethod instead of trusting this client value.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @IsIn(['card', 'mobile_money', 'bank_transfer'], { each: true })
+  channels?: string[];
 }
 
 @Controller({ path: 'deposit', version: '1' })

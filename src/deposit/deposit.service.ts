@@ -176,7 +176,7 @@ export class DepositService {
         amount: total,
         reference,
         currency: 'KES',
-        channels: ['card', 'mobile_money', 'bank_transfer'],
+        channels: ['mobile_money'],
         phone: dto.phone,
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
@@ -187,7 +187,7 @@ export class DepositService {
         amount: total,
         reference,
         currency: 'KES',
-        channels: ['card', 'mobile_money', 'bank_transfer'],
+        channels: ['card'],
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;
@@ -197,7 +197,7 @@ export class DepositService {
         amount: total,
         reference,
         currency: 'KES',
-        channels: ['card', 'mobile_money', 'bank_transfer'],
+        channels: ['bank_transfer'],
         metadata: { userId, depositId: deposit.id, paymentMethod },
       });
       paymentUrl = init.authorization_url || init.authorizationUrl;

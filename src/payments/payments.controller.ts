@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsEmail,
   IsIn,
+  IsArray,
 } from 'class-validator';
 import type { Request } from 'express';
 import { PaymentsService } from './payments.service';
@@ -29,6 +30,12 @@ class DepositDto {
   @IsOptional() @IsIn(['USDT', 'USDC']) crypto?: string;
   @IsOptional() @IsString() chain?: string;
   @IsOptional() @IsString() walletAddress?: string;
+  // Tolerate older clients while selecting Paystack channels server-side.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @IsIn(['card', 'mobile_money', 'bank_transfer'], { each: true })
+  channels?: string[];
 }
 // WithdrawDto removed: use WithdrawService endpoints instead
 
