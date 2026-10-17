@@ -56,6 +56,13 @@ describe('WithdrawService', () => {
           useValue: {
             createWithdrawal: jest.fn(),
             verifyTransaction: jest.fn(),
+            quoteCryptoTransfer: jest.fn().mockResolvedValue({
+              minimumAmountInCrypto: 0,
+              totalAmountInCrypto: 1,
+              amountInCryptoLessFee: 1,
+              platformFeeInCrypto: 0,
+              gasFeeInCrypto: 0,
+            }),
           },
         },
         {
@@ -202,6 +209,35 @@ describe('WithdrawService', () => {
       network: 'POLYGON',
       cryptoAsset: 'USDC',
     });
+  });
+
+  it('rejects crypto withdrawals below IvoryPay minimum before reserving funds', async () => {
+    prisma.wallets.findFirst.mockResolvedValue({
+      id: 'wallet-1',
+      balance: 1000,
+      locked_balance: 0,
+    });
+    (service as any).ivorypay.quoteCryptoTransfer.mockResolvedValue({
+      minimumAmountInCrypto: 3.22,
+      totalAmountInCrypto: 0.6567,
+      amountInCryptoLessFee: 0.65,
+      platformFeeInCrypto: 0.005,
+      gasFeeInCrypto: 0.0017,
+    });
+
+    await expect(
+      service.createWithdrawal('user-1', {
+        amount: 100,
+        method: 'CRYPTO',
+        cryptoAddress: '0xabc',
+        network: 'POLYGON',
+        cryptoAsset: 'USDC',
+        pin: '1234',
+      } as any),
+    ).rejects.toThrow(
+      'IvoryPay requires at least 3.22 USDC on POLYGON (approximately 490.36 FARM including the withdrawal fee).',
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it.each([

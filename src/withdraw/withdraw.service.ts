@@ -170,6 +170,11 @@ export class WithdrawService {
     let cryptoExchangeSnapshot: any = null;
     let paystackConversionSnapshot: any = null;
     if (dto.method === 'CRYPTO') {
+      if (!cryptoAddress) {
+        throw new BadRequestException(
+          'Crypto asset, address and network are required for cryptocurrency withdrawals',
+        );
+      }
       const rate = await this.currencyConversionService.getCurrentRate();
       const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
       const farmKesRate = Number(rate.farm_kes_rate ?? 1);
