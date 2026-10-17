@@ -102,10 +102,11 @@ export class WithdrawController {
   @UseGuards(JwtAuthGuard)
   @Get('paystack/destinations')
   async getPaystackDestinations(@Query('type') type?: string) {
-    if (type && type !== 'mobile_money') {
+    const normalizedType = type?.trim().toLowerCase();
+    if (normalizedType && !['kepss', 'mobile_money'].includes(normalizedType)) {
       throw new BadRequestException('Unsupported Paystack destination type');
     }
-    return this.withdrawService.getPaystackDestinations(type);
+    return this.withdrawService.getPaystackDestinations(normalizedType);
   }
 
   @Permissions('withdraw:read')

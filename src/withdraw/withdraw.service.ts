@@ -128,9 +128,9 @@ export class WithdrawService {
         );
       }
     } else if (dto.method === 'BANK_TRANSFER') {
-      if (!dto.accountName || !dto.accountNumber || !dto.bankName) {
+      if (!dto.accountNumber || !dto.bankName) {
         throw new BadRequestException(
-          'Account name, account number and bank name are required for bank transfer withdrawals',
+          'Account number and bank name are required for bank transfer withdrawals',
         );
       }
     } else if (dto.method === 'CRYPTO') {
@@ -378,6 +378,14 @@ export class WithdrawService {
   private async processWithdrawal(reference: string) {
     const withdrawal = await this.prisma.withdrawal.findUnique({
       where: { reference },
+      include: {
+        user: {
+          select: {
+            first_name: true,
+            last_name: true,
+          },
+        },
+      },
     });
     if (!withdrawal || (withdrawal.status && withdrawal.status !== 'PENDING'))
       return;
@@ -395,7 +403,10 @@ export class WithdrawService {
         const phoneNumber = this.formatMpesaNumber(withdrawal.phoneNumber);
         recipient = await this.paystack.createTransferRecipient({
           type: 'mobile_money',
-          name: withdrawal.accountName || 'FARM User',
+          name:
+            withdrawal.accountName ||
+            `${withdrawal.user?.first_name ?? ''} ${withdrawal.user?.last_name ?? ''}`.trim() ||
+            'FARM User',
           account_number: phoneNumber,
           bank_code: 'MPESA',
           currency: 'KES',
@@ -409,7 +420,10 @@ export class WithdrawService {
         );
         recipient = await this.paystack.createTransferRecipient({
           type: 'kepss',
-          name: withdrawal.accountName!,
+          name:
+            withdrawal.accountName ||
+            `${withdrawal.user?.first_name ?? ''} ${withdrawal.user?.last_name ?? ''}`.trim() ||
+            'FARM User',
           account_number: withdrawal.accountNumber!,
           bank_code: bankCode,
           currency: 'KES',

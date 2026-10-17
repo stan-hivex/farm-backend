@@ -14,6 +14,37 @@ const environmentKeys = [
   'PAYSTACK_BANK_CODE_MAP',
 ];
 
+const knownKenyanBanks = [
+  { name: 'I&M Bank', key: 'i&m bank', code: '57' },
+  { name: 'Kenya Commercial Bank', key: 'kenya commercial bank', code: '01' },
+  { name: 'Equity Bank', key: 'equity bank', code: '68' },
+  { name: 'Co-operative Bank', key: 'co-operative bank', code: '11' },
+  { name: 'ABSA Bank Kenya', key: 'absa bank kenya', code: '03' },
+  {
+    name: 'Standard Chartered Bank Kenya',
+    key: 'standard chartered bank kenya',
+    code: '02',
+  },
+  { name: 'Stanbic Bank Kenya', key: 'stanbic bank kenya', code: '31' },
+  { name: 'NCBA Bank', key: 'ncba bank', code: '07' },
+  { name: 'Family Bank', key: 'family bank', code: '19' },
+  { name: 'Diamond Trust Bank', key: 'diamond trust bank', code: '63' },
+  { name: 'Prime Bank', key: 'prime bank', code: '10' },
+  { name: 'Bank of Africa Kenya', key: 'bank of africa kenya', code: '19' },
+  { name: 'Ecobank Kenya', key: 'ecobank kenya', code: '43' },
+  {
+    name: 'Guaranty Trust Bank Kenya',
+    key: 'guaranty trust bank kenya',
+    code: '53',
+  },
+  { name: 'Citibank Kenya', key: 'citibank kenya', code: '16' },
+  { name: 'Sidian Bank', key: 'sidian bank', code: '66' },
+  { name: 'HFC Bank', key: 'hfc bank', code: '61' },
+  { name: 'National Bank of Kenya', key: 'national bank of kenya', code: '12' },
+  { name: 'Postbank Kenya', key: 'postbank kenya', code: '62' },
+  { name: 'Access Bank Kenya', key: 'access bank kenya', code: '26' },
+];
+
 function parseMapValue(
   rawValue: unknown,
   environmentKey: string,
@@ -50,6 +81,10 @@ function parseMapValue(
 function getKenyanBankMap(
   environment: KenyanBankEnvironment = process.env,
 ): Map<string, string> {
+  const map = new Map(
+    knownKenyanBanks.map(({ key, code }) => [normalize(key), code]),
+  );
+
   for (const environmentKey of environmentKeys) {
     const rawValue = environment[environmentKey];
     if (!rawValue) continue;
@@ -61,9 +96,11 @@ function getKenyanBankMap(
       )
       .map(([name, code]) => [normalize(name), String(code).trim()] as const)
       .filter(([name, code]) => name.length > 0 && code.length > 0);
-    if (entries.length > 0) return new Map(entries);
+    for (const [name, code] of entries) {
+      map.set(name, code);
+    }
   }
-  return new Map();
+  return map;
 }
 
 export function normalize(name: string): string {
@@ -113,8 +150,21 @@ export function getAllKenyanBanks(
   const normalizedType = type?.trim().toLowerCase();
 
   if (normalizedType !== 'mobile_money') {
+    const knownCodes = new Set<string>();
+    for (const bank of knownKenyanBanks) {
+      const code = map.get(normalize(bank.key)) ?? bank.code;
+      knownCodes.add(code);
+      destinations.push({
+        name: bank.name,
+        code,
+        type: 'kepss',
+        currency: 'KES',
+      });
+    }
+
     const displayNameByCode = new Map<string, string>();
     for (const [alias, code] of map) {
+      if (knownCodes.has(code)) continue;
       const currentName = displayNameByCode.get(code);
       if (!currentName || alias.length > currentName.length) {
         displayNameByCode.set(code, alias);

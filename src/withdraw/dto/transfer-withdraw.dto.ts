@@ -1,4 +1,4 @@
-import { IsIn, IsNumber, IsString } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class TransferWithdrawDto {
   @IsNumber()
@@ -10,6 +10,7 @@ export class TransferWithdrawDto {
   @IsString()
   pin!: string;
 
+  @IsOptional()
   @IsString()
   accountName?: string;
 

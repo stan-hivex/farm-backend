@@ -15,7 +15,10 @@ describe('WithdrawController', () => {
         {
           provide: WithdrawService,
           useValue: {
-            createWithdrawal: jest.fn().mockResolvedValue({ success: true, reference: 'ref-1' }),
+            createWithdrawal: jest
+              .fn()
+              .mockResolvedValue({ success: true, reference: 'ref-1' }),
+            getPaystackDestinations: jest.fn().mockResolvedValue([]),
           },
         },
       ],
@@ -48,5 +51,17 @@ describe('WithdrawController', () => {
 
     expect(service.createWithdrawal).toHaveBeenCalledWith('user-1', dto);
     expect(result).toEqual({ success: true, reference: 'ref-1' });
+  });
+
+  it('should return Kenyan bank destinations for the kepss filter', async () => {
+    await controller.getPaystackDestinations('kepss');
+
+    expect(service.getPaystackDestinations).toHaveBeenCalledWith('kepss');
+  });
+
+  it('should reject unsupported Paystack destination filters', async () => {
+    await expect(controller.getPaystackDestinations('nuban')).rejects.toThrow(
+      'Unsupported Paystack destination type',
+    );
   });
 });

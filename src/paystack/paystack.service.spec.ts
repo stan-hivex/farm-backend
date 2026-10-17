@@ -39,31 +39,53 @@ describe('PaystackService Kenyan payout destinations', () => {
 
   it('serves Kenyan bank destinations from the environment without calling Paystack', async () => {
     const remoteGet = jest.spyOn(axios, 'get');
+    const destinations = await service.getBanks('KES');
 
-    await expect(service.getBanks('KES')).resolves.toEqual(
+    expect(destinations).toEqual(
       expect.arrayContaining([
-        {
+        expect.objectContaining({
           name: 'Kenya Commercial Bank',
           code: '01',
           type: 'kepss',
           currency: 'KES',
-        },
-        {
+        }),
+        expect.objectContaining({
           name: 'Equity Bank',
           code: '68',
           type: 'kepss',
           currency: 'KES',
-        },
-        {
+        }),
+        expect.objectContaining({
+          name: 'Family Bank',
+          code: '19',
+          type: 'kepss',
+          currency: 'KES',
+        }),
+        expect.objectContaining({
+          name: 'Bank of Africa Kenya',
+          code: '19',
+          type: 'kepss',
+          currency: 'KES',
+        }),
+        expect.objectContaining({
           name: 'M-Pesa',
           code: 'MPESA',
           type: 'mobile_money',
           currency: 'KES',
-        },
+        }),
       ]),
+    );
+    expect(destinations.filter((item) => item.type === 'kepss')).toHaveLength(
+      20,
     );
 
     expect(remoteGet).not.toHaveBeenCalled();
+  });
+
+  it('provides the complete Kenyan bank list if environment mapping is absent', async () => {
+    delete process.env.KE;
+
+    await expect(service.getBanks('KES', 'kepss')).resolves.toHaveLength(20);
   });
 
   it('returns only M-Pesa for the mobile money destination filter', async () => {

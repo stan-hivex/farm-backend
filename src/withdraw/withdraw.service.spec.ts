@@ -39,10 +39,24 @@ describe('WithdrawService', () => {
       providers: [
         WithdrawService,
         { provide: PrismaService, useValue: prismaMock },
-        { provide: AuthService, useValue: { verifyPin: jest.fn().mockResolvedValue(true) } },
-        { provide: SecurityService, useValue: { verifyDevice: jest.fn().mockResolvedValue({ trusted: true }) } },
+        {
+          provide: AuthService,
+          useValue: { verifyPin: jest.fn().mockResolvedValue(true) },
+        },
+        {
+          provide: SecurityService,
+          useValue: {
+            verifyDevice: jest.fn().mockResolvedValue({ trusted: true }),
+          },
+        },
         { provide: PaystackService, useValue: {} },
-        { provide: IvorypayService, useValue: { createWithdrawal: jest.fn(), verifyTransaction: jest.fn() } },
+        {
+          provide: IvorypayService,
+          useValue: {
+            createWithdrawal: jest.fn(),
+            verifyTransaction: jest.fn(),
+          },
+        },
         {
           provide: CacheService,
           useValue: {
@@ -53,9 +67,29 @@ describe('WithdrawService', () => {
             invalidateWallet: jest.fn().mockResolvedValue(undefined),
           },
         },
-        { provide: NotificationsService, useValue: { sendNotification: jest.fn().mockResolvedValue(true) } },
-        { provide: CurrencyConversionService, useValue: { getCurrentRate: jest.fn().mockResolvedValue({ usd_kes_rate: 150, farm_kes_rate: 1, farm_usd_rate: 0.00666667 }) } },
-        { provide: WebsocketGateway, useValue: { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn() } },
+        {
+          provide: NotificationsService,
+          useValue: { sendNotification: jest.fn().mockResolvedValue(true) },
+        },
+        {
+          provide: CurrencyConversionService,
+          useValue: {
+            getCurrentRate: jest
+              .fn()
+              .mockResolvedValue({
+                usd_kes_rate: 150,
+                farm_kes_rate: 1,
+                farm_usd_rate: 0.00666667,
+              }),
+          },
+        },
+        {
+          provide: WebsocketGateway,
+          useValue: {
+            emitBalanceUpdate: jest.fn(),
+            emitTransactionUpdate: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -78,7 +112,9 @@ describe('WithdrawService', () => {
   });
 
   it('persists the selected crypto asset for crypto withdrawals', async () => {
-    jest.spyOn(service as any, 'processWithdrawal').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'processWithdrawal')
+      .mockResolvedValue(undefined);
 
     prisma.wallets.findFirst.mockResolvedValue({
       id: 'wallet-1',
@@ -91,10 +127,12 @@ describe('WithdrawService', () => {
       const tx = {
         wallets: { update: jest.fn().mockResolvedValue({}) },
         withdrawal: {
-          create: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
-            createdWithdrawalData = data;
-            return { id: 'withdrawal-1', reference: 'ref-1' };
-          }),
+          create: jest
+            .fn()
+            .mockImplementation(async ({ data }: { data: any }) => {
+              createdWithdrawalData = data;
+              return { id: 'withdrawal-1', reference: 'ref-1' };
+            }),
         },
         transactions: { create: jest.fn().mockResolvedValue({}) },
       };
@@ -123,7 +161,9 @@ describe('WithdrawService', () => {
   });
 
   it('accepts walletaddress alias for crypto withdrawals', async () => {
-    jest.spyOn(service as any, 'processWithdrawal').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'processWithdrawal')
+      .mockResolvedValue(undefined);
 
     prisma.wallets.findFirst.mockResolvedValue({
       id: 'wallet-1',
@@ -136,10 +176,12 @@ describe('WithdrawService', () => {
       const tx = {
         wallets: { update: jest.fn().mockResolvedValue({}) },
         withdrawal: {
-          create: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
-            createdWithdrawalData = data;
-            return { id: 'withdrawal-1', reference: 'ref-1' };
-          } ),
+          create: jest
+            .fn()
+            .mockImplementation(async ({ data }: { data: any }) => {
+              createdWithdrawalData = data;
+              return { id: 'withdrawal-1', reference: 'ref-1' };
+            }),
         },
         transactions: { create: jest.fn().mockResolvedValue({}) },
       };
@@ -189,7 +231,9 @@ describe('WithdrawService', () => {
       },
     ],
   ])('accepts a FARM 10 minimum withdrawal for %s', async (method, fields) => {
-    jest.spyOn(service as any, 'processWithdrawal').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'processWithdrawal')
+      .mockResolvedValue(undefined);
     prisma.wallets.findFirst.mockResolvedValue({
       id: 'wallet-1',
       balance: 1000,
@@ -197,7 +241,11 @@ describe('WithdrawService', () => {
     });
     prisma.$transaction.mockImplementation(async (callback: any) =>
       callback({
-        wallets: { update: jest.fn().mockResolvedValue({ balance: 1000, locked_balance: 10 }) },
+        wallets: {
+          update: jest
+            .fn()
+            .mockResolvedValue({ balance: 1000, locked_balance: 10 }),
+        },
         withdrawal: {
           create: jest.fn().mockResolvedValue({
             id: 'withdrawal-1',
@@ -226,7 +274,12 @@ describe('WithdrawService', () => {
       cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
       network: 'POLYGON',
     };
-    const createWithdrawalSpy = jest.spyOn((service as any).ivorypay as any, 'createWithdrawal').mockResolvedValue({ data: { id: 'WD_1' }, providerTransactionId: 'WD_1' });
+    const createWithdrawalSpy = jest
+      .spyOn((service as any).ivorypay as any, 'createWithdrawal')
+      .mockResolvedValue({
+        data: { id: 'WD_1' },
+        providerTransactionId: 'WD_1',
+      });
 
     await (service as any).processCryptoWithdrawal(withdrawal, 'ref-1');
 
@@ -248,9 +301,9 @@ describe('WithdrawService', () => {
       amount: 100,
       settlement: 98.5,
       method: 'BANK_TRANSFER',
-      accountName: 'Jane Doe',
       accountNumber: '12345678',
       bankName: 'Example Bank',
+      user: { first_name: 'Jane', last_name: 'Doe' },
     };
     prisma.withdrawal.updateMany.mockResolvedValue({ count: 1 });
     prisma.withdrawal.findUnique.mockResolvedValue(withdrawal);
@@ -271,7 +324,9 @@ describe('WithdrawService', () => {
       .mockResolvedValue({ recipient_code: 'RCP_1' });
     paystack.initiateTransfer = jest
       .fn()
-      .mockResolvedValue({ data: { transfer_code: 'TRF_1', status: 'pending' } });
+      .mockResolvedValue({
+        data: { transfer_code: 'TRF_1', status: 'pending' },
+      });
 
     await (service as any).processWithdrawal('withdrawal-ref');
 
@@ -320,7 +375,9 @@ describe('WithdrawService', () => {
       .mockResolvedValue({ recipient_code: 'RCP_MPESA' });
     paystack.initiateTransfer = jest
       .fn()
-      .mockResolvedValue({ data: { transfer_code: 'TRF_MPESA', status: 'pending' } });
+      .mockResolvedValue({
+        data: { transfer_code: 'TRF_MPESA', status: 'pending' },
+      });
 
     await (service as any).processWithdrawal('mobile-ref');
 
@@ -421,12 +478,10 @@ describe('WithdrawService', () => {
       id: 'tx-1',
       metadata: { paystack_transfer_code: 'TRF_1' },
     });
-    (service as any).paystack.getTransferStatus = jest
-      .fn()
-      .mockResolvedValue({
-        reference: 'withdrawal-ref',
-        status: 'success',
-      });
+    (service as any).paystack.getTransferStatus = jest.fn().mockResolvedValue({
+      reference: 'withdrawal-ref',
+      status: 'success',
+    });
     const markAsSuccess = jest
       .spyOn(service, 'markAsSuccess')
       .mockResolvedValue(true);
@@ -444,7 +499,11 @@ describe('WithdrawService', () => {
   });
 
   it('marks a completed withdrawal as success and updates user wallet', async () => {
-    const userWallet = { id: 'wallet-user', balance: 1000, locked_balance: 1000 };
+    const userWallet = {
+      id: 'wallet-user',
+      balance: 1000,
+      locked_balance: 1000,
+    };
     const adminWallet = { id: 'wallet-admin', balance: 500, locked_balance: 0 };
 
     prisma.withdrawal.findUnique.mockResolvedValue({
@@ -456,7 +515,10 @@ describe('WithdrawService', () => {
       status: 'PENDING',
       method: 'BANK_TRANSFER',
     });
-    prisma.transactions.findUnique.mockResolvedValue({ id: 'tx-1', metadata: {} });
+    prisma.transactions.findUnique.mockResolvedValue({
+      id: 'tx-1',
+      metadata: {},
+    });
     prisma.wallets.findFirst.mockResolvedValue(userWallet);
     prisma.users.findFirst.mockResolvedValue({ wallets: [adminWallet] });
 
@@ -464,21 +526,32 @@ describe('WithdrawService', () => {
     const txLedgerCreates: any[] = [];
     prisma.$transaction.mockImplementation(async (callback: any) => {
       const tx = {
-        withdrawal: { update: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-        users: { findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }) },
+        withdrawal: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        users: {
+          findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }),
+        },
         wallets: {
-          update: jest.fn().mockImplementation(async ({ where, data }: { where: any; data: any }) => {
-            txWalletUpdates.push({ where, data });
-            return { id: where.id };
-          }),
+          update: jest
+            .fn()
+            .mockImplementation(
+              async ({ where, data }: { where: any; data: any }) => {
+                txWalletUpdates.push({ where, data });
+                return { id: where.id };
+              },
+            ),
         },
         transactions: { update: jest.fn().mockResolvedValue({}) },
         ledger_entries: {
           findFirst: jest.fn().mockResolvedValue(null),
-          create: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
-            txLedgerCreates.push(data);
-            return {};
-          }),
+          create: jest
+            .fn()
+            .mockImplementation(async ({ data }: { data: any }) => {
+              txLedgerCreates.push(data);
+              return {};
+            }),
         },
       };
 
@@ -506,7 +579,11 @@ describe('WithdrawService', () => {
   });
 
   it('marks a crypto withdrawal as success with IvoryPay metadata', async () => {
-    const userWallet = { id: 'wallet-user', balance: 1000, locked_balance: 1000 };
+    const userWallet = {
+      id: 'wallet-user',
+      balance: 1000,
+      locked_balance: 1000,
+    };
     const adminWallet = { id: 'wallet-admin', balance: 500, locked_balance: 0 };
     let txUpdateData: any;
 
@@ -519,22 +596,29 @@ describe('WithdrawService', () => {
       status: 'PENDING',
       method: 'CRYPTO',
     });
-    prisma.transactions.findUnique.mockResolvedValue({ id: 'tx-1', metadata: {} });
+    prisma.transactions.findUnique.mockResolvedValue({
+      id: 'tx-1',
+      metadata: {},
+    });
     prisma.wallets.findFirst.mockResolvedValue(userWallet);
     prisma.users.findFirst.mockResolvedValue({ wallets: [adminWallet] });
 
     prisma.$transaction.mockImplementation(async (callback: any) => {
       const tx = {
         withdrawal: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-        users: { findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }) },
+        users: {
+          findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }),
+        },
         wallets: {
           update: jest.fn().mockResolvedValue({}),
         },
         transactions: {
-          update: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
-            txUpdateData = data;
-            return {};
-          }),
+          update: jest
+            .fn()
+            .mockImplementation(async ({ data }: { data: any }) => {
+              txUpdateData = data;
+              return {};
+            }),
         },
         ledger_entries: {
           findFirst: jest.fn().mockResolvedValue(null),
@@ -567,9 +651,15 @@ describe('WithdrawService', () => {
           findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }),
         },
         transactions: {
-          findMany: jest.fn().mockResolvedValue([
-            { id: 'tx-withdrawal', transaction_reference: 'ref-2', fee: 4.35 },
-          ]),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              {
+                id: 'tx-withdrawal',
+                transaction_reference: 'ref-2',
+                fee: 4.35,
+              },
+            ]),
         },
         wallets: {
           findUnique: jest.fn().mockResolvedValue(adminWallet),
@@ -580,10 +670,12 @@ describe('WithdrawService', () => {
         },
         ledger_entries: {
           findFirst: jest.fn().mockResolvedValue(null),
-          create: jest.fn().mockImplementation(async ({ data }: { data: any }) => {
-            ledgerCreates.push(data);
-            return {};
-          }),
+          create: jest
+            .fn()
+            .mockImplementation(async ({ data }: { data: any }) => {
+              ledgerCreates.push(data);
+              return {};
+            }),
         },
       };
 
