@@ -132,4 +132,31 @@ describe('PaystackService Kenyan payout destinations', () => {
       expect.any(Object),
     );
   });
+
+  it('verifies transfer outcomes using the Paystack transfer reference endpoint', async () => {
+    const get = jest.spyOn(axios, 'get').mockResolvedValue({
+      data: {
+        status: true,
+        data: {
+          reference: 'withdrawal-ref',
+          status: 'success',
+          transfer_code: 'TRF_test',
+        },
+      },
+    } as any);
+
+    await expect(
+      service.getTransferByReference('withdrawal-ref'),
+    ).resolves.toMatchObject({
+      reference: 'withdrawal-ref',
+      status: 'success',
+    });
+
+    expect(get).toHaveBeenCalledWith(
+      'https://api.paystack.co/transfer/verify/withdrawal-ref',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer test-secret' },
+      }),
+    );
+  });
 });

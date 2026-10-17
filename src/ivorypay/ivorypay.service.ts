@@ -21,7 +21,10 @@ export class IvorypayService {
     'Payment pricing is temporarily unavailable. Try again shortly.';
 
   constructor(private readonly cfg: ConfigService) {
-    const rawBaseUrl = this.cfg.get<string>('IVORYPAY_BASE_URL', 'https://api.ivorypay.io/api');
+    const rawBaseUrl = this.cfg.get<string>(
+      'IVORYPAY_BASE_URL',
+      'https://api.ivorypay.io/api',
+    );
     const normalizedBaseUrl = rawBaseUrl.replace(/\/+$/, '');
     this.baseUrl = normalizedBaseUrl.endsWith('/api')
       ? normalizedBaseUrl
@@ -68,8 +71,8 @@ export class IvorypayService {
           'IvoryPay returned an invalid crypto payout options response',
         );
       }
-      const groups = response.data?.data;
-      if (!groups || typeof groups !== 'object') {
+      const data = response.data?.data;
+      if (!data || typeof data !== 'object') {
         throw new BadGatewayException(
           'IvoryPay returned an invalid crypto payout options response',
         );
@@ -79,24 +82,41 @@ export class IvorypayService {
         string,
         { token: string; network: string; networkName: string }
       >();
-      for (const [networkName, entries] of Object.entries(groups)) {
-        if (!Array.isArray(entries)) continue;
-        for (const entry of entries) {
-          const token =
-            typeof entry?.token === 'string'
-              ? entry.token.trim().toUpperCase()
-              : '';
-          const network =
-            typeof entry?.blockchain === 'string'
-              ? entry.blockchain.trim()
-              : '';
-          if (entry?.isActive === true && token && network) {
-            options.set(`${token}:${network}`, {
-              token,
-              network,
-              networkName,
-            });
-          }
+      const addOption = (
+        entry: any,
+        fallbackNetworkName = '',
+        legacy = false,
+      ) => {
+        const token =
+          typeof entry?.token === 'string'
+            ? entry.token.trim().toUpperCase()
+            : '';
+        const network =
+          typeof (entry?.network ?? entry?.blockchain) === 'string'
+            ? (entry.network ?? entry.blockchain).trim()
+            : '';
+        const isEnabled = legacy
+          ? entry?.isActive === true || entry?.isSupported === true
+          : entry?.isSupported === true || entry?.isActive === true;
+        const networkName =
+          typeof entry?.networkName === 'string' && entry.networkName.trim()
+            ? entry.networkName.trim()
+            : fallbackNetworkName || network;
+        if (isEnabled && token && network) {
+          options.set(`${token}:${network}`, {
+            token,
+            network,
+            networkName,
+          });
+        }
+      };
+
+      if (Array.isArray(data)) {
+        for (const entry of data) addOption(entry);
+      } else {
+        for (const [networkName, entries] of Object.entries(data)) {
+          if (!Array.isArray(entries)) continue;
+          for (const entry of entries) addOption(entry, networkName, true);
         }
       }
       if (options.size === 0) {
@@ -152,7 +172,10 @@ export class IvorypayService {
     };
   }
 
-  private validateAddressForNetwork(network: string, address: string): string | null {
+  private validateAddressForNetwork(
+    network: string,
+    address: string,
+  ): string | null {
     const trimmed = address.trim();
     if (!trimmed) return 'Destination wallet address is required';
 
@@ -180,7 +203,11 @@ export class IvorypayService {
     }
 
     if (normalizedNetwork.includes('BITCOIN')) {
-      if (!/^(bc1|tb1)[a-zA-HJ-NP-Z0-9]{20,87}$|^[13mn2][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(trimmed)) {
+      if (
+        !/^(bc1|tb1)[a-zA-HJ-NP-Z0-9]{20,87}$|^[13mn2][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(
+          trimmed,
+        )
+      ) {
         return `Invalid Bitcoin address for ${network}.`;
       }
     }
@@ -304,7 +331,9 @@ export class IvorypayService {
     this.assertCryptoPayoutsEnabled();
     const [encoded, signature, extra] = token.split('.');
     if (!encoded || !signature || extra) {
-      throw new BadRequestException('Invalid or expired crypto withdrawal quote');
+      throw new BadRequestException(
+        'Invalid or expired crypto withdrawal quote',
+      );
     }
     const expected = createHmac('sha256', this.apiKey!)
       .update(encoded)
@@ -313,24 +342,30 @@ export class IvorypayService {
     try {
       supplied = Buffer.from(signature, 'base64url');
     } catch {
-      throw new BadRequestException('Invalid or expired crypto withdrawal quote');
+      throw new BadRequestException(
+        'Invalid or expired crypto withdrawal quote',
+      );
     }
     if (
       supplied.length !== expected.length ||
       !timingSafeEqual(supplied, expected)
     ) {
-      throw new BadRequestException('Invalid or expired crypto withdrawal quote');
+      throw new BadRequestException(
+        'Invalid or expired crypto withdrawal quote',
+      );
     }
     let payload: Record<string, any>;
     try {
-      payload = JSON.parse(
-        Buffer.from(encoded, 'base64url').toString('utf8'),
-      );
+      payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
     } catch {
-      throw new BadRequestException('Invalid or expired crypto withdrawal quote');
+      throw new BadRequestException(
+        'Invalid or expired crypto withdrawal quote',
+      );
     }
     if (!Number.isFinite(payload.expiresAt) || payload.expiresAt < Date.now()) {
-      throw new BadRequestException('Crypto withdrawal quote expired; request a new quote');
+      throw new BadRequestException(
+        'Crypto withdrawal quote expired; request a new quote',
+      );
     }
     return payload;
   }
@@ -356,10 +391,12 @@ export class IvorypayService {
       checkoutUrl: null,
     };
 
-    const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normalizeKey = (key: string) =>
+      key.toLowerCase().replace(/[^a-z0-9]/g, '');
     const matchKey = (key: string) => {
       const normalized = normalizeKey(key);
-      if (normalized === 'transactionid' || normalized === 'txnid') return 'transaction_id';
+      if (normalized === 'transactionid' || normalized === 'txnid')
+        return 'transaction_id';
       if (normalized === 'paymentid') return 'payment_id';
       if (normalized === 'checkoutid') return 'checkout_id';
       if (normalized === 'providerreference') return 'provider_reference';
@@ -381,7 +418,12 @@ export class IvorypayService {
       if (!obj || typeof obj !== 'object') return;
       for (const [key, value] of Object.entries(obj)) {
         const mapped = matchKey(key);
-        if (mapped && identifiers[mapped] == null && value != null && value !== '') {
+        if (
+          mapped &&
+          identifiers[mapped] == null &&
+          value != null &&
+          value !== ''
+        ) {
           identifiers[mapped] = value;
         }
         if (typeof value === 'object' && value !== null) {
@@ -403,7 +445,9 @@ export class IvorypayService {
       return null;
     }
 
-    const match = value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+    const match = value.match(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
+    );
     return match ? match[0] : null;
   }
 
@@ -420,12 +464,15 @@ export class IvorypayService {
 
     try {
       const parsed = new URL(trimmed);
-      const queryReference = parsed.searchParams.get('reference') || parsed.searchParams.get('id');
+      const queryReference =
+        parsed.searchParams.get('reference') || parsed.searchParams.get('id');
       if (queryReference) {
         return queryReference;
       }
 
-      const segments = parsed.pathname.split('/').filter((segment) => !!segment);
+      const segments = parsed.pathname
+        .split('/')
+        .filter((segment) => !!segment);
       if (segments.length) {
         return segments[segments.length - 1];
       }
@@ -433,12 +480,18 @@ export class IvorypayService {
       // Ignore invalid URL parsing and fall back to string-based extraction.
     }
 
-    const pathSegment = trimmed.split('/').filter((segment) => !!segment).pop();
+    const pathSegment = trimmed
+      .split('/')
+      .filter((segment) => !!segment)
+      .pop();
     return pathSegment ?? trimmed;
   }
 
-  private determinePrimaryProviderReference(identifiers: Record<string, any>, internalReference: string) {
-    const candidate = (
+  private determinePrimaryProviderReference(
+    identifiers: Record<string, any>,
+    internalReference: string,
+  ) {
+    const candidate =
       identifiers.provider_reference ||
       identifiers.tx_ref ||
       identifiers.trxref ||
@@ -451,19 +504,27 @@ export class IvorypayService {
       identifiers.merchant_reference ||
       identifiers.invoice_id ||
       identifiers.reference ||
-      null
-    );
+      null;
 
     if (candidate && candidate.toString().trim() !== internalReference) {
       return candidate.toString().trim();
     }
 
-    const urlCandidate = this.extractUuidFromString(identifiers.checkout_url) ?? this.extractUuidFromString(identifiers.payment_link) ?? this.extractUuidFromString(identifiers.payment_url);
+    const urlCandidate =
+      this.extractUuidFromString(identifiers.checkout_url) ??
+      this.extractUuidFromString(identifiers.payment_link) ??
+      this.extractUuidFromString(identifiers.payment_url);
     return urlCandidate ?? null;
   }
 
-  private determinePrimaryProviderTransactionId(identifiers: Record<string, any>, internalReference: string) {
-    const urlCandidate = this.extractUuidFromString(identifiers.checkout_url) ?? this.extractUuidFromString(identifiers.payment_link) ?? this.extractUuidFromString(identifiers.payment_url);
+  private determinePrimaryProviderTransactionId(
+    identifiers: Record<string, any>,
+    internalReference: string,
+  ) {
+    const urlCandidate =
+      this.extractUuidFromString(identifiers.checkout_url) ??
+      this.extractUuidFromString(identifiers.payment_link) ??
+      this.extractUuidFromString(identifiers.payment_url);
 
     const normalizedCandidates = [
       identifiers.transaction_id,
@@ -490,7 +551,9 @@ export class IvorypayService {
     }
 
     try {
-      this.logger.log(`Ivorypay: creating payment ${options.reference} via ${this.baseUrl}`);
+      this.logger.log(
+        `Ivorypay: creating payment ${options.reference} via ${this.baseUrl}`,
+      );
       const body: any = {
         amount: options.amount,
         reference: options.reference,
@@ -503,10 +566,16 @@ export class IvorypayService {
         crypto: options.crypto,
         ...(options.chain && { chain: options.chain }),
         ...(options.redirect_url && { redirect_url: options.redirect_url }),
-        metadata: options.metadata ? (typeof options.metadata === 'string' ? options.metadata : JSON.stringify(options.metadata)) : null,
+        metadata: options.metadata
+          ? typeof options.metadata === 'string'
+            ? options.metadata
+            : JSON.stringify(options.metadata)
+          : null,
       };
 
-      const response = await axios.post(`${this.baseUrl}/v1/transactions`, body,
+      const response = await axios.post(
+        `${this.baseUrl}/v1/transactions`,
+        body,
         {
           headers: {
             Authorization: `${this.apiKey}`,
@@ -518,15 +587,26 @@ export class IvorypayService {
       const rawData = response.data;
       const data = rawData?.data ?? rawData;
       if (!data) {
-        this.logger.error('Ivorypay createPayment returned invalid response', rawData);
+        this.logger.error(
+          'Ivorypay createPayment returned invalid response',
+          rawData,
+        );
         throw new BadRequestException('Invalid Ivorypay response');
       }
 
-      this.logger.log(`IvoryPay raw response: ${JSON.stringify(rawData, null, 2)}`);
+      this.logger.log(
+        `IvoryPay raw response: ${JSON.stringify(rawData, null, 2)}`,
+      );
 
       const providerIdentifiers = this.extractProviderIdentifiers(rawData);
-      const providerReference = this.determinePrimaryProviderReference(providerIdentifiers, options.reference);
-      const providerTransactionId = this.determinePrimaryProviderTransactionId(providerIdentifiers, options.reference);
+      const providerReference = this.determinePrimaryProviderReference(
+        providerIdentifiers,
+        options.reference,
+      );
+      const providerTransactionId = this.determinePrimaryProviderTransactionId(
+        providerIdentifiers,
+        options.reference,
+      );
       const redirectUrl =
         data.payment_link ||
         data.checkout_url ||
@@ -538,7 +618,15 @@ export class IvorypayService {
         data.page_url ||
         data.collectionDetails?.checkoutUrl ||
         null;
-      const paymentLink = redirectUrl ?? data.payment_link ?? data.checkout_url ?? data.url ?? data.link ?? data.checkout ?? data.page_url ?? data.collectionDetails?.checkoutUrl;
+      const paymentLink =
+        redirectUrl ??
+        data.payment_link ??
+        data.checkout_url ??
+        data.url ??
+        data.link ??
+        data.checkout ??
+        data.page_url ??
+        data.collectionDetails?.checkoutUrl;
       if (typeof paymentLink !== 'string' || !paymentLink.trim()) {
         throw new BadGatewayException(
           'IvoryPay did not return a hosted checkout URL',
@@ -547,11 +635,11 @@ export class IvorypayService {
 
       this.logger.log(
         `Ivorypay createPayment success: internalReference=${options.reference} ` +
-        `providerTransactionId=${providerTransactionId ?? 'missing'} ` +
-        `checkoutId=${providerIdentifiers.checkout_id ?? 'missing'} ` +
-        `paymentId=${providerIdentifiers.payment_id ?? 'missing'} ` +
-        `providerReference=${providerReference ?? 'missing'} ` +
-        `redirectUrl=${redirectUrl ?? 'missing'}`,
+          `providerTransactionId=${providerTransactionId ?? 'missing'} ` +
+          `checkoutId=${providerIdentifiers.checkout_id ?? 'missing'} ` +
+          `paymentId=${providerIdentifiers.payment_id ?? 'missing'} ` +
+          `providerReference=${providerReference ?? 'missing'} ` +
+          `redirectUrl=${redirectUrl ?? 'missing'}`,
       );
 
       return {
@@ -565,18 +653,23 @@ export class IvorypayService {
         redirectUrl,
       };
     } catch (e: any) {
-      const message = e.response?.data?.message || e.response?.data?.error || e.message;
+      const message =
+        e.response?.data?.message || e.response?.data?.error || e.message;
       const statusCode = e.response?.status;
       const endpoint = `${this.baseUrl}/v1/transactions`;
-      
+
       this.logger.error(
         `Ivorypay createPayment error [${statusCode}] ${endpoint}: ${message}`,
       );
       if (e.response?.data?.errors) {
-        this.logger.debug(`Ivorypay validation errors: ${JSON.stringify(e.response.data.errors)}`);
+        this.logger.debug(
+          `Ivorypay validation errors: ${JSON.stringify(e.response.data.errors)}`,
+        );
       }
       if (e.response?.data) {
-        this.logger.debug(`Ivorypay response body: ${JSON.stringify(e.response.data)}`);
+        this.logger.debug(
+          `Ivorypay response body: ${JSON.stringify(e.response.data)}`,
+        );
       }
       throw new BadRequestException(`Ivorypay integration failed: ${message}`);
     }
@@ -610,7 +703,9 @@ export class IvorypayService {
         string,
         { token: string; network: string; networkName: string }
       >();
-      for (const [networkName, networkTokens] of Object.entries(groupedTokens)) {
+      for (const [networkName, networkTokens] of Object.entries(
+        groupedTokens,
+      )) {
         if (!Array.isArray(networkTokens)) continue;
         for (const item of networkTokens) {
           if (
@@ -664,9 +759,15 @@ export class IvorypayService {
     return [...new Set(options.map((option) => option.token))].sort();
   }
 
-  async verifyTransaction(reference: string, providerReference?: string, fallbackReferences: string[] = []) {
+  async verifyTransaction(
+    reference: string,
+    providerReference?: string,
+    fallbackReferences: string[] = [],
+  ) {
     if (!this.apiKey) {
-      this.logger.warn('IVORYPAY_API_KEY not configured, returning mock verify');
+      this.logger.warn(
+        'IVORYPAY_API_KEY not configured, returning mock verify',
+      );
       return { status: 'completed', reference };
     }
 
@@ -680,15 +781,21 @@ export class IvorypayService {
 
     const candidates = Array.from(new Set(rawCandidates));
     if (!candidates.length) {
-      this.logger.warn(`Ivorypay: no valid provider identifiers available to verify transaction for internalReference=${reference}`);
-      throw new BadRequestException('Ivorypay verification failed: no provider identifiers available');
+      this.logger.warn(
+        `Ivorypay: no valid provider identifiers available to verify transaction for internalReference=${reference}`,
+      );
+      throw new BadRequestException(
+        'Ivorypay verification failed: no provider identifiers available',
+      );
     }
 
     let lastError: any = null;
     for (const lookupReference of candidates) {
       const lookupId = this.extractLookupIdentifier(lookupReference);
       if (!lookupId) {
-        this.logger.warn(`Ivorypay: skipping verify candidate ${lookupReference} — no usable lookup identifier`);
+        this.logger.warn(
+          `Ivorypay: skipping verify candidate ${lookupReference} — no usable lookup identifier`,
+        );
         lastError = new Error('Candidate missing lookup identifier');
         continue;
       }
@@ -700,7 +807,9 @@ export class IvorypayService {
 
       for (const verifyUrl of verifyUrls) {
         try {
-          this.logger.log(`Ivorypay: verifying transaction ${lookupId} (internal reference=${reference}) via ${verifyUrl}`);
+          this.logger.log(
+            `Ivorypay: verifying transaction ${lookupId} (internal reference=${reference}) via ${verifyUrl}`,
+          );
           const response = await axios.get(verifyUrl, {
             headers: {
               Authorization: `${this.apiKey}`,
@@ -709,58 +818,89 @@ export class IvorypayService {
           });
 
           if (!response.data || response.data.success === false) {
-            const message = response.data?.message || response.data?.error || 'Ivorypay verification failed';
+            const message =
+              response.data?.message ||
+              response.data?.error ||
+              'Ivorypay verification failed';
             if (response.data?.statusCode === 404 || response.status === 404) {
-              this.logger.warn(`Ivorypay verify returned 404 for ${lookupReference} via ${verifyUrl}; trying alternate endpoint or reference`);
+              this.logger.warn(
+                `Ivorypay verify returned 404 for ${lookupReference} via ${verifyUrl}; trying alternate endpoint or reference`,
+              );
               lastError = new Error(message);
               continue;
             }
-            throw new BadRequestException(`Ivorypay verification failed: ${message}`);
+            throw new BadRequestException(
+              `Ivorypay verification failed: ${message}`,
+            );
           }
 
           const verifiedData = response.data.data ?? response.data;
           const status = verifiedData?.status ?? response.data?.status;
           if (!status) {
-            this.logger.warn(`Ivorypay verify response for ${lookupReference} missing status field: ${JSON.stringify(response.data)}`);
-            throw new BadRequestException('Ivorypay verification failed: missing status field');
+            this.logger.warn(
+              `Ivorypay verify response for ${lookupReference} missing status field: ${JSON.stringify(response.data)}`,
+            );
+            throw new BadRequestException(
+              'Ivorypay verification failed: missing status field',
+            );
           }
 
-          const providerIdentifiers = this.extractProviderIdentifiers(verifiedData);
+          const providerIdentifiers =
+            this.extractProviderIdentifiers(verifiedData);
           verifiedData.providerIdentifiers = providerIdentifiers;
           verifiedData.providerReference = lookupReference;
           verifiedData.reference = verifiedData.reference ?? reference;
 
           this.logger.log(
             `Ivorypay: verified transaction ${lookupReference} (internalReference=${reference}) status=${status} ` +
-            `providerTransactionId=${providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? 'n/a'} checkoutId=${providerIdentifiers.checkout_id ?? 'n/a'} paymentId=${providerIdentifiers.payment_id ?? 'n/a'} providerReference=${providerIdentifiers.provider_reference ?? 'n/a'}`,
+              `providerTransactionId=${providerIdentifiers.transaction_id ?? providerIdentifiers.id ?? 'n/a'} checkoutId=${providerIdentifiers.checkout_id ?? 'n/a'} paymentId=${providerIdentifiers.payment_id ?? 'n/a'} providerReference=${providerIdentifiers.provider_reference ?? 'n/a'}`,
           );
 
           return verifiedData;
         } catch (e: any) {
-          const message = e.response?.data?.message || e.response?.data?.error || e.message;
-          if (e.response?.status === 404 || e.response?.data?.statusCode === 404) {
-            this.logger.warn(`Ivorypay verify endpoint missing for ${lookupReference} via ${verifyUrl}: ${message}`);
+          const message =
+            e.response?.data?.message || e.response?.data?.error || e.message;
+          if (
+            e.response?.status === 404 ||
+            e.response?.data?.statusCode === 404
+          ) {
+            this.logger.warn(
+              `Ivorypay verify endpoint missing for ${lookupReference} via ${verifyUrl}: ${message}`,
+            );
             lastError = e;
             continue;
           }
 
-          this.logger.error(`Ivorypay verify error for ${lookupReference} via ${verifyUrl}: ${message}`);
+          this.logger.error(
+            `Ivorypay verify error for ${lookupReference} via ${verifyUrl}: ${message}`,
+          );
           if (e.response?.data) {
-            this.logger.debug(`Ivorypay verify response body: ${JSON.stringify(e.response.data)}`);
+            this.logger.debug(
+              `Ivorypay verify response body: ${JSON.stringify(e.response.data)}`,
+            );
           }
-          throw new BadRequestException(`Ivorypay verification failed: ${message}`);
+          throw new BadRequestException(
+            `Ivorypay verification failed: ${message}`,
+          );
         }
       }
     }
 
-    const finalMessage = lastError?.response?.data?.message || lastError?.message || 'Ivorypay verification failed';
-    throw new BadRequestException(`Ivorypay verification failed: ${finalMessage}`);
+    const finalMessage =
+      lastError?.response?.data?.message ||
+      lastError?.message ||
+      'Ivorypay verification failed';
+    throw new BadRequestException(
+      `Ivorypay verification failed: ${finalMessage}`,
+    );
   }
 
   async createWithdrawal(options: any) {
     this.assertCryptoPayoutsEnabled();
     const amount = Number(options.amount);
-    const token = String(options.token ?? '').trim().toUpperCase();
+    const token = String(options.token ?? '')
+      .trim()
+      .toUpperCase();
     const address = String(options.address ?? '').trim();
     const network = String(options.network ?? '').trim();
     const reference = options.reference;
@@ -772,14 +912,21 @@ export class IvorypayService {
       throw new BadRequestException('Crypto token and network are required');
     }
     if (!address) {
-      throw new BadRequestException('Destination wallet address is required for crypto withdrawal');
+      throw new BadRequestException(
+        'Destination wallet address is required for crypto withdrawal',
+      );
     }
-    const invalidAddressMessage = this.validateAddressForNetwork(network, address);
+    const invalidAddressMessage = this.validateAddressForNetwork(
+      network,
+      address,
+    );
     if (invalidAddressMessage) {
       throw new BadRequestException(invalidAddressMessage);
     }
     if (!reference) {
-      throw new BadRequestException('Missing withdrawal reference for crypto transfer');
+      throw new BadRequestException(
+        'Missing withdrawal reference for crypto transfer',
+      );
     }
 
     const enabledOptions = await this.getCryptoTransferOptions();
@@ -818,7 +965,9 @@ export class IvorypayService {
       const rawData = response.data;
       if (!rawData || rawData.success !== true || !rawData.data) {
         const message =
-          rawData?.message || rawData?.error || 'Invalid IvoryPay payout response';
+          rawData?.message ||
+          rawData?.error ||
+          'Invalid IvoryPay payout response';
         this.logger.error(
           `IvoryPay rejected crypto payout reference=${reference} status=${response.status} message=${message}`,
         );
@@ -849,9 +998,16 @@ export class IvorypayService {
         `IvoryPay payout request error reference=${reference} status=${statusCode || 'unknown'} message=${providerMessage}`,
       );
       if (e instanceof BadRequestException) throw e;
-      if (statusCode >= 400 && statusCode < 500 && statusCode !== 408 && statusCode !== 429) {
+      if (
+        statusCode >= 400 &&
+        statusCode < 500 &&
+        statusCode !== 408 &&
+        statusCode !== 429
+      ) {
         throw new BadRequestException(
-          'IvoryPay rejected the crypto payout request. Verify the amount, network and destination, then request a new quote.',
+          typeof providerMessage === 'string' && providerMessage.trim()
+            ? `IvoryPay rejected the crypto payout: ${providerMessage}`
+            : 'IvoryPay rejected the crypto payout request. Verify the amount, network and destination, then request a new quote.',
         );
       }
       throw new IvorypayPayoutOutcomeUnknownError(

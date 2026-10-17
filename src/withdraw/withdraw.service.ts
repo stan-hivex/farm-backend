@@ -13,10 +13,14 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { PaystackTransferInitiationError } from '../paystack/paystack.service';
+import { Cron } from '@nestjs/schedule';
+import { IvorypayPayoutOutcomeUnknownError } from '../ivorypay/ivorypay.service';
 
 @Injectable()
 export class WithdrawService {
   private readonly logger = new Logger(WithdrawService.name);
+  private reconcilingPaystackWithdrawals = false;
+  private reconcilingIvorypayWithdrawals = false;
 
   constructor(
     private prisma: PrismaService,
@@ -174,6 +178,36 @@ export class WithdrawService {
       const amountUsd = Number((amount * farmUsdRate).toFixed(8));
       const feeUsd = Number((fee * farmUsdRate).toFixed(8));
       const settlementUsd = Number((settlement * farmUsdRate).toFixed(8));
+      const payoutQuote = await this.ivorypay.quoteCryptoTransfer({
+        amount: cryptoAmount,
+        token: normalizedCryptoAsset,
+        network: normalizedNetworkValue,
+        address: cryptoAddress,
+        fiatCurrency: 'KES',
+      });
+      const minimumCryptoAmount = Number(
+        payoutQuote.minimumAmountInCrypto ?? 0,
+      );
+      if (
+        Number.isFinite(minimumCryptoAmount) &&
+        minimumCryptoAmount > cryptoAmount
+      ) {
+        const minimumFarmAmount =
+          farmUsdRate > 0
+            ? Number(
+                (
+                  minimumCryptoAmount /
+                  (farmUsdRate * (1 - feePercent))
+                ).toFixed(2),
+              )
+            : null;
+        throw new BadRequestException(
+          `IvoryPay requires at least ${minimumCryptoAmount} ${normalizedCryptoAsset} on ${normalizedNetworkValue}` +
+            (minimumFarmAmount
+              ? ` (approximately ${minimumFarmAmount} FARM including the withdrawal fee).`
+              : '.'),
+        );
+      }
       cryptoExchangeSnapshot = {
         farmAmount: amount,
         farmKesRate,
@@ -190,6 +224,14 @@ export class WithdrawService {
         fee_usd: feeUsd,
         settlement_usd: settlementUsd,
         crypto_asset: normalizedCryptoAsset,
+        ivorypay_payout_quote: {
+          minimumAmountInCrypto: minimumCryptoAmount,
+          totalAmountInCrypto: payoutQuote.totalAmountInCrypto,
+          amountInCryptoLessFee: payoutQuote.amountInCryptoLessFee,
+          platformFeeInCrypto: payoutQuote.platformFeeInCrypto,
+          gasFeeInCrypto: payoutQuote.gasFeeInCrypto,
+          quotedAt: new Date().toISOString(),
+        },
       };
     } else {
       const rate = await this.currencyConversionService.getCurrentRate();
@@ -334,29 +376,60 @@ export class WithdrawService {
       statusResult.ivorypay_withdrawal_status =
         metadata.ivorypay_withdrawal_status;
       statusResult.ivorypay_failure_reason = metadata.ivorypay_failure_reason;
-    } else {
-      statusResult.paystack_transfer_code = metadata.paystack_transfer_code;
-      statusResult.paystack_transfer_status = metadata.paystack_transfer_status;
-      statusResult.paystack_failure_reason = metadata.paystack_failure_reason;
-      if (metadata.paystack_transfer_code) {
+      if (['PENDING', 'PROCESSING'].includes(withdrawal.status.toUpperCase())) {
         try {
-          const transferStatus = await this.paystack.getTransferStatus(
-            metadata.paystack_transfer_code,
+          const verified = await this.ivorypay.verifyTransaction(
+            reference,
+            metadata.ivorypay_withdrawal_id,
+            [reference],
           );
-          statusResult.paystack_transfer_details = transferStatus;
-          statusResult.paystack_transfer_status =
-            transferStatus.status || statusResult.paystack_transfer_status;
-          const normalizedStatus = String(
-            transferStatus.status ?? '',
-          ).toLowerCase();
-          if (normalizedStatus === 'success') {
+          const verifiedData = verified?.data ?? verified;
+          const providerStatus = String(
+            verifiedData?.status ?? '',
+          ).toUpperCase();
+          statusResult.ivorypay_withdrawal_details = verifiedData;
+          statusResult.ivorypay_withdrawal_status =
+            verifiedData?.status ?? statusResult.ivorypay_withdrawal_status;
+
+          const providerId =
+            verifiedData?.id ??
+            verifiedData?.transaction_id ??
+            metadata.ivorypay_withdrawal_id;
+          const latestTransaction = await this.prisma.transactions.findUnique({
+            where: { transaction_reference: reference },
+          });
+          if (latestTransaction) {
+            const latestMetadata = (latestTransaction.metadata as any) ?? {};
+            await this.prisma.transactions.update({
+              where: { id: latestTransaction.id },
+              data: {
+                metadata: {
+                  ...latestMetadata,
+                  provider: 'ivorypay',
+                  ...(providerId ? { ivorypay_withdrawal_id: providerId } : {}),
+                  ivorypay_withdrawal_status:
+                    verifiedData?.status ??
+                    latestMetadata.ivorypay_withdrawal_status,
+                  ...(verifiedData?.cryptoTransactionHash
+                    ? {
+                        ivorypay_transaction_hash:
+                          verifiedData.cryptoTransactionHash,
+                      }
+                    : {}),
+                  ivorypay_last_checked_at: new Date().toISOString(),
+                },
+              },
+            });
+          }
+
+          if (providerStatus === 'SUCCESS') {
             await this.markAsSuccess(reference);
-          } else if (['failed', 'reversed'].includes(normalizedStatus)) {
+          } else if (providerStatus === 'FAILED') {
             await this.rejectWithdrawal(
               reference,
-              transferStatus.reason ||
-                transferStatus.failure_message ||
-                'Paystack transfer failed',
+              verifiedData?.failureReason ||
+                verifiedData?.reason ||
+                'IvoryPay crypto payout failed',
             );
           }
           const latestWithdrawal = await this.prisma.withdrawal.findFirst({
@@ -365,14 +438,188 @@ export class WithdrawService {
           if (latestWithdrawal) {
             statusResult.withdrawal_status = latestWithdrawal.status;
           }
-        } catch (e: any) {
-          statusResult.paystack_transfer_status_error =
-            e.message || 'Unable to query paystack transfer status';
+        } catch (error) {
+          statusResult.ivorypay_status_error =
+            error instanceof Error
+              ? error.message
+              : 'Unable to verify IvoryPay payout status';
+          this.logger.warn(
+            `IvoryPay withdrawal status check failed for ${reference}: ${statusResult.ivorypay_status_error}`,
+          );
         }
+      }
+    } else if (
+      ['PENDING', 'PROCESSING'].includes(withdrawal.status.toUpperCase())
+    ) {
+      statusResult.paystack_transfer_code = metadata.paystack_transfer_code;
+      statusResult.paystack_transfer_status = metadata.paystack_transfer_status;
+      statusResult.paystack_failure_reason = metadata.paystack_failure_reason;
+      try {
+        const transferStatus =
+          await this.paystack.getTransferByReference(reference);
+        statusResult.paystack_transfer_details = transferStatus;
+        statusResult.paystack_transfer_code =
+          transferStatus.transfer_code ?? statusResult.paystack_transfer_code;
+        statusResult.paystack_transfer_status =
+          transferStatus.status ?? statusResult.paystack_transfer_status;
+        const normalizedStatus = String(
+          transferStatus.status ?? '',
+        ).toLowerCase();
+        if (normalizedStatus === 'success') {
+          await this.markAsSuccess(reference);
+        } else if (['failed', 'reversed'].includes(normalizedStatus)) {
+          await this.rejectWithdrawal(
+            reference,
+            transferStatus.reason ||
+              transferStatus.failure_message ||
+              'Paystack transfer failed',
+          );
+        } else {
+          const latestTransaction = await this.prisma.transactions.findUnique({
+            where: { transaction_reference: reference },
+          });
+          if (latestTransaction) {
+            const latestMetadata = (latestTransaction.metadata as any) ?? {};
+            await this.prisma.transactions.update({
+              where: { id: latestTransaction.id },
+              data: {
+                metadata: {
+                  ...latestMetadata,
+                  provider: 'paystack',
+                  paystack_transfer_code:
+                    transferStatus.transfer_code ??
+                    latestMetadata.paystack_transfer_code,
+                  paystack_transfer_status: transferStatus.status ?? 'pending',
+                  paystack_transfer_requires_otp: normalizedStatus === 'otp',
+                  paystack_transfer_last_checked_at: new Date().toISOString(),
+                },
+              },
+            });
+          }
+          if (normalizedStatus === 'otp') {
+            this.logger.warn(
+              `Paystack transfer ${reference} requires OTP confirmation; disable transfer OTP in Paystack to enable automatic payouts.`,
+            );
+          }
+        }
+
+        const latestWithdrawal = await this.prisma.withdrawal.findFirst({
+          where: { reference, userId },
+        });
+        if (latestWithdrawal) {
+          statusResult.withdrawal_status = latestWithdrawal.status;
+        }
+      } catch (e: any) {
+        statusResult.paystack_transfer_status_error =
+          e.message || 'Unable to query Paystack transfer status';
       }
     }
 
     return statusResult;
+  }
+
+  @Cron('* * * * *')
+  async reconcilePendingPaystackWithdrawals() {
+    if (this.reconcilingPaystackWithdrawals) return;
+    this.reconcilingPaystackWithdrawals = true;
+
+    try {
+      const cutoff = new Date(Date.now() - 60_000);
+      const pending = await this.prisma.withdrawal.findMany({
+        where: {
+          status: 'PROCESSING',
+          method: { in: ['MOBILE_MONEY', 'BANK_TRANSFER'] },
+          updatedAt: { lt: cutoff },
+        },
+        select: { reference: true, userId: true },
+        orderBy: { updatedAt: 'asc' },
+        take: 50,
+      });
+
+      for (const withdrawal of pending) {
+        try {
+          const status = await this.getWithdrawalStatus(
+            withdrawal.reference,
+            withdrawal.userId,
+          );
+          if (status?.withdrawal_status === 'PROCESSING') {
+            await this.prisma.withdrawal.updateMany({
+              where: {
+                reference: withdrawal.reference,
+                status: 'PROCESSING',
+              },
+              data: { updatedAt: new Date() },
+            });
+          }
+        } catch (error) {
+          this.logger.error(
+            `Paystack withdrawal reconciliation failed for ${withdrawal.reference}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Could not load pending Paystack withdrawals for reconciliation: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      this.reconcilingPaystackWithdrawals = false;
+    }
+  }
+
+  @Cron('* * * * *')
+  async reconcilePendingIvorypayWithdrawals() {
+    if (this.reconcilingIvorypayWithdrawals) return;
+    this.reconcilingIvorypayWithdrawals = true;
+
+    try {
+      const cutoff = new Date(Date.now() - 60_000);
+      const pending = await this.prisma.withdrawal.findMany({
+        where: {
+          status: 'PROCESSING',
+          method: 'CRYPTO',
+          updatedAt: { lt: cutoff },
+        },
+        select: { reference: true, userId: true },
+        orderBy: { updatedAt: 'asc' },
+        take: 50,
+      });
+
+      for (const withdrawal of pending) {
+        try {
+          const status = await this.getWithdrawalStatus(
+            withdrawal.reference,
+            withdrawal.userId,
+          );
+          if (status?.withdrawal_status === 'PROCESSING') {
+            await this.prisma.withdrawal.updateMany({
+              where: {
+                reference: withdrawal.reference,
+                status: 'PROCESSING',
+              },
+              data: { updatedAt: new Date() },
+            });
+          }
+        } catch (error) {
+          this.logger.error(
+            `IvoryPay withdrawal reconciliation failed for ${withdrawal.reference}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Could not load pending IvoryPay withdrawals for reconciliation: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      this.reconcilingIvorypayWithdrawals = false;
+    }
   }
 
   private async processWithdrawal(reference: string) {
@@ -485,12 +732,19 @@ export class WithdrawService {
               transferData.status ||
               metadata.paystack_transfer_status ||
               'pending',
+            paystack_transfer_requires_otp:
+              String(transferData.status ?? '').toLowerCase() === 'otp',
             paystack_transfer_initiated_at: new Date().toISOString(),
           };
           await this.prisma.transactions.update({
             where: { id: transaction.id },
             data: { metadata: updatedMetadata },
           });
+          if (String(transferData.status ?? '').toLowerCase() === 'otp') {
+            this.logger.warn(
+              `Paystack transfer ${reference} requires OTP confirmation; disable transfer OTP in Paystack to enable automatic payouts.`,
+            );
+          }
         }
       }
       // Do NOT mark success here – wait for webhook or provider callback
@@ -644,6 +898,29 @@ export class WithdrawService {
       }
       // Leave finalization to webhook or manual reconciliation
     } catch (e: any) {
+      if (e instanceof IvorypayPayoutOutcomeUnknownError) {
+        const latestTransaction = await this.prisma.transactions.findUnique({
+          where: { transaction_reference: reference },
+        });
+        if (latestTransaction) {
+          const latestMetadata = (latestTransaction.metadata as any) ?? {};
+          await this.prisma.transactions.update({
+            where: { id: latestTransaction.id },
+            data: {
+              metadata: {
+                ...latestMetadata,
+                provider: 'ivorypay',
+                ivorypay_withdrawal_status: 'unknown',
+                ivorypay_outcome_unknown_reason: e.message,
+              },
+            },
+          });
+        }
+        this.logger.warn(
+          `IvoryPay payout outcome is unknown for ${reference}; leaving wallet funds reserved for reconciliation`,
+        );
+        return;
+      }
       await this.rejectWithdrawal(
         reference,
         e.message || 'Crypto withdrawal failed',

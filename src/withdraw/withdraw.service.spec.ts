@@ -10,6 +10,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { PaystackTransferInitiationError } from '../paystack/paystack.service';
+import { IvorypayPayoutOutcomeUnknownError } from '../ivorypay/ivorypay.service';
 
 describe('WithdrawService', () => {
   let service: WithdrawService;
@@ -74,13 +75,11 @@ describe('WithdrawService', () => {
         {
           provide: CurrencyConversionService,
           useValue: {
-            getCurrentRate: jest
-              .fn()
-              .mockResolvedValue({
-                usd_kes_rate: 150,
-                farm_kes_rate: 1,
-                farm_usd_rate: 0.00666667,
-              }),
+            getCurrentRate: jest.fn().mockResolvedValue({
+              usd_kes_rate: 150,
+              farm_kes_rate: 1,
+              farm_usd_rate: 0.00666667,
+            }),
           },
         },
         {
@@ -295,6 +294,87 @@ describe('WithdrawService', () => {
     expect(callArg.amount).toBeCloseTo(0.6000003, 6);
   });
 
+  it('keeps crypto withdrawal funds reserved when IvoryPay acceptance is uncertain', async () => {
+    const transaction = { id: 'tx-1', metadata: {} };
+    prisma.transactions.findUnique.mockResolvedValue(transaction);
+    (service as any).ivorypay.createWithdrawal = jest
+      .fn()
+      .mockRejectedValue(
+        new IvorypayPayoutOutcomeUnknownError(
+          'IvoryPay payout outcome is unknown; funds remain reserved pending reconciliation',
+        ),
+      );
+    const rejectWithdrawal = jest
+      .spyOn(service, 'rejectWithdrawal')
+      .mockResolvedValue(true);
+
+    await (service as any).processCryptoWithdrawal(
+      {
+        userId: 'user-1',
+        settlement: 90,
+        cryptoAsset: 'USDC',
+        cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
+        network: 'POLYGON',
+      },
+      'ref-unknown',
+    );
+
+    expect(rejectWithdrawal).not.toHaveBeenCalled();
+    expect(prisma.transactions.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'tx-1' },
+        data: {
+          metadata: expect.objectContaining({
+            ivorypay_withdrawal_status: 'unknown',
+            ivorypay_outcome_unknown_reason:
+              expect.stringContaining('outcome is unknown'),
+          }),
+        },
+      }),
+    );
+  });
+
+  it('verifies pending crypto withdrawals and debits only after provider success', async () => {
+    const withdrawal = {
+      reference: 'crypto-ref',
+      userId: 'user-1',
+      amount: 100,
+      currency: 'FARM',
+      method: 'CRYPTO',
+      status: 'PROCESSING',
+      rejectionReason: null,
+    };
+    const transaction = { id: 'tx-crypto', metadata: { provider: 'ivorypay' } };
+    prisma.withdrawal.findFirst
+      .mockResolvedValueOnce(withdrawal)
+      .mockResolvedValueOnce({ ...withdrawal, status: 'COMPLETED' });
+    prisma.transactions.findUnique
+      .mockResolvedValueOnce(transaction)
+      .mockResolvedValueOnce(transaction);
+    (service as any).ivorypay.verifyTransaction = jest.fn().mockResolvedValue({
+      id: 'ivory-payout-id',
+      reference: 'crypto-ref',
+      status: 'SUCCESS',
+      cryptoTransactionHash: '0xhash',
+    });
+    const markAsSuccess = jest
+      .spyOn(service, 'markAsSuccess')
+      .mockResolvedValue(true);
+
+    const status = await service.getWithdrawalStatus('crypto-ref', 'user-1');
+
+    expect((service as any).ivorypay.verifyTransaction).toHaveBeenCalledWith(
+      'crypto-ref',
+      undefined,
+      ['crypto-ref'],
+    );
+    expect(markAsSuccess).toHaveBeenCalledWith('crypto-ref');
+    expect(status).toMatchObject({
+      withdrawal_status: 'COMPLETED',
+      ivorypay_withdrawal_status: 'SUCCESS',
+    });
+  });
+
   it('creates a Kenyan Paystack bank recipient and transfers the KES settlement', async () => {
     const withdrawal = {
       userId: 'user-1',
@@ -322,11 +402,9 @@ describe('WithdrawService', () => {
     paystack.createTransferRecipient = jest
       .fn()
       .mockResolvedValue({ recipient_code: 'RCP_1' });
-    paystack.initiateTransfer = jest
-      .fn()
-      .mockResolvedValue({
-        data: { transfer_code: 'TRF_1', status: 'pending' },
-      });
+    paystack.initiateTransfer = jest.fn().mockResolvedValue({
+      data: { transfer_code: 'TRF_1', status: 'pending' },
+    });
 
     await (service as any).processWithdrawal('withdrawal-ref');
 
@@ -373,11 +451,9 @@ describe('WithdrawService', () => {
     paystack.createTransferRecipient = jest
       .fn()
       .mockResolvedValue({ recipient_code: 'RCP_MPESA' });
-    paystack.initiateTransfer = jest
-      .fn()
-      .mockResolvedValue({
-        data: { transfer_code: 'TRF_MPESA', status: 'pending' },
-      });
+    paystack.initiateTransfer = jest.fn().mockResolvedValue({
+      data: { transfer_code: 'TRF_MPESA', status: 'pending' },
+    });
 
     await (service as any).processWithdrawal('mobile-ref');
 
@@ -478,10 +554,12 @@ describe('WithdrawService', () => {
       id: 'tx-1',
       metadata: { paystack_transfer_code: 'TRF_1' },
     });
-    (service as any).paystack.getTransferStatus = jest.fn().mockResolvedValue({
-      reference: 'withdrawal-ref',
-      status: 'success',
-    });
+    (service as any).paystack.getTransferByReference = jest
+      .fn()
+      .mockResolvedValue({
+        reference: 'withdrawal-ref',
+        status: 'success',
+      });
     const markAsSuccess = jest
       .spyOn(service, 'markAsSuccess')
       .mockResolvedValue(true);
@@ -496,6 +574,84 @@ describe('WithdrawService', () => {
       withdrawal_status: 'COMPLETED',
       paystack_transfer_status: 'success',
     });
+    expect(
+      (service as any).paystack.getTransferByReference,
+    ).toHaveBeenCalledWith('withdrawal-ref');
+  });
+
+  it('verifies pending Paystack withdrawals by reference without a transfer code', async () => {
+    prisma.withdrawal.findFirst
+      .mockResolvedValueOnce({
+        reference: 'withdrawal-ref',
+        userId: 'user-1',
+        status: 'PROCESSING',
+        method: 'MOBILE_MONEY',
+      })
+      .mockResolvedValueOnce({
+        reference: 'withdrawal-ref',
+        userId: 'user-1',
+        status: 'PROCESSING',
+        method: 'MOBILE_MONEY',
+      });
+    prisma.transactions.findUnique
+      .mockResolvedValueOnce({ id: 'tx-1', metadata: {} })
+      .mockResolvedValueOnce({ id: 'tx-1', metadata: {} });
+    (service as any).paystack.getTransferByReference = jest
+      .fn()
+      .mockResolvedValue({
+        reference: 'withdrawal-ref',
+        status: 'pending',
+      });
+
+    const status = await service.getWithdrawalStatus(
+      'withdrawal-ref',
+      'user-1',
+    );
+
+    expect(
+      (service as any).paystack.getTransferByReference,
+    ).toHaveBeenCalledWith('withdrawal-ref');
+    expect(status).toMatchObject({
+      withdrawal_status: 'PROCESSING',
+      paystack_transfer_status: 'pending',
+    });
+    expect(prisma.transactions.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'tx-1' },
+        data: {
+          metadata: expect.objectContaining({
+            provider: 'paystack',
+            paystack_transfer_status: 'pending',
+            paystack_transfer_requires_otp: false,
+          }),
+        },
+      }),
+    );
+  });
+
+  it('reconciles aged pending Paystack withdrawals using provider status', async () => {
+    prisma.withdrawal.findMany.mockResolvedValue([
+      { reference: 'withdrawal-ref', userId: 'user-1' },
+    ]);
+    const getWithdrawalStatus = jest
+      .spyOn(service, 'getWithdrawalStatus')
+      .mockResolvedValue({} as any);
+
+    await service.reconcilePendingPaystackWithdrawals();
+
+    expect(prisma.withdrawal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: 'PROCESSING',
+          method: { in: ['MOBILE_MONEY', 'BANK_TRANSFER'] },
+        }),
+        take: 50,
+      }),
+    );
+    expect(getWithdrawalStatus).toHaveBeenCalledWith(
+      'withdrawal-ref',
+      'user-1',
+    );
   });
 
   it('marks a completed withdrawal as success and updates user wallet', async () => {
@@ -651,15 +807,13 @@ describe('WithdrawService', () => {
           findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }),
         },
         transactions: {
-          findMany: jest
-            .fn()
-            .mockResolvedValue([
-              {
-                id: 'tx-withdrawal',
-                transaction_reference: 'ref-2',
-                fee: 4.35,
-              },
-            ]),
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'tx-withdrawal',
+              transaction_reference: 'ref-2',
+              fee: 4.35,
+            },
+          ]),
         },
         wallets: {
           findUnique: jest.fn().mockResolvedValue(adminWallet),

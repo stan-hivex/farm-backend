@@ -71,7 +71,10 @@ describe('IvorypayService', () => {
         }),
       }),
     );
-    const requestBody = mockedAxios.post.mock.calls[0][1] as Record<string, unknown>;
+    const requestBody = mockedAxios.post.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
     expect(requestBody).toHaveProperty('crypto', 'USDC');
     expect(requestBody).toHaveProperty('chain', 'POLYGON');
     expect(result.checkout_url).toBe(
@@ -157,6 +160,102 @@ describe('IvorypayService', () => {
     );
   });
 
+  it('reads the documented flat crypto payout network response', async () => {
+    const payoutService = new IvorypayService({
+      get: jest.fn((key: string, defaultValue?: any) =>
+        key === 'IVORYPAY_BASE_URL'
+          ? 'https://api.ivorypay.io/api'
+          : key === 'IVORYPAY_API_KEY'
+            ? 'test-api-key'
+            : key === 'IVORYPAY_CRYPTO_PAYOUTS_ENABLED'
+              ? 'true'
+              : defaultValue,
+      ),
+    } as unknown as ConfigService);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: [
+          { token: 'USDC', network: 'POLYGON', isSupported: true },
+          { token: 'USDT', network: 'SOLANA', isSupported: false },
+        ],
+      },
+    } as any);
+
+    await expect(payoutService.getCryptoTransferOptions()).resolves.toEqual([
+      { token: 'USDC', network: 'POLYGON', networkName: 'POLYGON' },
+    ]);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://api.ivorypay.io/api/v1/crypto-transfer/supported/network-tokens',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'test-api-key',
+        }),
+      }),
+    );
+  });
+
+  it('submits the documented crypto payout body to IvoryPay', async () => {
+    const payoutService = new IvorypayService({
+      get: jest.fn((key: string, defaultValue?: any) =>
+        key === 'IVORYPAY_BASE_URL'
+          ? 'https://api.ivorypay.io/api'
+          : key === 'IVORYPAY_API_KEY'
+            ? 'test-api-key'
+            : key === 'IVORYPAY_CRYPTO_PAYOUTS_ENABLED'
+              ? 'true'
+              : defaultValue,
+      ),
+    } as unknown as ConfigService);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: [{ token: 'USDC', network: 'POLYGON', isSupported: true }],
+      },
+    } as any);
+    mockedAxios.post.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          id: 'payout-id',
+          reference: 'withdrawal-reference',
+          status: 'PENDING',
+        },
+      },
+    } as any);
+
+    await expect(
+      payoutService.createWithdrawal({
+        amount: 1,
+        token: 'USDC',
+        network: 'POLYGON',
+        address: '0x0e892b10a8104855837652906a869acadd07a142',
+        reference: 'withdrawal-reference',
+      }),
+    ).resolves.toMatchObject({
+      providerTransactionId: 'payout-id',
+      providerReference: 'withdrawal-reference',
+      data: { status: 'PENDING' },
+    });
+
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://api.ivorypay.io/api/v1/crypto-transfer',
+      {
+        network: 'POLYGON',
+        address: '0x0e892b10a8104855837652906a869acadd07a142',
+        amount: 1,
+        token: 'USDC',
+        reference: 'withdrawal-reference',
+      },
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'test-api-key',
+          'Content-Type': 'application/json',
+        }),
+      }),
+    );
+  });
+
   it('normalizes a host-only base URL to the documented /api base path', async () => {
     const configService = {
       get: jest.fn((key: string, defaultValue?: any) => {
@@ -207,20 +306,55 @@ describe('IvorypayService', () => {
     });
   });
 
-  it('returns canonical provider networks for supported tokens', () => {
-    expect(service.getProviderNetworks('usdc')).toEqual({
+  it('returns available provider networks for a supported token', async () => {
+    jest.spyOn(service, 'getCryptoTransferOptions').mockResolvedValue([
+      { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
+      { token: 'USDC', network: 'BSC_TESTNET', networkName: 'BSC' },
+      { token: 'USDT', network: 'SOLANA', networkName: 'Solana' },
+    ]);
+
+    await expect(service.getProviderNetworks('usdc')).resolves.toEqual({
       success: true,
       token: 'USDC',
-      networks: ['BSC', 'POLYGON', 'SOL', 'BASE', 'STARKNET', 'ALGORAND'],
+      options: [
+        { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
+        { token: 'USDC', network: 'BSC_TESTNET', networkName: 'BSC' },
+      ],
+      networks: ['POLYGON', 'BSC_TESTNET'],
     });
   });
 
-  it('rejects unsupported provider network tokens', () => {
-    expect(() => service.getProviderNetworks('DAI')).toThrow('Unsupported crypto token');
+  it('rejects tokens that are not enabled for payouts', async () => {
+    jest
+      .spyOn(service, 'getCryptoTransferOptions')
+      .mockResolvedValue([
+        { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
+      ]);
+
+    await expect(service.getProviderNetworks('DAI')).rejects.toThrow(
+      'IvoryPay does not enable DAI crypto payouts for this account',
+    );
   });
 
   it('retries a temporary IvoryPay pricing outage with the same withdrawal reference', async () => {
-    const pricingError = {
+    const payoutService = new IvorypayService({
+      get: jest.fn((key: string, defaultValue?: any) =>
+        key === 'IVORYPAY_BASE_URL'
+          ? 'https://api.ivorypay.io/api'
+          : key === 'IVORYPAY_API_KEY'
+            ? 'test-api-key'
+            : key === 'IVORYPAY_CRYPTO_PAYOUTS_ENABLED'
+              ? 'true'
+              : defaultValue,
+      ),
+    } as unknown as ConfigService);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: [{ token: 'USDC', network: 'POLYGON', isSupported: true }],
+      },
+    } as any);
+    mockedAxios.post.mockRejectedValueOnce({
       response: {
         status: 400,
         data: {
@@ -228,89 +362,50 @@ describe('IvorypayService', () => {
             'Payment pricing is temporarily unavailable. Try again shortly.',
         },
       },
-    };
-    const retryDelay = jest
-      .spyOn(service as any, 'waitBeforePricingRetry')
-      .mockResolvedValue(undefined);
-    mockedAxios.post
-      .mockRejectedValueOnce(pricingError)
-      .mockRejectedValueOnce(pricingError)
-      .mockResolvedValueOnce({
-        data: {
-          success: true,
-          data: { id: 'WD_1', reference: 'withdrawal-ref', status: 'PENDING' },
-        },
-      } as any);
+    });
 
     await expect(
-      service.createWithdrawal({
+      payoutService.createWithdrawal({
         amount: 3.00763446,
         token: 'USDC',
         network: 'POLYGON',
         address: '0x0e892b10a8104855837652906a869acadd07a142',
         reference: 'withdrawal-ref',
       }),
-    ).resolves.toMatchObject({
-      providerTransactionId: 'WD_1',
-      providerReference: 'withdrawal-ref',
-    });
+    ).rejects.toThrow(
+      'IvoryPay rejected the crypto payout: Payment pricing is temporarily unavailable. Try again shortly.',
+    );
 
-    expect(mockedAxios.post).toHaveBeenCalledTimes(3);
-    expect(
-      mockedAxios.post.mock.calls.map((call) => call[1]),
-    ).toEqual([
-      expect.objectContaining({ reference: 'withdrawal-ref' }),
-      expect.objectContaining({ reference: 'withdrawal-ref' }),
-      expect.objectContaining({ reference: 'withdrawal-ref' }),
-    ]);
-    expect(retryDelay.mock.calls).toEqual([[500], [1000]]);
-  });
-
-  it('returns a retryable service error after exhausting temporary pricing retries', async () => {
-    const pricingError = {
-      response: {
-        status: 400,
-        data: {
-          message:
-            'Payment pricing is temporarily unavailable. Try again shortly.',
-        },
-      },
-    };
-    jest
-      .spyOn(service as any, 'waitBeforePricingRetry')
-      .mockResolvedValue(undefined);
-    mockedAxios.post
-      .mockRejectedValueOnce(pricingError)
-      .mockRejectedValueOnce(pricingError)
-      .mockRejectedValueOnce(pricingError);
-
-    await expect(
-      service.createWithdrawal({
-        amount: 3,
-        token: 'USDC',
-        network: 'POLYGON',
-        address: '0x0e892b10a8104855837652906a869acadd07a142',
-        reference: 'withdrawal-ref',
-      }),
-    ).rejects.toMatchObject({
-      status: 503,
-      message:
-        'IvoryPay pricing is temporarily unavailable. Please try again shortly.',
-    });
-    expect(mockedAxios.post).toHaveBeenCalledTimes(3);
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
   });
 
   it('does not retry other provider validation errors', async () => {
+    const payoutService = new IvorypayService({
+      get: jest.fn((key: string, defaultValue?: any) =>
+        key === 'IVORYPAY_BASE_URL'
+          ? 'https://api.ivorypay.io/api'
+          : key === 'IVORYPAY_API_KEY'
+            ? 'test-api-key'
+            : key === 'IVORYPAY_CRYPTO_PAYOUTS_ENABLED'
+              ? 'true'
+              : defaultValue,
+      ),
+    } as unknown as ConfigService);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: [{ token: 'USDC', network: 'POLYGON', isSupported: true }],
+      },
+    } as any);
     mockedAxios.post.mockRejectedValueOnce({
       response: {
         status: 400,
         data: { message: 'Invalid destination address' },
       },
     });
-    const retryDelay = jest.spyOn(service as any, 'waitBeforePricingRetry');
 
     await expect(
-      service.createWithdrawal({
+      payoutService.createWithdrawal({
         amount: 3,
         token: 'USDC',
         network: 'POLYGON',
@@ -318,10 +413,9 @@ describe('IvorypayService', () => {
         reference: 'withdrawal-ref',
       }),
     ).rejects.toThrow(
-      'Crypto withdrawal could not be completed. Please verify the amount, network and wallet address.',
+      'IvoryPay rejected the crypto payout: Invalid destination address',
     );
     expect(mockedAxios.post).toHaveBeenCalledTimes(1);
-    expect(retryDelay).not.toHaveBeenCalled();
   });
 
   it('chooses tx_ref before trxref and transaction_reference when determining primary reference', () => {
@@ -337,7 +431,9 @@ describe('IvorypayService', () => {
       reference: null,
     };
 
-    const primary = (service as any).determinePrimaryProviderReference(identifiers);
+    const primary = (service as any).determinePrimaryProviderReference(
+      identifiers,
+    );
     expect(primary).toBe('TX123');
   });
 
@@ -354,34 +450,52 @@ describe('IvorypayService', () => {
       reference: null,
     };
 
-    const primary = (service as any).determinePrimaryProviderReference(identifiers);
+    const primary = (service as any).determinePrimaryProviderReference(
+      identifiers,
+    );
     expect(primary).toBe('TRX123');
   });
 
   it('extracts lookup identifiers from URLs, query params, and raw strings', () => {
     const lookup = (service as any).extractLookupIdentifier.bind(service);
 
-    expect(lookup('https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000')).toBe(
-      '550e8400-e29b-41d4-a716-446655440000',
-    );
+    expect(
+      lookup(
+        'https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000',
+      ),
+    ).toBe('550e8400-e29b-41d4-a716-446655440000');
     expect(lookup('https://example.com/pay?reference=abc123')).toBe('abc123');
     expect(lookup('abc123')).toBe('abc123');
   });
 
   it('verifies transaction using the business verify endpoint and falls back to the legacy verify endpoint', async () => {
     mockedAxios.get
-      .mockResolvedValueOnce({ data: { success: false, statusCode: 404, message: 'Transaction not found' }, status: 404 })
-      .mockResolvedValueOnce({ data: { success: true, data: { reference: 'ref1', status: 'SUCCESS' } }, status: 200 });
+      .mockResolvedValueOnce({
+        data: {
+          success: false,
+          statusCode: 404,
+          message: 'Transaction not found',
+        },
+        status: 404,
+      })
+      .mockResolvedValueOnce({
+        data: { success: true, data: { reference: 'ref1', status: 'SUCCESS' } },
+        status: 200,
+      });
 
     const result = await service.verifyTransaction('ref1', 'ref1', ['ref1']);
 
     expect(mockedAxios.get).toHaveBeenCalledWith(
       'https://api.ivorypay.io/api/v1/business/transactions/ref1/verify',
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'test-api-key' }) }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'test-api-key' }),
+      }),
     );
     expect(mockedAxios.get).toHaveBeenCalledWith(
       'https://api.ivorypay.io/api/v1/transactions/ref1/verify',
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'test-api-key' }) }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'test-api-key' }),
+      }),
     );
     expect(result.reference).toBe('ref1');
     expect(result.status).toBe('SUCCESS');

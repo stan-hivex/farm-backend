@@ -59,19 +59,23 @@ describe('DepositService', () => {
   });
 
   it('rejects crypto deposits on the generic deposit endpoint', async () => {
-    await expect(service.createDeposit('user-1', {
-      amount_fiat: 1,
-      paymentMethod: 'CRYPTO',
-      email: 'user@example.com',
-    })).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    await expect(
+      service.createDeposit('user-1', {
+        amount_fiat: 1,
+        paymentMethod: 'CRYPTO',
+        email: 'user@example.com',
+      }),
+    ).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
   });
 
   it('does not create a generic deposit for crypto requests', async () => {
-    await expect(service.createDeposit('user-2', {
-      amount_fiat: 2,
-      paymentMethod: 'CRYPTO',
-      email: 'user2@example.com',
-    })).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    await expect(
+      service.createDeposit('user-2', {
+        amount_fiat: 2,
+        paymentMethod: 'CRYPTO',
+        email: 'user2@example.com',
+      }),
+    ).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
     expect(prisma.deposit.create).not.toHaveBeenCalled();
   });
 
@@ -152,40 +156,23 @@ describe('DepositService', () => {
     expect(result.deposit.total).toBe(100);
   });
 
-  it('initializes bank transfer deposits through Paystack', async () => {
-    paystack.initializePayment = jest.fn().mockResolvedValue({
-      authorization_url: 'https://checkout.example.test/payment',
-      access_code: 'bank-transfer-access-code',
-    });
-    prisma.deposit.create.mockResolvedValue({
-      id: 'deposit-3',
-      amount: 100,
-      fee: 0,
-      total: 100,
-      currency: 'KES',
-      paymentMethod: 'BANK_TRANSFER',
-      provider: 'paystack',
-      reference: 'reference-3',
-      status: 'PENDING',
-    });
+  it('rejects unsupported KES bank transfer before creating a pending deposit', async () => {
+    paystack.initializePayment = jest.fn();
 
-    const result = await service.createDeposit('user-1', {
-      amount_fiat: 100,
-      currency: 'KES',
-      paymentMethod: 'BANK_TRANSFER',
-      email: 'user@example.com',
-    });
-
-    expect(paystack.initializePayment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        amount: 100,
-        channels: ['bank_transfer'],
+    await expect(
+      service.createDeposit('user-1', {
+        amount_fiat: 100,
+        currency: 'KES',
+        paymentMethod: 'BANK_TRANSFER',
+        email: 'user@example.com',
       }),
+    ).rejects.toThrow(
+      'Paystack bank transfer is not available',
     );
-    expect(result.authorization_url).toBe(
-      'https://checkout.example.test/payment',
-    );
-    expect(result.access_code).toBe('bank-transfer-access-code');
+
+    expect(prisma.deposit.create).not.toHaveBeenCalled();
+    expect(prisma.transactions.create).not.toHaveBeenCalled();
+    expect(paystack.initializePayment).not.toHaveBeenCalled();
   });
 
   it('deducts the public merchant QR fee before crediting wallets', async () => {
@@ -262,8 +249,9 @@ describe('DepositService', () => {
     websocket.emitBalanceUpdate = jest.fn();
     notifications.sendNotification = jest.fn().mockResolvedValue(undefined);
 
-    await expect(service.finalizeSuccessfulDeposit(transaction.transaction_reference))
-      .resolves.toBe(true);
+    await expect(
+      service.finalizeSuccessfulDeposit(transaction.transaction_reference),
+    ).resolves.toBe(true);
 
     expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
       where: { id: 'merchant-wallet-1' },
