@@ -353,6 +353,7 @@ describe('TransactionsService', () => {
       },
     });
     expect(result.data).toMatchObject({
+      transaction_type: 'withdrawal',
       fee: 1.5,
       net_amount: 98.5,
       settlement_amount: 98.5,

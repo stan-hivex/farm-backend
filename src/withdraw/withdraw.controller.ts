@@ -106,7 +106,9 @@ export class WithdrawController {
     if (normalizedType && !['kepss', 'mobile_money'].includes(normalizedType)) {
       throw new BadRequestException('Unsupported Paystack destination type');
     }
-    return this.withdrawService.getPaystackDestinations(normalizedType);
+    return {
+      data: await this.withdrawService.getPaystackDestinations(normalizedType),
+    };
   }
 
   @Permissions('withdraw:read')

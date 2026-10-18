@@ -54,8 +54,16 @@ describe('WithdrawController', () => {
   });
 
   it('should return Kenyan bank destinations for the kepss filter', async () => {
-    await controller.getPaystackDestinations('kepss');
+    const destinations = [
+      { name: 'Equity Bank', bank_code: '68', code: '68' },
+    ];
+    jest
+      .spyOn(service, 'getPaystackDestinations')
+      .mockResolvedValue(destinations);
 
+    await expect(controller.getPaystackDestinations('kepss')).resolves.toEqual({
+      data: destinations,
+    });
     expect(service.getPaystackDestinations).toHaveBeenCalledWith('kepss');
   });
 
