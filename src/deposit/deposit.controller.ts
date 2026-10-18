@@ -1,4 +1,12 @@
-﻿import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+﻿import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import {
   IsArray,
   IsIn,
@@ -61,7 +69,7 @@ class CreateDepositDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  @IsIn(['card', 'mobile_money', 'bank_transfer'], { each: true })
+  @IsIn(['card', 'mobile_money', 'bank', 'bank_transfer'], { each: true })
   channels?: string[];
 }
 

@@ -160,6 +160,57 @@ describe('AdminService transaction list details', () => {
   });
 });
 
+describe('AdminService dispute resolution', () => {
+  it.each(['buyer', 'seller'] as const)(
+    'passes resolution details to escrow helpers when the %s wins',
+    async (winner) => {
+      const escrow = { id: 'escrow-1', status: 'disputed' };
+      const prisma: any = {
+        escrow_contracts: {
+          findUnique: jest.fn().mockResolvedValue(escrow),
+        },
+        audit_logs: {
+          create: jest.fn().mockResolvedValue({}),
+        },
+      };
+      const escrowService: any = {
+        executeRelease: jest.fn().mockResolvedValue(undefined),
+        executeRefund: jest.fn().mockResolvedValue(undefined),
+      };
+      const service = new AdminService(
+        prisma,
+        escrowService,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+
+      await service.resolveDispute('escrow-1', 'admin-1', {
+        winner,
+        note: 'Evidence reviewed',
+      });
+
+      const selectedHelper =
+        winner === 'seller'
+          ? escrowService.executeRelease
+          : escrowService.executeRefund;
+      const otherHelper =
+        winner === 'seller'
+          ? escrowService.executeRefund
+          : escrowService.executeRelease;
+      expect(selectedHelper).toHaveBeenCalledWith(escrow, {
+        adminId: 'admin-1',
+        note: 'Evidence reviewed',
+      });
+      expect(otherHelper).not.toHaveBeenCalled();
+      expect(prisma.escrow_contracts.findUnique).toHaveBeenCalledWith({
+        where: { id: 'escrow-1' },
+      });
+      expect(prisma.audit_logs.create).toHaveBeenCalled();
+    },
+  );
+});
+
 describe('AdminService.broadcastNotification', () => {
   it('maps the audience selector to the correct user filter and sends a notification', async () => {
     const prisma = {

@@ -48,10 +48,11 @@ export class DepositService {
       );
     }
 
-    if (paymentMethod === 'BANK_TRANSFER') {
-      throw new BadRequestException(
-        'Paystack bank transfer is not available for this KES deposit flow. Paystack currently supports its Pay with Transfer channel for businesses in Nigeria and Ghana, not Kenya. No deposit was created; use Bank Card or Mobile Money, or contact Paystack about an eligible transfer product.',
-      );
+    if (
+      paymentMethod === 'BANK_TRANSFER' &&
+      (dto.currency || 'KES').toUpperCase() !== 'KES'
+    ) {
+      throw new BadRequestException('Paystack Pesalink deposits must use KES.');
     }
 
     const reference = uuidv4();
@@ -61,10 +62,26 @@ export class DepositService {
     const total = amount;
 
     const depositCurrency =
-      paymentMethod === 'CRYPTO' ? 'FARM' : dto.currency || 'KES';
+      paymentMethod === 'CRYPTO'
+        ? 'FARM'
+        : paymentMethod === 'BANK_TRANSFER'
+          ? 'KES'
+          : dto.currency || 'KES';
     const depositAmount = amount;
     const depositFee = paymentMethod === 'CRYPTO' ? 0 : fee;
     const depositTotal = paymentMethod === 'CRYPTO' ? amount : total;
+
+    const bankTransferInitialization =
+      paymentMethod === 'BANK_TRANSFER'
+        ? await this.paystack.initializePayment({
+            email: dto.email || `${userId}@farm.app`,
+            amount: total,
+            reference,
+            currency: 'KES',
+            channels: ['bank'],
+            metadata: { userId, paymentMethod },
+          })
+        : null;
 
     let providerRef = reference;
     const deposit = await this.prisma.deposit.create({
@@ -95,7 +112,7 @@ export class DepositService {
           amount: total,
           fee: 0,
           net_amount: total,
-          currency: dto.currency || 'KES',
+          currency: depositCurrency,
           description: `Pending ${paymentMethod} deposit via ${provider.toUpperCase()} (${depositCurrency} ${total})`,
           metadata: {
             provider,
@@ -222,14 +239,10 @@ export class DepositService {
       paymentUrl = init.authorization_url || init.authorizationUrl;
       paystackAccessCode = init.access_code || null;
     } else if (paymentMethod === 'BANK_TRANSFER') {
-      const init = await this.paystack.initializePayment({
-        email: dto.email || `${userId}@farm.app`,
-        amount: total,
-        reference,
-        currency: 'KES',
-        channels: ['bank_transfer'],
-        metadata: { userId, depositId: deposit.id, paymentMethod },
-      });
+      if (!bankTransferInitialization) {
+        throw new Error('Paystack bank checkout was not initialized.');
+      }
+      const init = bankTransferInitialization;
       paymentUrl = init.authorization_url || init.authorizationUrl;
       paystackAccessCode = init.access_code || null;
     } else {

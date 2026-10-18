@@ -277,6 +277,9 @@ export class EscrowService {
           escrow_id: contract.id,
           amount: dto.amount,
           seller_username: seller.username,
+          event: 'escrow_created',
+          transaction_reference: result.transactionReference,
+          transaction_type: 'escrow_lock',
         },
       }),
       this.notificationsService.sendNotification(seller.id, {
@@ -288,6 +291,9 @@ export class EscrowService {
           escrow_id: contract.id,
           amount: dto.amount,
           buyer_username: buyer.username,
+          event: 'escrow_received',
+          transaction_reference: result.transactionReference,
+          transaction_type: 'escrow_lock',
         },
       }),
     ]).catch((error) => this.logger.error('Escrow notification failed', error));
@@ -464,6 +470,7 @@ export class EscrowService {
           escrow_id: escrow.id,
           reason,
           amount: Number(escrow.amount),
+          event: 'escrow_disputed',
         },
       }),
       this.notificationsService.sendNotification(otherPartyId, {
@@ -476,6 +483,7 @@ export class EscrowService {
           disputed_by: userId,
           reason,
           amount: Number(escrow.amount),
+          event: 'escrow_disputed',
         },
       }),
     ]).catch((error) =>
@@ -789,10 +797,10 @@ export class EscrowService {
     }
 
     const buyerResolutionMessage = resolution
-      ? `An admin resolved the dispute in the seller's favor.${resolution.note ? ` Note: ${resolution.note}` : ''}`
+      ? `An admin resolved the dispute in the seller's favor. ${amountToSeller} FARM was credited to the seller.${resolution.note ? ` Note: ${resolution.note}` : ''}`
       : null;
     const sellerResolutionMessage = resolution
-      ? `An admin resolved the dispute in your favor.${resolution.note ? ` Note: ${resolution.note}` : ''}`
+      ? `An admin resolved the dispute in your favor. ${amountToSeller} FARM was credited to your wallet.${resolution.note ? ` Note: ${resolution.note}` : ''}`
       : null;
     await Promise.all([
       this.notificationsService.sendNotification(escrow.buyer_id, {
@@ -807,6 +815,10 @@ export class EscrowService {
           amount: Number(escrow.amount),
           released_amount: amountToSeller,
           seller_id: escrow.seller_id,
+          event: 'escrow_released',
+          transaction_reference: result.transactionReference,
+          transaction_type: 'escrow_release',
+          ...(resolution ? { credited_user_id: escrow.seller_id } : {}),
           ...(resolution ? { resolution_note: resolution.note } : {}),
         },
       }),
@@ -822,6 +834,10 @@ export class EscrowService {
           amount: Number(escrow.amount),
           net_amount: amountToSeller,
           buyer_id: escrow.buyer_id,
+          event: resolution ? 'escrow_dispute_resolved' : 'escrow_received',
+          transaction_reference: result.transactionReference,
+          transaction_type: 'escrow_release',
+          ...(resolution ? { credited_user_id: escrow.seller_id } : {}),
           ...(resolution ? { resolution_note: resolution.note } : {}),
         },
       }),
@@ -897,7 +913,7 @@ export class EscrowService {
     }
 
     const resolutionText = resolution
-      ? `An admin resolved the dispute in your favor. ${amount} FARM was returned. The 1.5% escrow creation fee is non-refundable.${resolution.note ? ` Note: ${resolution.note}` : ''}`
+      ? `An admin resolved the dispute in your favor. ${amount} FARM was credited to your wallet. The 1.5% escrow creation fee is non-refundable.${resolution.note ? ` Note: ${resolution.note}` : ''}`
       : `Your escrow for ${escrow.title} has been refunded. ${amount} FARM was returned. The 1.5% escrow creation fee is non-refundable.`;
     const refundNotifications = [
       this.notificationsService.sendNotification(escrow.buyer_id, {
@@ -910,6 +926,10 @@ export class EscrowService {
           amount,
           refunded_amount: amount,
           creation_fee_refunded: 0,
+          event: resolution ? 'escrow_dispute_resolved' : 'escrow_refunded',
+          transaction_reference: result.transactionReference,
+          transaction_type: 'escrow_refund',
+          ...(resolution ? { credited_user_id: escrow.buyer_id } : {}),
           ...(resolution ? { resolution_note: resolution.note } : {}),
         },
       }),
@@ -926,6 +946,10 @@ export class EscrowService {
             amount,
             refunded_amount: amount,
             creation_fee_refunded: 0,
+            event: 'escrow_dispute_resolved',
+            transaction_reference: result.transactionReference,
+            transaction_type: 'escrow_refund',
+            credited_user_id: escrow.buyer_id,
             resolution_note: resolution.note,
           },
         }),

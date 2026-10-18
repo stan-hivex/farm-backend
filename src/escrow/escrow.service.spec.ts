@@ -95,11 +95,14 @@ describe('EscrowService biometric authorization', () => {
     const securityService: any = {
       verifyDevice: jest.fn().mockResolvedValue({ trusted: true }),
     };
+    const notifications: any = {
+      sendNotification: jest.fn().mockResolvedValue(undefined),
+    };
     const service = new EscrowService(
       prisma,
       authService,
       {} as any,
-      { sendNotification: jest.fn().mockResolvedValue(undefined) } as any,
+      notifications,
       securityService,
       { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn() } as any,
     );
@@ -118,6 +121,27 @@ describe('EscrowService biometric authorization', () => {
       'trusted-device',
     );
     expect(authService.verifyPin).not.toHaveBeenCalled();
+    expect(notifications.sendNotification).toHaveBeenCalledWith(
+      'buyer-1',
+      expect.objectContaining({
+        type: 'escrow_created',
+        metadata: expect.objectContaining({
+          transaction_reference: 'tx-1',
+          transaction_type: 'escrow_lock',
+        }),
+      }),
+    );
+    expect(notifications.sendNotification).toHaveBeenCalledWith(
+      'seller-1',
+      expect.objectContaining({
+        type: 'escrow_received',
+        metadata: expect.objectContaining({
+          event: 'escrow_received',
+          transaction_reference: 'tx-1',
+          transaction_type: 'escrow_lock',
+        }),
+      }),
+    );
   });
 });
 
@@ -185,6 +209,102 @@ describe('EscrowService dispute resolution', () => {
           amount: 100,
           refunded_amount: 100,
           creation_fee_refunded: 0,
+          transaction_reference: 'refund-reference',
+          credited_user_id: 'buyer-1',
+        }),
+      }),
+    );
+    expect(notifications.sendNotification).toHaveBeenCalledWith(
+      'seller-1',
+      expect.objectContaining({
+        title: "Dispute resolved in buyer's favor",
+        body: expect.stringContaining('refunded to the buyer'),
+        metadata: expect.objectContaining({
+          transaction_reference: 'refund-reference',
+          credited_user_id: 'buyer-1',
+        }),
+      }),
+    );
+  });
+
+  it('notifies both escrow parties of the seller credit after a seller-favor resolution', async () => {
+    const tx: any = {
+      escrow_contracts: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      wallets: {
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balance: 0 })
+          .mockResolvedValueOnce({ balance: 99 })
+          .mockResolvedValueOnce({ balance: 1 }),
+      },
+      transactions: {
+        create: jest.fn().mockResolvedValue({
+          transaction_reference: 'release-reference',
+        }),
+      },
+      ledger_entries: {
+        createMany: jest.fn().mockResolvedValue({ count: 2 }),
+        create: jest.fn().mockResolvedValue({}),
+      },
+      users: {
+        findFirst: jest.fn().mockResolvedValue({
+          wallets: [{ id: 'platform-wallet' }],
+        }),
+      },
+    };
+    const prisma: any = {
+      $transaction: jest.fn((work) => work(tx)),
+    };
+    const notifications: any = {
+      sendNotification: jest.fn().mockResolvedValue({}),
+    };
+    const websocket: any = {
+      emitBalanceUpdate: jest.fn(),
+      emitTransactionUpdate: jest.fn(),
+    };
+    const service = new EscrowService(
+      prisma,
+      {} as any,
+      {} as any,
+      notifications,
+      {} as any,
+      websocket,
+    );
+
+    await service.executeRelease(
+      {
+        id: 'escrow-1',
+        amount: 100,
+        title: 'Order',
+        buyer_id: 'buyer-1',
+        seller_id: 'seller-1',
+        buyer_wallet_id: 'buyer-wallet',
+        seller_wallet_id: 'seller-wallet',
+      },
+      { adminId: 'admin-1', note: 'Evidence reviewed' },
+    );
+
+    expect(notifications.sendNotification).toHaveBeenCalledWith(
+      'buyer-1',
+      expect.objectContaining({
+        body: expect.stringContaining('credited to the seller'),
+        metadata: expect.objectContaining({
+          event: 'escrow_released',
+          transaction_reference: 'release-reference',
+          credited_user_id: 'seller-1',
+        }),
+      }),
+    );
+    expect(notifications.sendNotification).toHaveBeenCalledWith(
+      'seller-1',
+      expect.objectContaining({
+        body: expect.stringContaining('credited to your wallet'),
+        metadata: expect.objectContaining({
+          event: 'escrow_dispute_resolved',
+          transaction_reference: 'release-reference',
+          credited_user_id: 'seller-1',
         }),
       }),
     );

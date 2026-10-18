@@ -1325,6 +1325,7 @@ export class WebhookService {
       'declined',
       'reversed',
       'incomplete',
+      'mismatch',
     ];
     return (
       failureEvents.includes(normalizedEvent) ||
@@ -1354,13 +1355,33 @@ export class WebhookService {
   }
 
   private getEventId(provider: string, payload: any) {
-    return (
+    const identity =
       payload.id ??
+      payload.event_id ??
+      payload.eventId ??
       payload.data?.id ??
+      payload.data?.event_id ??
+      payload.data?.eventId ??
       payload.data?.reference ??
       payload.reference ??
-      null
-    );
+      null;
+    if (identity === null || identity === undefined || identity === '') {
+      return null;
+    }
+
+    const event = String(payload.event ?? payload.type ?? '')
+      .trim()
+      .toLowerCase();
+    const status = String(
+      payload.data?.status ??
+        payload.data?.state ??
+        payload.status ??
+        '',
+    )
+      .trim()
+      .toLowerCase();
+
+    return JSON.stringify([provider, String(identity), event, status]);
   }
 
   private async isReplay(provider: string, eventId: string) {
@@ -3205,7 +3226,10 @@ export class WebhookService {
           this.logger.warn(
             `Ivorypay webhook processing: verification did not confirm success for ${resolvedReference} providerRef=${resolverProviderRef ?? rawReference}`,
           );
-          if (deposit || transaction) {
+          if (
+            transaction?.transaction_type === 'deposit' ||
+            (!transaction && deposit)
+          ) {
             this.logger.warn(
               `Ivorypay webhook processing: fallback finalize for ${resolvedReference} due to verified transaction unavailable`,
             );

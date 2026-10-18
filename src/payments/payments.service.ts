@@ -59,6 +59,12 @@ export class PaymentsService {
       );
     }
     const paymentMethod = rawPaymentMethod as PaymentMethod;
+    if (
+      paymentMethod === 'BANK_TRANSFER' &&
+      dto.currency.trim().toUpperCase() !== 'KES'
+    ) {
+      throw new BadRequestException('Paystack Pesalink deposits must use KES.');
+    }
 
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
@@ -451,7 +457,7 @@ export class PaymentsService {
         amount: dto.amount_fiat,
         currency: dto.currency,
         reference,
-        channels: ['bank_transfer'],
+        channels: ['bank'],
         callback_url: callbackUrl || 'https://farmapp.africa/payment-callback',
         metadata: {
           provider: 'paystack',
@@ -524,6 +530,7 @@ export class PaymentsService {
           payment_url: response.authorization_url || response.authorizationUrl,
           authorization_url:
             response.authorization_url || response.authorizationUrl,
+          access_code: response.access_code,
         },
         message: 'Bank transfer deposit initiated via Paystack checkout',
       };

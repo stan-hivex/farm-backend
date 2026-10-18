@@ -156,8 +156,53 @@ describe('DepositService', () => {
     expect(result.deposit.total).toBe(100);
   });
 
-  it('rejects unsupported KES bank transfer before creating a pending deposit', async () => {
-    paystack.initializePayment = jest.fn();
+  it('initializes KES bank deposits through Paystack bank checkout', async () => {
+    paystack.initializePayment = jest.fn().mockResolvedValue({
+      authorization_url: 'https://checkout.example.test/payment',
+      access_code: 'pesalink-access-code',
+    });
+    prisma.deposit.create.mockResolvedValue({
+      id: 'deposit-3',
+      amount: 100,
+      fee: 0,
+      total: 100,
+      currency: 'KES',
+      paymentMethod: 'BANK_TRANSFER',
+      provider: 'paystack',
+      reference: 'reference-3',
+      status: 'PENDING',
+    });
+
+    const result = await service.createDeposit('user-1', {
+      amount_fiat: 100,
+      currency: 'KES',
+      paymentMethod: 'BANK_TRANSFER',
+      email: 'user@example.com',
+    });
+
+    expect(paystack.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 100,
+        currency: 'KES',
+        channels: ['bank'],
+      }),
+    );
+    expect(result).toMatchObject({
+      payment_url: 'https://checkout.example.test/payment',
+      authorization_url: 'https://checkout.example.test/payment',
+      access_code: 'pesalink-access-code',
+    });
+    expect(result.deposit).toMatchObject({
+      currency: 'KES',
+      paymentMethod: 'BANK_TRANSFER',
+      status: 'PENDING',
+    });
+  });
+
+  it('does not leave a pending deposit when Paystack rejects bank checkout', async () => {
+    paystack.initializePayment = jest
+      .fn()
+      .mockRejectedValue(new Error('Paystack bank channel unavailable'));
 
     await expect(
       service.createDeposit('user-1', {
@@ -166,13 +211,10 @@ describe('DepositService', () => {
         paymentMethod: 'BANK_TRANSFER',
         email: 'user@example.com',
       }),
-    ).rejects.toThrow(
-      'Paystack bank transfer is not available',
-    );
+    ).rejects.toThrow('Paystack bank channel unavailable');
 
     expect(prisma.deposit.create).not.toHaveBeenCalled();
     expect(prisma.transactions.create).not.toHaveBeenCalled();
-    expect(paystack.initializePayment).not.toHaveBeenCalled();
   });
 
   it('deducts the public merchant QR fee before crediting wallets', async () => {

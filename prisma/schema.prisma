@@ -833,6 +833,11 @@ enum notification_type {
   kyc_update
   security
   escrow
+  escrow_created
+  escrow_received
+  escrow_disputed
+  escrow_released
+  escrow_refunded
   investment
   merchant
   transfer_request

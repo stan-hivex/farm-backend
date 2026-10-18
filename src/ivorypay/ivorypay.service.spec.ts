@@ -500,4 +500,20 @@ describe('IvorypayService', () => {
     expect(result.reference).toBe('ref1');
     expect(result.status).toBe('SUCCESS');
   });
+
+  it('does not report an unverified transaction as successful when the API key is missing', async () => {
+    const unconfiguredService = new IvorypayService({
+      get: jest.fn((key: string, defaultValue?: any) =>
+        key === 'IVORYPAY_BASE_URL'
+          ? 'https://api.ivorypay.io/api'
+          : defaultValue,
+      ),
+    } as unknown as ConfigService);
+
+    await expect(
+      unconfiguredService.verifyTransaction('withdrawal-reference'),
+    ).rejects.toThrow(
+      'IvoryPay transaction verification is unavailable because IVORYPAY_API_KEY is not configured',
+    );
+  });
 });

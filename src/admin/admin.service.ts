@@ -410,12 +410,15 @@ export class AdminService {
   ) {
     const escrow = await this.prisma.escrow_contracts.findUnique({ where: { id: escrowId } });
     if (!escrow) throw new NotFoundException('Escrow not found');
-    if (dto.winner === 'seller') await this.escrowService.executeRelease(escrow);
-    else await this.escrowService.executeRefund(escrow);
-    await this.prisma.escrow_contracts.update({
-      where: { id: escrowId },
-      data: { arbiter_id: adminId, resolution_note: dto.note, resolved_at: new Date() },
-    });
+    if (escrow.status !== 'disputed') {
+      throw new BadRequestException('Only disputed escrows can be resolved');
+    }
+    const resolution = { adminId, note: dto.note };
+    if (dto.winner === 'seller') {
+      await this.escrowService.executeRelease(escrow, resolution);
+    } else {
+      await this.escrowService.executeRefund(escrow, resolution);
+    }
     await this.prisma.audit_logs.create({
       data: {
         user_id: adminId, action: 'RESOLVE_DISPUTE',

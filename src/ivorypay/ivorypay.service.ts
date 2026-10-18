@@ -765,10 +765,9 @@ export class IvorypayService {
     fallbackReferences: string[] = [],
   ) {
     if (!this.apiKey) {
-      this.logger.warn(
-        'IVORYPAY_API_KEY not configured, returning mock verify',
+      throw new ServiceUnavailableException(
+        'IvoryPay transaction verification is unavailable because IVORYPAY_API_KEY is not configured',
       );
-      return { status: 'completed', reference };
     }
 
     const rawCandidates = [

@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, UseGuards, Req, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UseGuards,
+  Req,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import {
   IsNotEmpty,
@@ -24,7 +33,11 @@ import { Public } from '../common/decorators/public.decorator';
 class DepositDto {
   @IsNumber() @IsPositive() amount_fiat!: number;
   @IsNotEmpty() @IsString() currency!: string;
-  @IsOptional() @IsString() paymentMethod?: 'CARD' | 'MOBILE_MONEY' | 'CRYPTO' | 'BANK_TRANSFER';
+  @IsOptional() @IsString() paymentMethod?:
+    | 'CARD'
+    | 'MOBILE_MONEY'
+    | 'CRYPTO'
+    | 'BANK_TRANSFER';
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsIn(['USDT', 'USDC']) crypto?: string;
@@ -34,7 +47,7 @@ class DepositDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  @IsIn(['card', 'mobile_money', 'bank_transfer'], { each: true })
+  @IsIn(['card', 'mobile_money', 'bank', 'bank_transfer'], { each: true })
   channels?: string[];
 }
 // WithdrawDto removed: use WithdrawService endpoints instead
@@ -51,26 +64,36 @@ export class PaymentsController {
   @Post('deposit')
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard, KycGuard)
-  @ApiOperation({ summary: 'Initiate a fiat deposit (CARD, MOBILE_MONEY, CRYPTO, BANK_TRANSFER)' })
+  @ApiOperation({
+    summary:
+      'Initiate a fiat deposit (CARD, MOBILE_MONEY, CRYPTO, BANK_TRANSFER)',
+  })
   deposit(@CurrentUser() u: any, @Body() dto: DepositDto, @Req() req: Request) {
     // Prefer a signed device token to prevent spoofing
     let deviceRisk = 0;
     const token = (req.headers['x-device-token'] as string) || '';
     if (token) {
       const p = verifyDeviceToken(token) as any;
-      if (p && typeof p.deviceRisk !== 'undefined') deviceRisk = Number(p.deviceRisk) || 0;
+      if (p && typeof p.deviceRisk !== 'undefined')
+        deviceRisk = Number(p.deviceRisk) || 0;
     } else {
-      const header = req.headers['x-device-risk'] || req.headers['x-device-risk-score'];
+      const header =
+        req.headers['x-device-risk'] || req.headers['x-device-risk-score'];
       deviceRisk = header ? Number(header as string) || 0 : 0;
     }
-    return this.svc.initiateDeposit(u.id, dto, { deviceRisk, ip: req.ip || '' });
+    return this.svc.initiateDeposit(u.id, dto, {
+      deviceRisk,
+      ip: req.ip || '',
+    });
   }
 
   @Permissions('payments:write')
   @Get('crypto/options')
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard)
-  @ApiOperation({ summary: 'Get crypto tokens and networks enabled for IvoryPay checkout' })
+  @ApiOperation({
+    summary: 'Get crypto tokens and networks enabled for IvoryPay checkout',
+  })
   cryptoOptions() {
     return this.svc.getCryptoPaymentOptions();
   }

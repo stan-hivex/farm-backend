@@ -140,6 +140,35 @@ describe('PaymentsService merchant QR mobile-money checkout', () => {
 
     expect(paystack.initializePayment).not.toHaveBeenCalled();
   });
+
+  it('initializes KES bank-transfer deposits with Paystack bank checkout', async () => {
+    const { service, paystack } = createService();
+    paystack.initializePayment.mockResolvedValue({
+      authorization_url: 'https://checkout.paystack.com/reference',
+      access_code: 'pesalink-access-code',
+    });
+
+    const result = await service.initiateDeposit('user-1', {
+      amount_fiat: 100,
+      currency: 'KES',
+      paymentMethod: 'BANK_TRANSFER',
+      email: 'customer@example.com',
+    });
+
+    expect(paystack.initializePayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 100,
+        currency: 'KES',
+        channels: ['bank'],
+      }),
+    );
+    expect(result.data).toMatchObject({
+      provider: 'PAYSTACK',
+      payment_url: 'https://checkout.paystack.com/reference',
+      authorization_url: 'https://checkout.paystack.com/reference',
+      access_code: 'pesalink-access-code',
+    });
+  });
 });
 
 describe('PaymentsService crypto deposits', () => {

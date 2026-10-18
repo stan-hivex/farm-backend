@@ -1,5 +1,34 @@
 import { WebhookService } from './webhook.service';
 
+describe('WebhookService webhook event deduplication', () => {
+  it('distinguishes status events for the same provider transaction', () => {
+    const service = Object.create(WebhookService.prototype) as WebhookService;
+    const pending = {
+      event: 'cryptoPayout.pending',
+      data: {
+        id: 'payout-id',
+        reference: 'withdrawal-reference',
+        status: 'PENDING',
+      },
+    };
+    const success = {
+      event: 'cryptoPayout.success',
+      data: {
+        id: 'payout-id',
+        reference: 'withdrawal-reference',
+        status: 'SUCCESS',
+      },
+    };
+
+    expect((service as any).getEventId('ivorypay', pending)).not.toBe(
+      (service as any).getEventId('ivorypay', success),
+    );
+    expect((service as any).getEventId('ivorypay', pending)).toBe(
+      (service as any).getEventId('ivorypay', pending),
+    );
+  });
+});
+
 describe('WebhookService Paystack deposit processing', () => {
   const createService = () => {
     const finalizeSuccessfulDeposit = jest.fn().mockResolvedValue(true);
