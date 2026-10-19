@@ -14,10 +14,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { PUBLIC_CHECKOUT_BASE_URL } from '../qr/merchant-checkout.constants';
 import { CreateQrPaymentDto } from './create-qr-payment.dto';
 
-const DEFAULT_PUBLIC_PAY_SUCCESS_URL =
-  'https://farmapp-e2145.web.app/pay/success';
+const DEFAULT_PUBLIC_PAY_SUCCESS_URL = `${PUBLIC_CHECKOUT_BASE_URL}/pay/success`;
 
 type QrProvider = 'paystack' | 'ivorypay';
 
@@ -442,6 +442,20 @@ export class QrPaymentsService {
     };
   }
 
+  async getReceiptDownloadUrl(reference: string) {
+    const transaction = await this.findQrTransaction(reference);
+    const metadata =
+      (transaction?.metadata as Record<string, unknown> | null) ?? {};
+    if (
+      !transaction ||
+      !this.isPublicQrSale(transaction, metadata) ||
+      transaction.status?.toLowerCase() !== 'completed'
+    ) {
+      throw new NotFoundException('Completed QR payment receipt not found');
+    }
+    return this.receipts.getPublicDownloadUrlForTransaction(transaction.id);
+  }
+
   private findQrTransaction(reference: string) {
     return this.prisma.transactions.findFirst({
       where: {
@@ -764,7 +778,7 @@ export class QrPaymentsService {
       .sendNotification(settled.userId, {
         type: 'merchant',
         entityId: reference,
-        title: 'Merchant payment received',
+        title: 'Merchant payment successful',
         body: `Your business received ${settled.merchantNet} FARM after the 1% sales fee from a QR payment.`,
         metadata: {
           event: 'merchant_payment_received',

@@ -43,4 +43,15 @@ export class QrPaymentsController {
     }
     return this.qrPayments.verify(reference);
   }
+
+  @Public()
+  @Get('qr-payments/receipt/:reference/download')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Download a receipt for a completed QR payment' })
+  downloadReceipt(@Param('reference') reference: string) {
+    if (!reference || reference.length > 128) {
+      throw new BadRequestException('A valid payment reference is required');
+    }
+    return this.qrPayments.getReceiptDownloadUrl(reference);
+  }
 }

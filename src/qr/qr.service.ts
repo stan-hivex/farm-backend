@@ -16,7 +16,10 @@ import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
-import { MERCHANT_CHECKOUT_URL } from './merchant-checkout.constants';
+import {
+  MERCHANT_CHECKOUT_URL,
+  PUBLIC_CHECKOUT_BASE_URL,
+} from './merchant-checkout.constants';
 
 @Injectable()
 export class QrService {
@@ -567,7 +570,7 @@ export class QrService {
       if (payload.merchant_id) {
         const merchantId = payload.merchant_id.replace(/[{}]/g, '').trim();
         if (merchantId) {
-          return `https://farmapp-e2145.web.app/pay/${encodeURIComponent(merchantId)}`;
+          return `${PUBLIC_CHECKOUT_BASE_URL}/pay/${encodeURIComponent(merchantId)}`;
         }
       }
     } catch {

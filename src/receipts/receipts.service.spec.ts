@@ -118,4 +118,28 @@ describe('ReceiptsService merchant ownership', () => {
       }),
     );
   });
+
+  it('reports when a public QR receipt PDF is still being generated', async () => {
+    const prisma = {
+      payment_receipts: {
+        findFirst: jest.fn().mockResolvedValue({
+          receipt_number: 'FARM-2026-TRANSACTION-1',
+          pdf_url: null,
+        }),
+      },
+    };
+    const service = new ReceiptsService(
+      prisma as any,
+      {} as any,
+      {} as any,
+    );
+
+    await expect(
+      service.getPublicDownloadUrlForTransaction('transaction-1'),
+    ).rejects.toThrow('The receipt PDF is still being generated');
+    expect(prisma.payment_receipts.findFirst).toHaveBeenCalledWith({
+      where: { transaction_id: 'transaction-1' },
+      select: { receipt_number: true, pdf_url: true },
+    });
+  });
 });

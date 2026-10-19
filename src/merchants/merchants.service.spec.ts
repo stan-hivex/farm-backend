@@ -39,11 +39,41 @@ describe('MerchantsService QR access', () => {
       status: 'approved',
       qr_code: 'payload',
     });
-    qrService.getMerchantQr.mockResolvedValue({ data: { qr_image_base64: 'abc' } });
+    qrService.getMerchantQr.mockResolvedValue({
+      data: { qr_image_base64: 'abc' },
+    });
 
     await expect(service.getMerchantQr('user-1')).resolves.toEqual({
       data: { qr_image_base64: 'abc' },
     });
     expect(qrService.getMerchantQr).toHaveBeenCalledWith('merchant-1');
+  });
+
+  it('returns the QR payer email on the merchant transaction record', async () => {
+    prisma.wallets = {
+      findFirst: jest.fn().mockResolvedValue({ id: 'merchant-wallet-1' }),
+    };
+    prisma.transactions = {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: 'transaction-1',
+          amount: 25,
+          metadata: { guest_email: 'customer@example.com' },
+        },
+      ]),
+      count: jest.fn().mockResolvedValue(1),
+    };
+
+    const result = await service.getTransactions('user-1', {
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        payer_email: 'customer@example.com',
+        amount: 25,
+      }),
+    );
   });
 });

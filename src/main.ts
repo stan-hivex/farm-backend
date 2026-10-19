@@ -73,6 +73,8 @@ async function bootstrap() {
     configService.get<string>('APP_URL'),
     'https://farmapp.africa',
     'https://www.farmapp.africa',
+    'https://farmpay.africa',
+    'https://www.farmpay.africa',
     'https://farmapp-e2145.web.app',
   ]
     .filter((value): value is string => Boolean(value))

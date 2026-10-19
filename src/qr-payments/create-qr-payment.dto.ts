@@ -6,6 +6,7 @@ import {
   IsPositive,
   IsString,
   Length,
+  MaxLength,
 } from 'class-validator';
 
 export class CreateQrPaymentDto {
@@ -27,15 +28,16 @@ export class CreateQrPaymentDto {
   // Accept fields from cached web builds; QR payment initialization ignores them.
   @IsOptional()
   @IsString()
-  @Length(8, 20)
+  @MaxLength(128)
   guestPhone?: string;
 
   @IsOptional()
-  @IsIn(['USDC', 'USDT'])
-  crypto?: 'USDC' | 'USDT';
+  @IsString()
+  @MaxLength(128)
+  crypto?: string;
 
   @IsOptional()
   @IsString()
-  @Length(2, 32)
+  @MaxLength(128)
   chain?: string;
 }

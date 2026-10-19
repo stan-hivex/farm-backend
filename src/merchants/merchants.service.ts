@@ -205,6 +205,9 @@ export class MerchantsService {
 
       txn.customer_name = customerName;
       txn.merchant_business_name = merchantBusinessName;
+      if (typeof txn.metadata?.guest_email === 'string') {
+        txn.payer_email = txn.metadata.guest_email;
+      }
       return txn;
     }));
 
@@ -252,7 +255,23 @@ export class MerchantsService {
       }),
     ]);
     return {
-      data: items.map((t) => ({ ...t, amount: Number(t.amount) })),
+      data: items.map((t) => {
+        const metadata =
+          t.metadata && typeof t.metadata === 'object'
+            ? (t.metadata as Record<string, unknown>)
+            : {};
+        const payerEmail =
+          typeof metadata.guest_email === 'string'
+            ? metadata.guest_email
+            : typeof metadata.customer_email === 'string'
+              ? metadata.customer_email
+              : null;
+        return {
+          ...t,
+          amount: Number(t.amount),
+          payer_email: payerEmail,
+        };
+      }),
       meta: paginate(total, page, limit),
     };
   }

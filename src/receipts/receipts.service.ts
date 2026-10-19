@@ -31,8 +31,7 @@ export class ReceiptsService {
     createdAt = new Date(),
     fee: Prisma.Decimal | number = 0,
   ): Promise<payment_receipts> {
-    const receiptNumber =
-      `FARM-${createdAt.getUTCFullYear()}-${transactionId.toUpperCase()}`;
+    const receiptNumber = `FARM-${createdAt.getUTCFullYear()}-${transactionId.toUpperCase()}`;
     return tx.payment_receipts.create({
       data: {
         receipt_number: receiptNumber,
@@ -114,7 +113,23 @@ export class ReceiptsService {
 
   async getDownloadUrlForMerchantOwner(userId: string, receiptId: string) {
     const receipt = await this.findOwnedReceipt(userId, receiptId);
-    if (!receipt.pdf_url) {
+    return this.createDownloadUrl(receipt.pdf_url, receipt.receipt_number);
+  }
+
+  async getPublicDownloadUrlForTransaction(transactionId: string) {
+    const receipt = await this.prisma.payment_receipts.findFirst({
+      where: { transaction_id: transactionId },
+      select: { receipt_number: true, pdf_url: true },
+    });
+    if (!receipt) throw new NotFoundException('Receipt not found');
+    return this.createDownloadUrl(receipt.pdf_url, receipt.receipt_number);
+  }
+
+  private async createDownloadUrl(
+    pdfUrl: string | null,
+    receiptNumber: string,
+  ) {
+    if (!pdfUrl) {
       throw new ServiceUnavailableException(
         'The receipt PDF is still being generated',
       );
@@ -129,10 +144,11 @@ export class ReceiptsService {
 
     const [url] = await getStorage()
       .bucket(bucketName)
-      .file(receipt.pdf_url)
+      .file(pdfUrl)
       .getSignedUrl({
         action: 'read',
         expires: Date.now() + 5 * 60 * 1000,
+        responseDisposition: `attachment; filename="${receiptNumber}.pdf"`,
       });
     return { data: { url, expires_in_seconds: 300 } };
   }

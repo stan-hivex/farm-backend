@@ -1,2 +1,3 @@
+export const PUBLIC_CHECKOUT_BASE_URL = 'https://farmpay.africa';
 export const MERCHANT_CHECKOUT_URL =
-  'https://farmapp-e2145.web.app/merchant-payment/';
+  `${PUBLIC_CHECKOUT_BASE_URL}/merchant-payment/`;

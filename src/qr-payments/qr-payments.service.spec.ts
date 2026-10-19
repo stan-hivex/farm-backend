@@ -92,7 +92,7 @@ describe('QrPaymentsService checkout initialization', () => {
     );
   });
 
-  it('uses the deployed Firebase success page as the provider callback', async () => {
+  it('uses the public checkout success page as the provider callback', async () => {
     const { service, paystack } = createService();
 
     await service.initialize({
@@ -105,7 +105,7 @@ describe('QrPaymentsService checkout initialization', () => {
     expect(paystack.initializePayment).toHaveBeenCalledWith(
       expect.objectContaining({
         callback_url: expect.stringMatching(
-          /^https:\/\/farmapp-e2145\.web\.app\/pay\/success\?reference=QR-/,
+          /^https:\/\/farmpay\.africa\/pay\/success\?reference=QR-/,
         ),
       }),
     );
@@ -624,7 +624,7 @@ describe('QrPaymentsService settlement', () => {
     expect(notifications.sendNotification).toHaveBeenCalledWith(
       'owner-1',
       expect.objectContaining({
-        title: 'Merchant payment received',
+        title: 'Merchant payment successful',
         metadata: expect.objectContaining({
           event: 'merchant_payment_received',
           reference,
@@ -729,7 +729,7 @@ describe('QrPaymentsService settlement', () => {
     expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('owner-1', 20);
     expect(notifications.sendNotification).toHaveBeenCalledWith(
       'owner-1',
-      expect.objectContaining({ title: 'Merchant payment received' }),
+      expect.objectContaining({ title: 'Merchant payment successful' }),
     );
   });
 
@@ -770,5 +770,77 @@ describe('QrPaymentsService settlement', () => {
       }),
     ).resolves.toBe(false);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('QrPaymentsService public receipt download', () => {
+  const completedQrTransaction = {
+    id: 'transaction-qr',
+    transaction_reference: 'QR-reference',
+    status: 'completed',
+    transaction_type: 'merchant_payment',
+    metadata: { type: 'qr_sale', isQrSale: true },
+    qr_payments: [{ merchant_id: 'merchant-1' }],
+  };
+
+  it('returns the receipt download for a completed public QR sale', async () => {
+    const receipts = {
+      getPublicDownloadUrlForTransaction: jest.fn().mockResolvedValue({
+        data: { url: 'https://storage.example/receipt.pdf' },
+      }),
+    };
+    const prisma: any = {
+      transactions: {
+        findFirst: jest.fn().mockResolvedValue(completedQrTransaction),
+      },
+    };
+    const service = new QrPaymentsService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      receipts as any,
+    );
+
+    await expect(
+      service.getReceiptDownloadUrl('QR-reference'),
+    ).resolves.toEqual({
+      data: { url: 'https://storage.example/receipt.pdf' },
+    });
+    expect(receipts.getPublicDownloadUrlForTransaction).toHaveBeenCalledWith(
+      'transaction-qr',
+    );
+  });
+
+  it('does not expose receipts for incomplete QR payments', async () => {
+    const receipts = {
+      getPublicDownloadUrlForTransaction: jest.fn(),
+    };
+    const prisma: any = {
+      transactions: {
+        findFirst: jest.fn().mockResolvedValue({
+          ...completedQrTransaction,
+          status: 'pending',
+        }),
+      },
+    };
+    const service = new QrPaymentsService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      receipts as any,
+    );
+
+    await expect(service.getReceiptDownloadUrl('QR-reference')).rejects.toThrow(
+      'Completed QR payment receipt not found',
+    );
+    expect(receipts.getPublicDownloadUrlForTransaction).not.toHaveBeenCalled();
   });
 });

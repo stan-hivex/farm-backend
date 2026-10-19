@@ -16,9 +16,9 @@ describe('CreateQrPaymentDto amount', () => {
   it('accepts legacy checkout fields during rollout so older web builds can still initialize payments', async () => {
     const dto = Object.assign(createDto(10), {
       guestEmail: 'customer@example.com',
-      guestPhone: '+254710484154',
-      crypto: 'USDT',
-      chain: 'BSC_MAINNET',
+      guestPhone: '',
+      crypto: 'USDT (Tether)',
+      chain: 'BNB Smart Chain (BEP20)',
     });
 
     await expect(validate(dto)).resolves.toHaveLength(0);
