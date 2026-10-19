@@ -570,7 +570,7 @@ export class QrService {
       if (payload.merchant_id) {
         const merchantId = payload.merchant_id.replace(/[{}]/g, '').trim();
         if (merchantId) {
-          return `${PUBLIC_CHECKOUT_BASE_URL}/pay/${encodeURIComponent(merchantId)}`;
+          return `${PUBLIC_CHECKOUT_BASE_URL}/checkout/${encodeURIComponent(merchantId)}`;
         }
       }
     } catch {

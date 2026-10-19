@@ -14,7 +14,7 @@ describe('QrService merchant QR validation', () => {
 
     const url = (service as any).checkoutUrl('{"merchant_id":"merchant-1"}');
 
-    expect(url).toBe('https://farmpay.africa/pay/merchant-1');
+    expect(url).toBe('https://farmpay.africa/checkout/merchant-1');
   });
 
   it('trims merchant IDs and removes stray braces from public pay links', () => {
@@ -31,7 +31,7 @@ describe('QrService merchant QR validation', () => {
       '{"merchant_id":" {merchant-1} "}',
     );
 
-    expect(url).toBe('https://farmpay.africa/pay/merchant-1');
+    expect(url).toBe('https://farmpay.africa/checkout/merchant-1');
   });
 
   it('validates a signed merchant QR scanned from its hosted checkout URL', async () => {
