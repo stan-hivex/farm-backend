@@ -282,6 +282,7 @@ export class NotificationsService {
 
   async sendReceiptEmailOrThrow(input: {
     to: string;
+    bcc?: string;
     receiptNumber: string;
     amount: number;
     currency: string;
@@ -352,7 +353,7 @@ export class NotificationsService {
           </td></tr>
           <tr><td style="padding:32px;">
             <div style="font-size:22px;font-weight:bold;color:#167346;margin-bottom:8px;">Payment successful</div>
-            <div style="font-size:15px;line-height:1.6;color:#536157;">A payment has been received by your FARM business.</div>
+            <div style="font-size:15px;line-height:1.6;color:#536157;">This payment to your FARM business was successfully processed.</div>
             <div style="margin:24px 0;padding:20px;background:#f1f8f3;border:1px solid #dcebe0;border-radius:12px;text-align:center;">
               <div style="font-size:13px;color:#536157;margin-bottom:6px;">Amount paid</div>
               <div style="font-size:30px;font-weight:bold;color:#145d38;">${amount}</div>
@@ -409,6 +410,7 @@ export class NotificationsService {
         {
           from,
           to: input.to,
+          ...(input.bcc ? { bcc: input.bcc } : {}),
           subject: `FARM payment receipt ${input.receiptNumber}`,
           html,
           text,

@@ -136,9 +136,16 @@ export class ReceiptsProcessor {
         : metadata.amount_usd != null
           ? 'USD'
           : 'FARM';
+    const payerEmail =
+      typeof metadata.guest_email === 'string'
+        ? metadata.guest_email.trim()
+        : '';
 
     await this.notifications.sendReceiptEmailOrThrow({
       to: email,
+      ...(payerEmail && payerEmail.toLowerCase() !== email.toLowerCase()
+        ? { bcc: payerEmail }
+        : {}),
       receiptNumber: receipt.receipt_number,
       amount: paidAmount,
       currency: paidCurrency,

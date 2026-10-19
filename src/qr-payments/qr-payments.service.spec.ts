@@ -133,7 +133,7 @@ describe('QrPaymentsService checkout initialization', () => {
     );
   });
 
-  it('initializes crypto checkout using an active IvoryPay token/network pair', async () => {
+  it('initializes crypto checkout without requesting token or network from the customer', async () => {
     const { service, ivorypay } = createService();
 
     await service.initialize({
@@ -141,8 +141,6 @@ describe('QrPaymentsService checkout initialization', () => {
       amount: 100,
       method: 'crypto',
       guestEmail: 'customer@example.com',
-      crypto: 'USDC',
-      chain: 'POLYGON',
     });
 
     expect(ivorypay.createPayment).toHaveBeenCalledWith(
@@ -150,10 +148,10 @@ describe('QrPaymentsService checkout initialization', () => {
         amount: 1,
         currency: 'USD',
         crypto: 'USDC',
-        chain: 'POLYGON',
         baseFiat: 'USD',
       }),
     );
+    expect(ivorypay.createPayment.mock.calls[0][0]).not.toHaveProperty('chain');
     expect(ivorypay.createPayment.mock.calls[0][0].reference).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
@@ -205,7 +203,7 @@ describe('QrPaymentsService checkout initialization', () => {
     );
   });
 
-  it('chooses an active IvoryPay token and network when none are supplied', async () => {
+  it('chooses an active IvoryPay token without requiring a network selection', async () => {
     const { service, ivorypay } = createService();
 
     await service.initialize({
@@ -218,29 +216,9 @@ describe('QrPaymentsService checkout initialization', () => {
     expect(ivorypay.createPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         crypto: 'USDC',
-        chain: 'POLYGON',
       }),
     );
-  });
-
-  it('rejects a crypto network that is not active for the selected token', async () => {
-    const { service, ivorypay, prisma } = createService();
-
-    await expect(
-      service.initialize({
-        merchantId: merchant.id,
-        amount: 100,
-        method: 'crypto',
-        guestEmail: 'customer@example.com',
-        crypto: 'USDC',
-        chain: 'BSC',
-      }),
-    ).rejects.toThrow(
-      'The selected crypto token and network are not enabled for IvoryPay',
-    );
-
-    expect(ivorypay.createPayment).not.toHaveBeenCalled();
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(ivorypay.createPayment.mock.calls[0][0]).not.toHaveProperty('chain');
   });
 });
 
@@ -295,9 +273,7 @@ describe('QrPaymentsService settlement', () => {
       {} as any,
       {} as any,
     );
-    const complete = jest
-      .spyOn(service, 'complete')
-      .mockResolvedValue(true);
+    const complete = jest.spyOn(service, 'complete').mockResolvedValue(true);
 
     await expect(service.verify('provider-checkout-id')).resolves.toEqual({
       data: {
@@ -532,13 +508,11 @@ describe('QrPaymentsService settlement', () => {
     const tx = {
       transactions: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       wallets: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({
-            id: 'wallet-1',
-            user_id: 'owner-1',
-            balance: 12.5,
-          }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'wallet-1',
+          user_id: 'owner-1',
+          balance: 12.5,
+        }),
         update: jest.fn().mockResolvedValue({ balance: 20 }),
       },
       ledger_entries: { create: jest.fn().mockResolvedValue({}) },
@@ -568,9 +542,7 @@ describe('QrPaymentsService settlement', () => {
       sendNotification: jest.fn().mockResolvedValue(undefined),
     };
     const receipts = {
-      createForTransaction: jest
-        .fn()
-        .mockResolvedValue({ id: 'receipt-1' }),
+      createForTransaction: jest.fn().mockResolvedValue({ id: 'receipt-1' }),
       enqueuePdfAndEmail: jest.fn(),
     };
     const service = new QrPaymentsService(
@@ -651,6 +623,106 @@ describe('QrPaymentsService settlement', () => {
           reference,
         }),
       }),
+    );
+  });
+
+  it('settles an IvoryPay QR payment from its documented verified token and crypto amount', async () => {
+    const transaction = {
+      id: 'transaction-ivory',
+      amount: 7.5,
+      receiver_wallet_id: 'wallet-1',
+      transaction_type: 'merchant_payment',
+      metadata: {
+        type: 'qr_sale',
+        isQrSale: true,
+        provider: 'ivorypay',
+        amount_fiat: 100,
+        amount_usd: 1,
+        crypto: 'USDT',
+      },
+      qr_payments: [{ merchant_id: 'merchant-1' }],
+    };
+    const tx = {
+      transactions: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      wallets: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'wallet-1',
+          user_id: 'owner-1',
+          balance: 12.5,
+        }),
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balance: 20 })
+          .mockResolvedValueOnce({ balance: 100.075 }),
+      },
+      ledger_entries: { create: jest.fn().mockResolvedValue({}) },
+      qr_payments: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      merchants: { update: jest.fn().mockResolvedValue({}) },
+      users: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'superadmin-1',
+          wallets: [{ id: 'superadmin-wallet-1', balance: 100 }],
+        }),
+      },
+    };
+    const prisma: any = {
+      transactions: { findUnique: jest.fn().mockResolvedValue(transaction) },
+      $transaction: jest.fn((callback) => callback(tx)),
+    };
+    const cache = {
+      invalidateWallet: jest.fn().mockResolvedValue(undefined),
+      cacheDelete: jest.fn().mockResolvedValue(undefined),
+      cacheInvalidatePattern: jest.fn().mockResolvedValue(undefined),
+    };
+    const websocket = {
+      emitBalanceUpdate: jest.fn(),
+      emitTransactionUpdate: jest.fn(),
+    };
+    const notifications = {
+      sendNotification: jest.fn().mockResolvedValue(undefined),
+    };
+    const receipts = {
+      createForTransaction: jest
+        .fn()
+        .mockResolvedValue({ id: 'receipt-ivory' }),
+      enqueuePdfAndEmail: jest.fn(),
+    };
+    const service = new QrPaymentsService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      cache as any,
+      websocket as any,
+      notifications as any,
+      receipts as any,
+    );
+
+    await expect(
+      service.complete(reference, 'ivorypay', {
+        reference,
+        status: 'SUCCESS',
+        token: 'USDT',
+        expectedAmountInCrypto: 1,
+        receivedAmountInCrypto: 1,
+      }),
+    ).resolves.toBe(true);
+
+    expect(tx.wallets.update).toHaveBeenCalledWith({
+      where: { id: 'wallet-1' },
+      data: { balance: { increment: 7.425 } },
+      select: { balance: true },
+    });
+    expect(tx.wallets.update).toHaveBeenCalledWith({
+      where: { id: 'superadmin-wallet-1' },
+      data: { balance: { increment: 0.075 } },
+      select: { balance: true },
+    });
+    expect(receipts.enqueuePdfAndEmail).toHaveBeenCalledWith('receipt-ivory');
+    expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('owner-1', 20);
+    expect(notifications.sendNotification).toHaveBeenCalledWith(
+      'owner-1',
+      expect.objectContaining({ title: 'Merchant payment received' }),
     );
   });
 

@@ -136,38 +136,22 @@ export class QrPaymentsService {
       );
     }
     let amountUsd: number | undefined;
-    let crypto = dto.crypto;
-    let chain = dto.chain;
+    let crypto: string | undefined;
     if (provider === 'ivorypay') {
       const options = await this.ivorypay.getSupportedPaymentOptions();
-      const preferredOptions = crypto
-        ? options.filter((option) => option.token === crypto)
-        : options.filter((option) => option.token === 'USDT');
-      const tokenOptions = preferredOptions.length
-        ? preferredOptions
-        : crypto
-          ? []
-          : options;
-      if (!tokenOptions.length) {
+      const availableTokens = [
+        ...new Set(
+          options
+            .map((option) => option.token)
+            .filter((token) => token === 'USDC' || token === 'USDT'),
+        ),
+      ];
+      if (!availableTokens.length) {
         throw new BadRequestException(
-          'The selected crypto token is not enabled for IvoryPay',
+          'No supported stablecoin is currently enabled for IvoryPay',
         );
       }
-      const selectedOption = chain
-        ? tokenOptions.find((option) => option.network === chain)
-        : tokenOptions[0];
-      if (!selectedOption) {
-        throw new BadRequestException(
-          'The selected crypto token and network are not enabled for IvoryPay',
-        );
-      }
-      if (selectedOption.token !== 'USDC' && selectedOption.token !== 'USDT') {
-        throw new BadRequestException(
-          'IvoryPay returned an unsupported crypto token',
-        );
-      }
-      crypto = selectedOption.token;
-      chain = selectedOption.network;
+      crypto = availableTokens.includes('USDT') ? 'USDT' : availableTokens[0];
       const farmUsdRate = Number(rate.farm_usd_rate);
       if (!Number.isFinite(farmUsdRate) || farmUsdRate <= 0) {
         throw new BadRequestException(
@@ -198,12 +182,10 @@ export class QrPaymentsService {
       user_id: merchant.user_id,
       payment_method: dto.method,
       guest_email: email,
-      guest_phone: dto.guestPhone ?? null,
       platform_fee_type: 'merchant_sale',
       platform_fee_percent: 1,
       ...(amountUsd !== undefined ? { amount_usd: amountUsd } : {}),
       ...(crypto ? { crypto } : {}),
-      ...(chain ? { chain } : {}),
     };
 
     const transaction = await this.prisma.$transaction(async (tx) => {
@@ -260,7 +242,6 @@ export class QrPaymentsService {
           currency: 'KES',
           reference,
           channels,
-          ...(dto.guestPhone ? { phone: dto.guestPhone } : {}),
           callback_url: callbackUrl.toString(),
           metadata: {
             type: 'qr_sale',
@@ -280,7 +261,6 @@ export class QrPaymentsService {
           description: `QR merchant payment to ${merchant.business_name}`,
           baseFiat: 'USD',
           crypto,
-          chain,
           redirect_url: callbackUrl.toString(),
           metadata: {
             type: 'qr_sale',
@@ -413,11 +393,7 @@ export class QrPaymentsService {
           providerReferences,
         );
         const verifiedData = verified?.data ?? verified;
-        const status = (
-          verifiedData?.status ??
-          verified?.status ??
-          ''
-        )
+        const status = (verifiedData?.status ?? verified?.status ?? '')
           .toString()
           .toLowerCase();
         if (['success', 'completed'].includes(status ?? '')) {
@@ -578,19 +554,35 @@ export class QrPaymentsService {
         );
         return false;
       }
-      const verifiedUsd = Number(
-        verifiedPayment.amount_usd ?? verifiedPayment.amount ?? NaN,
+      const verifiedReference = verifiedPayment.reference?.toString();
+      const verifiedToken = (
+        verifiedPayment.token ??
+        verifiedPayment.crypto ??
+        verifiedPayment.currency ??
+        ''
+      )
+        .toString()
+        .toUpperCase();
+      const expectedToken = metadata.crypto?.toString().toUpperCase();
+      const verifiedExpectedAmount = Number(
+        verifiedPayment.expectedAmountInCrypto ??
+          verifiedPayment.amount_usd ??
+          verifiedPayment.amount ??
+          NaN,
       );
-      const expectedUsd = Number(metadata.amount_usd);
+      const expectedCryptoAmount = Number(metadata.amount_usd);
       if (
-        !Number.isFinite(verifiedUsd) ||
-        !Number.isFinite(expectedUsd) ||
-        verifiedUsd <= 0 ||
-        expectedUsd <= 0 ||
-        Math.abs(verifiedUsd - expectedUsd) > 0.5
+        verifiedReference !== reference ||
+        !expectedToken ||
+        verifiedToken !== expectedToken ||
+        !Number.isFinite(verifiedExpectedAmount) ||
+        !Number.isFinite(expectedCryptoAmount) ||
+        verifiedExpectedAmount <= 0 ||
+        expectedCryptoAmount <= 0 ||
+        Math.abs(verifiedExpectedAmount - expectedCryptoAmount) > 1e-8
       ) {
         this.logger.warn(
-          `IvoryPay QR amount could not be verified ref=${reference} expected=${expectedUsd} received=${verifiedUsd}`,
+          `IvoryPay QR verification did not match ref=${reference} expectedToken=${expectedToken ?? 'missing'} receivedToken=${verifiedToken || 'missing'} expectedCrypto=${expectedCryptoAmount} verifiedCrypto=${verifiedExpectedAmount}`,
         );
         return false;
       }

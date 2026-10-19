@@ -159,6 +159,7 @@ describe('NotificationsService.notifyTransfer', () => {
 
         await service.sendReceiptEmailOrThrow({
           to: 'merchant@example.com',
+          bcc: 'customer@example.com',
           receiptNumber: 'FARM-2026-TRANSACTION',
           amount: 500,
           currency: 'KES',
@@ -180,6 +181,7 @@ describe('NotificationsService.notifyTransfer', () => {
           'https://api.resend.com/emails',
           expect.objectContaining({
             to: 'merchant@example.com',
+            bcc: 'customer@example.com',
             subject: 'FARM payment receipt FARM-2026-TRANSACTION',
             html: expect.stringContaining('Payment successful'),
             text: expect.stringContaining('Download Receipt (PDF)'),
