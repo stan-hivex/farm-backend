@@ -119,6 +119,9 @@ describe('QrPaymentsService checkout initialization', () => {
       amount: 100,
       method: 'mpesa',
       guestEmail: 'customer@example.com',
+      guestPhone: '+254710484154',
+      crypto: 'USDT',
+      chain: 'BSC_MAINNET',
     });
 
     expect(paystack.initializePayment).toHaveBeenCalledWith(
@@ -141,6 +144,9 @@ describe('QrPaymentsService checkout initialization', () => {
       amount: 100,
       method: 'crypto',
       guestEmail: 'customer@example.com',
+      crypto: 'USDT',
+      chain: 'BSC_MAINNET',
+      guestPhone: '+254710484154',
     });
 
     expect(ivorypay.createPayment).toHaveBeenCalledWith(
@@ -152,6 +158,7 @@ describe('QrPaymentsService checkout initialization', () => {
       }),
     );
     expect(ivorypay.createPayment.mock.calls[0][0]).not.toHaveProperty('chain');
+    expect(ivorypay.createPayment.mock.calls[0][0]).not.toHaveProperty('phone');
     expect(ivorypay.createPayment.mock.calls[0][0].reference).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );

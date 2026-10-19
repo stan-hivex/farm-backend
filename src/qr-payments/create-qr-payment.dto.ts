@@ -23,4 +23,19 @@ export class CreateQrPaymentDto {
   @IsOptional()
   @IsEmail()
   guestEmail?: string;
+
+  // Accept fields from cached web builds; QR payment initialization ignores them.
+  @IsOptional()
+  @IsString()
+  @Length(8, 20)
+  guestPhone?: string;
+
+  @IsOptional()
+  @IsIn(['USDC', 'USDT'])
+  crypto?: 'USDC' | 'USDT';
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 32)
+  chain?: string;
 }

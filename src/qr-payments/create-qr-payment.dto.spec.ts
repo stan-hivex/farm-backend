@@ -13,6 +13,17 @@ describe('CreateQrPaymentDto amount', () => {
     await expect(validate(createDto(0.01))).resolves.toHaveLength(0);
   });
 
+  it('accepts legacy checkout fields during rollout so older web builds can still initialize payments', async () => {
+    const dto = Object.assign(createDto(10), {
+      guestEmail: 'customer@example.com',
+      guestPhone: '+254710484154',
+      crypto: 'USDT',
+      chain: 'BSC_MAINNET',
+    });
+
+    await expect(validate(dto)).resolves.toHaveLength(0);
+  });
+
   it.each([0, -0.01, Number.NaN, Number.POSITIVE_INFINITY])(
     'rejects invalid amount %s',
     async (amount) => {

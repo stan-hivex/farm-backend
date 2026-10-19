@@ -165,7 +165,9 @@ export class PaystackService {
         const nextStep =
           apiData?.meta?.nextStep ||
           'Please enable the required channel in your Paystack dashboard or contact Paystack support.';
-        const channelHint = options.channels?.includes('bank')
+        const channelHint = options.channels?.some(
+          (channel: string) => channel === 'bank' || channel === 'bank_transfer',
+        )
           ? 'The Paystack bank channel (including Pesalink) is not enabled for this account. Enable it in Paystack or contact Paystack support.'
           : 'Please verify your Paystack channel configuration for the requested payment method.';
 

@@ -78,7 +78,7 @@ export class DepositService {
             amount: total,
             reference,
             currency: 'KES',
-            channels: ['bank'],
+            channels: ['bank_transfer'],
             metadata: { userId, paymentMethod },
           })
         : null;

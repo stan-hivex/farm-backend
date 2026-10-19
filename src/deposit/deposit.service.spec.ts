@@ -156,7 +156,7 @@ describe('DepositService', () => {
     expect(result.deposit.total).toBe(100);
   });
 
-  it('initializes KES bank deposits through Paystack bank checkout', async () => {
+  it('initializes KES bank deposits through Paystack bank_transfer checkout', async () => {
     paystack.initializePayment = jest.fn().mockResolvedValue({
       authorization_url: 'https://checkout.example.test/payment',
       access_code: 'pesalink-access-code',
@@ -184,7 +184,7 @@ describe('DepositService', () => {
       expect.objectContaining({
         amount: 100,
         currency: 'KES',
-        channels: ['bank'],
+        channels: ['bank_transfer'],
       }),
     );
     expect(result).toMatchObject({
@@ -215,6 +215,95 @@ describe('DepositService', () => {
 
     expect(prisma.deposit.create).not.toHaveBeenCalled();
     expect(prisma.transactions.create).not.toHaveBeenCalled();
+  });
+
+  it('credits a successful bank-transfer deposit to the depositing user wallet once', async () => {
+    const deposit = {
+      id: 'bank-deposit-1',
+      userId: 'user-1',
+      amount: 100,
+      currency: 'KES',
+      paymentMethod: 'BANK_TRANSFER',
+      provider: 'paystack',
+      reference: 'bank-reference-1',
+      status: 'PENDING',
+    };
+    const transaction = {
+      id: 'bank-transaction-1',
+      transaction_reference: deposit.reference,
+      transaction_type: 'deposit',
+      status: 'pending',
+      amount: 100,
+      currency: 'KES',
+      metadata: {
+        provider: 'paystack',
+        user_id: deposit.userId,
+        payment_method: 'BANK_TRANSFER',
+      },
+    };
+    const wallet = {
+      id: 'user-wallet-1',
+      user_id: deposit.userId,
+      balance: 250,
+    };
+    const tx = {
+      wallets: {
+        findFirst: jest.fn().mockResolvedValue(wallet),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      deposit: {
+        updateMany: jest
+          .fn()
+          .mockResolvedValueOnce({ count: 1 })
+          .mockResolvedValueOnce({ count: 0 }),
+      },
+      ledger_entries: { create: jest.fn().mockResolvedValue({}) },
+      transactions: { update: jest.fn().mockResolvedValue({}) },
+    };
+
+    paystack.verifyTransaction = jest
+      .fn()
+      .mockResolvedValue({ status: 'success' });
+    prisma.deposit.findFirst = jest.fn().mockResolvedValue(deposit);
+    prisma.transactions.findUnique = jest.fn().mockResolvedValue(transaction);
+    prisma.$transaction = jest.fn((callback) => callback(tx));
+    cache.cacheInvalidatePattern = jest.fn().mockResolvedValue(undefined);
+    cache.cacheDelete = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      service.finalizeSuccessfulDeposit(deposit.reference),
+    ).resolves.toBe(true);
+    await expect(
+      service.finalizeSuccessfulDeposit(deposit.reference),
+    ).resolves.toBe(false);
+
+    expect(paystack.verifyTransaction).toHaveBeenCalledWith(deposit.reference);
+    expect(tx.wallets.findFirst).toHaveBeenCalledWith({
+      where: { user_id: deposit.userId, is_active: true },
+    });
+    expect(tx.wallets.update).toHaveBeenCalledTimes(1);
+    expect(tx.wallets.update).toHaveBeenCalledWith({
+      where: { id: wallet.id },
+      data: { balance: { increment: deposit.amount } },
+    });
+    expect(tx.ledger_entries.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          wallet_id: wallet.id,
+          entry_type: 'credit',
+          amount: deposit.amount,
+        }),
+      }),
+    );
+    expect(tx.transactions.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: transaction.id },
+        data: expect.objectContaining({
+          status: 'completed',
+          receiver_wallet_id: wallet.id,
+        }),
+      }),
+    );
   });
 
   it('deducts the public merchant QR fee before crediting wallets', async () => {
