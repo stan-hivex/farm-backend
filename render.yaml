@@ -83,6 +83,9 @@ services:
       # Ivorypay Configuration
       - key: IVORYPAY_API_KEY
         sync: false
+      # Enable only when crypto payouts are activated and the server IP is allow-listed in Ivorypay.
+      - key: IVORYPAY_CRYPTO_PAYOUTS_ENABLED
+        value: "true"
       
       - key: IVORYPAY_BASE_URL
         value: https://api.ivorypay.io
