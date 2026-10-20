@@ -42,12 +42,12 @@ describe('WebhookSignatureGuard', () => {
     expect(() => guard.canActivate(ctx as any)).toThrow();
   });
 
-  it('verifies ivorypay signature using body.data payload', () => {
-    const secret = 'test_ivorypay_secret';
-    const cfg = { get: (k: string) => (k === 'IVORYPAY_WEBHOOK_SECRET' ? secret : undefined) } as any;
+  it('verifies the crypto collection signature using the IvoryPay API key and body.data', () => {
+    const secret = 'test_ivorypay_api_key';
+    const cfg = { get: (k: string) => (k === 'IVORYPAY_API_KEY' ? secret : undefined) } as any;
     const guard = new WebhookSignatureGuard(cfg);
 
-    const payload = { event: 'payment.success', data: { id: 'pay_123', reference: 'ref123', status: 'success' } };
+    const payload = { event: 'cryptoCollection.success', data: { id: 'pay_123', reference: 'ref123', status: 'SUCCESS' } };
     const raw = JSON.stringify(payload);
     const signature = createHmac('sha512', secret).update(JSON.stringify(payload.data)).digest('hex');
 

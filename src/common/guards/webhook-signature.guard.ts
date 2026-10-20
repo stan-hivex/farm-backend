@@ -71,9 +71,7 @@ export class WebhookSignatureGuard implements CanActivate {
   }
 
   private verifyIvorypay(req: Request): boolean {
-    const secret =
-      this.cfg.get<string>('IVORYPAY_API_KEY') ??
-      this.cfg.get<string>('IVORYPAY_WEBHOOK_SECRET');
+    const secret = this.cfg.get<string>('IVORYPAY_API_KEY');
     if (!secret) {
       this.logger.error(
         'IVORYPAY_API_KEY not set — rejecting IvoryPay webhook',

@@ -143,7 +143,7 @@ describe('IvorypayDepositService', () => {
     expect(ivorypay.createPayment).not.toHaveBeenCalled();
   });
 
-  it('leaves network selection to IvoryPay checkout when no network is supplied', async () => {
+  it('pins checkout to an enabled network when the client omits one', async () => {
     prisma.deposit.create.mockResolvedValue({ id: 'dep-1' });
     ivorypay.createPayment.mockResolvedValue({
       data: { payment_link: 'https://checkout.ivorypay.io/checkout/ref' },
@@ -157,7 +157,7 @@ describe('IvorypayDepositService', () => {
 
     const paymentOptions = ivorypay.createPayment.mock.calls[0][0];
     expect(paymentOptions).toHaveProperty('crypto', 'USDT');
-    expect(paymentOptions).not.toHaveProperty('chain');
+    expect(paymentOptions).toHaveProperty('chain', 'BSC');
     expect(ivorypay.getSupportedPaymentOptions).toHaveBeenCalled();
   });
 
@@ -229,6 +229,10 @@ describe('IvorypayDepositService', () => {
     };
     prisma.deposit.findFirst.mockResolvedValue(deposit);
     prisma.transactions.findUnique.mockResolvedValue(transaction);
+    ivorypay.verifyTransaction.mockResolvedValue({
+      reference: 'ref-2',
+      status: 'SUCCESS',
+    });
     prisma.wallets.findFirst.mockResolvedValue({
       id: 'wallet-2',
       user_id: 'user-2',
@@ -244,8 +248,8 @@ describe('IvorypayDepositService', () => {
     await service.handleWebhook(
       {
         reference: 'ref-2',
-        event: 'payment.success',
-        data: { status: 'success' },
+        event: 'cryptoCollection.success',
+        data: { reference: 'ref-2', status: 'SUCCESS' },
       },
       true,
     );
@@ -260,6 +264,52 @@ describe('IvorypayDepositService', () => {
     });
     expect(cache.invalidateWallet).toHaveBeenCalledWith('user-2');
     expect(websocket.emitBalanceUpdate).toHaveBeenCalledWith('user-2', 150);
+    expect(ivorypay.verifyTransaction).toHaveBeenCalledWith(
+      'ref-2',
+      undefined,
+      ['ref-2'],
+    );
+  });
+
+  it('does not credit a success webhook until IvoryPay confirms success', async () => {
+    prisma.deposit.findFirst.mockResolvedValue({
+      id: 'dep-3',
+      userId: 'user-3',
+      reference: 'ref-3',
+      status: 'PENDING',
+      amount: 100,
+      currency: 'FARM',
+      provider: 'ivorypay',
+      providerRef: 'provider-ref-3',
+    });
+    prisma.transactions.findUnique.mockResolvedValue({
+      id: 'tx-3',
+      transaction_reference: 'ref-3',
+      status: 'pending',
+      transaction_type: 'deposit',
+      amount: 100,
+      metadata: { provider: 'ivorypay' },
+    });
+    ivorypay.verifyTransaction.mockResolvedValue({
+      reference: 'ref-3',
+      status: 'PENDING',
+    });
+
+    const result = await service.handleWebhook(
+      {
+        event: 'cryptoCollection.success',
+        data: { reference: 'ref-3', status: 'SUCCESS' },
+      },
+      true,
+    );
+
+    expect(result).toEqual({
+      processed: false,
+      reason: 'provider_status_not_success',
+      reference: 'ref-3',
+    });
+    expect(prisma.deposit.updateMany).not.toHaveBeenCalled();
+    expect(prisma.wallets.update).not.toHaveBeenCalled();
   });
 
   it('verifies the provider transaction before processing a successful deposit', async () => {
@@ -278,12 +328,13 @@ describe('IvorypayDepositService', () => {
       id: 'tx-1',
       transaction_reference: 'ref-1',
       transaction_type: 'deposit',
-      metadata: { amount_usd: 25 },
+      metadata: { amount_crypto: 25, crypto: 'USDT' },
     });
     const verifyTransaction = jest.fn().mockResolvedValue({
-      reference: 'provider-ref-1',
+      reference: 'ref-1',
       status: 'SUCCESS',
-      amount: 25,
+      token: 'USDT',
+      expectedAmountInCrypto: 25,
     });
     (service as any).ivorypayService.verifyTransaction = verifyTransaction;
     const handleWebhook = jest
@@ -302,11 +353,15 @@ describe('IvorypayDepositService', () => {
     );
     expect(handleWebhook).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: 'payment.success',
+        event: 'cryptoCollection.success',
         reference: 'ref-1',
         data: expect.objectContaining({ status: 'SUCCESS' }),
       }),
       true,
+      expect.objectContaining({
+        reference: 'ref-1',
+        status: 'SUCCESS',
+      }),
     );
   });
 
@@ -323,20 +378,22 @@ describe('IvorypayDepositService', () => {
       id: 'tx-1',
       transaction_reference: 'ref-1',
       transaction_type: 'deposit',
-      metadata: { amount_usd: 25 },
+      metadata: { amount_crypto: 25, crypto: 'USDT' },
     });
     (service as any).ivorypayService.verifyTransaction = jest
       .fn()
       .mockResolvedValue({
-        reference: 'provider-ref-1',
+        reference: 'ref-1',
         status: 'SUCCESS',
-        amount: 24,
+        token: 'USDT',
+        expectedAmountInCrypto: 24,
       });
     const handleWebhook = jest.spyOn(service, 'handleWebhook');
 
     await expect(service.verifyDeposit('user-1', 'ref-1')).rejects.toThrow(
       'IvoryPay verified amount does not match the pending deposit',
     );
-    expect(handleWebhook).not.toHaveBeenCalled();
+    expect(handleWebhook).toHaveBeenCalled();
+    expect(prisma.wallets.update).not.toHaveBeenCalled();
   });
 });
