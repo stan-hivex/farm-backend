@@ -195,6 +195,38 @@ describe('IvorypayService', () => {
     );
   });
 
+  it('loads supported payout networks when the local payout feature flag is unset', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: [{ token: 'USDC', network: 'POLYGON', isSupported: true }],
+      },
+    } as any);
+
+    await expect(service.getCryptoTransferOptions()).resolves.toEqual([
+      { token: 'USDC', network: 'POLYGON', networkName: 'POLYGON' },
+    ]);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://api.ivorypay.io/api/v1/crypto-transfer/supported/network-tokens',
+      expect.any(Object),
+    );
+  });
+
+  it('still requires crypto payouts to be enabled before submitting a transfer', async () => {
+    await expect(
+      service.createWithdrawal({
+        amount: 1,
+        token: 'USDC',
+        network: 'POLYGON',
+        address: '0x0e892b10a8104855837652906a869acadd07a142',
+        reference: 'withdrawal-reference',
+      }),
+    ).rejects.toThrow(
+      'IvoryPay crypto withdrawals are not enabled for this merchant account',
+    );
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
   it('submits the documented crypto payout body to IvoryPay', async () => {
     const payoutService = new IvorypayService({
       get: jest.fn((key: string, defaultValue?: any) =>

@@ -54,7 +54,11 @@ export class IvorypayService {
   async getCryptoTransferOptions(): Promise<
     Array<{ token: string; network: string; networkName: string }>
   > {
-    this.assertCryptoPayoutsEnabled();
+    if (!this.apiKey) {
+      throw new ServiceUnavailableException(
+        'IvoryPay crypto payouts are not configured for this account',
+      );
+    }
     try {
       const response = await axios.get(
         `${this.baseUrl}/v1/crypto-transfer/supported/network-tokens`,
