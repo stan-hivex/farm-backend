@@ -243,6 +243,7 @@ describe('WithdrawService', () => {
   it.each([
     [
       'BANK_TRANSFER',
+      4999,
       {
         accountName: 'Jane Doe',
         accountNumber: '12345678',
@@ -251,6 +252,7 @@ describe('WithdrawService', () => {
     ],
     [
       'MOBILE_MONEY',
+      1499,
       {
         accountName: 'Jane Doe',
         phoneNumber: '+254700000000',
@@ -259,47 +261,98 @@ describe('WithdrawService', () => {
     ],
     [
       'CRYPTO',
+      100,
       {
         cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
         cryptoAsset: 'USDC',
         network: 'POLYGON',
       },
     ],
-  ])('accepts a FARM 10 minimum withdrawal for %s', async (method, fields) => {
-    jest
-      .spyOn(service as any, 'processWithdrawal')
-      .mockResolvedValue(undefined);
-    prisma.wallets.findFirst.mockResolvedValue({
-      id: 'wallet-1',
-      balance: 1000,
-      locked_balance: 0,
-    });
-    prisma.$transaction.mockImplementation(async (callback: any) =>
-      callback({
-        wallets: {
-          update: jest
-            .fn()
-            .mockResolvedValue({ balance: 1000, locked_balance: 10 }),
-        },
-        withdrawal: {
-          create: jest.fn().mockResolvedValue({
-            id: 'withdrawal-1',
-            reference: 'ref-1',
-          }),
-        },
-        transactions: { create: jest.fn().mockResolvedValue({}) },
-      }),
-    );
+  ])(
+    'accepts the %s minimum withdrawal of FARM %i',
+    async (method, minimum, fields) => {
+      jest
+        .spyOn(service as any, 'processWithdrawal')
+        .mockResolvedValue(undefined);
+      prisma.wallets.findFirst.mockResolvedValue({
+        id: 'wallet-1',
+        balance: 10000,
+        locked_balance: 0,
+      });
+      prisma.$transaction.mockImplementation(async (callback: any) =>
+        callback({
+          wallets: {
+            update: jest.fn().mockResolvedValue({
+              balance: 10000,
+              locked_balance: minimum,
+            }),
+          },
+          withdrawal: {
+            create: jest.fn().mockResolvedValue({
+              id: 'withdrawal-1',
+              reference: 'ref-1',
+            }),
+          },
+          transactions: { create: jest.fn().mockResolvedValue({}) },
+        }),
+      );
 
-    await expect(
-      service.createWithdrawal('user-1', {
-        amount: 10,
-        method,
-        pin: '1234',
-        ...fields,
-      } as any),
-    ).resolves.toMatchObject({ success: true });
-  });
+      await expect(
+        service.createWithdrawal('user-1', {
+          amount: minimum,
+          method,
+          pin: '1234',
+          ...fields,
+        } as any),
+      ).resolves.toMatchObject({ success: true });
+    },
+  );
+
+  it.each([
+    [
+      'BANK_TRANSFER',
+      4998,
+      'Minimum withdrawal amount for bank transfer is 4,999 FARM',
+      {
+        accountName: 'Jane Doe',
+        accountNumber: '12345678',
+        bankName: 'Example Bank',
+      },
+    ],
+    [
+      'MOBILE_MONEY',
+      1498,
+      'Minimum withdrawal amount for mobile money is 1,499 FARM',
+      {
+        accountName: 'Jane Doe',
+        phoneNumber: '+254700000000',
+        mobileMoneyProvider: 'MPESA',
+      },
+    ],
+    [
+      'CRYPTO',
+      99,
+      'Minimum withdrawal amount for crypto is 100 FARM',
+      {
+        cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
+        cryptoAsset: 'USDC',
+        network: 'POLYGON',
+      },
+    ],
+  ])(
+    'rejects a %s withdrawal below the minimum',
+    async (method, amount, message, fields) => {
+      await expect(
+        service.createWithdrawal('user-1', {
+          amount,
+          method,
+          pin: '1234',
+          ...fields,
+        } as any),
+      ).rejects.toThrow(message);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
 
   it('passes network to Ivorypay for crypto withdrawals', async () => {
     const withdrawal = {

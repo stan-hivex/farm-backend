@@ -70,17 +70,12 @@ export class WithdrawService {
     const normalizedNetwork = dto.network?.trim();
     const method = dto.method;
 
-    // Temporary testing override: lower all withdrawal minimums to KES 10.
-    // Keep the original method minima in memory so they can be restored later.
     const originalMethodMinima = {
       BANK_TRANSFER: 4999,
       MOBILE_MONEY: 1499,
       CRYPTO: 100,
     } as const;
-    const temporaryMinimumWithdrawalOverride = 10;
-
-    const effectiveMinimum =
-      temporaryMinimumWithdrawalOverride ?? originalMethodMinima[method];
+    const effectiveMinimum = originalMethodMinima[method];
 
     if (method === 'BANK_TRANSFER') {
       if (amount < effectiveMinimum) {
