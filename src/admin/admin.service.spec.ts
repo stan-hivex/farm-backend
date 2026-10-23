@@ -275,7 +275,13 @@ describe('AdminService KYC image responses', () => {
   };
 
   it('includes uploaded images in the admin KYC queue', async () => {
-    const document = { id: 'kyc-1', ...images };
+    const document = {
+      id: 'kyc-1',
+      front_image: images.front_image,
+      back_image_url: images.back_image,
+      selfie_image: images.selfie_image,
+      address_document: images.address_document,
+    };
     const prisma: any = {
       kyc_documents: {
         findMany: jest.fn().mockResolvedValue([document]),
@@ -297,13 +303,36 @@ describe('AdminService KYC image responses', () => {
         front_image: images.front_image,
         back_image: images.back_image,
         selfie_image: images.selfie_image,
+        address_document: images.address_document,
+        front_image_url: images.front_image,
+        back_image_url: images.back_image,
+        selfie_image_url: images.selfie_image,
         address_document_url: images.address_document,
+      }),
+    );
+    expect(prisma.kyc_documents.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          front_image: true,
+          back_image: true,
+          selfie_image: true,
+          address_document: true,
+          front_image_url: true,
+          back_image_url: true,
+          selfie_image_url: true,
+        }),
       }),
     );
   });
 
   it('includes uploaded images when an admin opens KYC details', async () => {
-    const document = { id: 'kyc-1', ...images };
+    const document = {
+      id: 'kyc-1',
+      front_image: images.front_image,
+      back_image_url: images.back_image,
+      selfie_image: images.selfie_image,
+      address_document: images.address_document,
+    };
     const prisma: any = {
       kyc_documents: {
         findUnique: jest.fn().mockResolvedValue(document),
@@ -324,6 +353,9 @@ describe('AdminService KYC image responses', () => {
         front_image: images.front_image,
         back_image: images.back_image,
         selfie_image: images.selfie_image,
+        front_image_url: images.front_image,
+        back_image_url: images.back_image,
+        selfie_image_url: images.selfie_image,
         address_document_url: images.address_document,
       }),
     );

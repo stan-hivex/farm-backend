@@ -1175,6 +1175,10 @@ export class AdminService {
           last_name: true,
           status: true,
           created_at: true,
+          front_image: true,
+          back_image: true,
+          selfie_image: true,
+          address_document: true,
           front_image_url: true,
           back_image_url: true,
           selfie_image_url: true,
@@ -1198,9 +1202,14 @@ export class AdminService {
         document_number: d.document_number,
         status: d.status,
         created_at: d.created_at,
-        front_image_url: d.front_image_url,
-        back_image_url: d.back_image_url,
-        selfie_image_url: d.selfie_image_url,
+        front_image: d.front_image_url ?? d.front_image,
+        back_image: d.back_image_url ?? d.back_image,
+        selfie_image: d.selfie_image_url ?? d.selfie_image,
+        address_document: d.address_document,
+        front_image_url: d.front_image_url ?? d.front_image,
+        back_image_url: d.back_image_url ?? d.back_image,
+        selfie_image_url: d.selfie_image_url ?? d.selfie_image,
+        address_document_url: d.address_document,
       })),
       meta: paginate(total, page, limit),
     };
@@ -1946,8 +1955,15 @@ export class AdminService {
     return {
       data: {
         ...document,
+        front_image: document.front_image_url ?? document.front_image,
+        back_image: document.back_image_url ?? document.back_image,
+        selfie_image: document.selfie_image_url ?? document.selfie_image,
+        address_document: document.address_document,
+        front_image_url: document.front_image_url ?? document.front_image,
+        back_image_url: document.back_image_url ?? document.back_image,
+        selfie_image_url: document.selfie_image_url ?? document.selfie_image,
         address_document_url:
-          (document as any).address_document_url ?? (document as any).address_document ?? null,
+          document.address_document ?? null,
       },
     };
   }

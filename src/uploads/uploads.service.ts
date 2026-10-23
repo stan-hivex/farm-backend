@@ -56,6 +56,10 @@ export class UploadsService {
     if (files.length < 1 || files.length > 5) {
       throw new BadRequestException('Upload between 1 and 5 images');
     }
-    return Promise.all(files.map((file) => this.uploadSingle(file)));
+    const uploaded: UploadedImage[] = [];
+    for (const file of files) {
+      uploaded.push(await this.uploadSingle(file));
+    }
+    return uploaded;
   }
 }

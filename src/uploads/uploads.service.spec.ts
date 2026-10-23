@@ -99,4 +99,36 @@ describe('UploadsService', () => {
       } as Express.Multer.File),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
+
+  it('uploads multiple images sequentially and preserves their order', async () => {
+    const service = new UploadsService();
+    let activeUploads = 0;
+    let maxActiveUploads = 0;
+    jest.spyOn(service, 'uploadSingle').mockImplementation(async (file) => {
+      activeUploads += 1;
+      maxActiveUploads = Math.max(maxActiveUploads, activeUploads);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      activeUploads -= 1;
+      return {
+        url: `https://res.cloudinary.com/demo/${file.originalname}`,
+        public_id: file.originalname,
+      };
+    });
+    const files = [
+      { originalname: 'front.jpg' },
+      { originalname: 'selfie.jpg' },
+    ] as Express.Multer.File[];
+
+    await expect(service.uploadMultiple(files)).resolves.toEqual([
+      {
+        url: 'https://res.cloudinary.com/demo/front.jpg',
+        public_id: 'front.jpg',
+      },
+      {
+        url: 'https://res.cloudinary.com/demo/selfie.jpg',
+        public_id: 'selfie.jpg',
+      },
+    ]);
+    expect(maxActiveUploads).toBe(1);
+  });
 });
