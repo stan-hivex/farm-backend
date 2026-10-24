@@ -20,10 +20,29 @@ export class KycService {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
   }
 
+  private parseDateOfBirth(value?: string) {
+    const normalized = this.normalizeValue(value);
+    if (!normalized) return undefined;
+
+    const date = new Date(normalized);
+    if (
+      Number.isNaN(date.getTime()) ||
+      (/^\d{4}-\d{2}-\d{2}$/.test(normalized) &&
+        date.toISOString().slice(0, 10) !== normalized)
+    ) {
+      throw new BadRequestException('Invalid date of birth');
+    }
+    return date;
+  }
+
   private computeKycLevel(data: any) {
     const first_name = this.normalizeValue(data.first_name);
     const last_name = this.normalizeValue(data.last_name);
-    const date_of_birth = this.normalizeValue(data.date_of_birth || data.dob);
+    const rawDateOfBirth = data.date_of_birth || data.dob;
+    const date_of_birth =
+      rawDateOfBirth instanceof Date
+        ? rawDateOfBirth.toISOString()
+        : this.normalizeValue(rawDateOfBirth);
     const phone = this.normalizeValue(data.phone || data.phone_number);
     const email = this.normalizeValue(data.email);
     const document_type = this.normalizeValue(data.document_type);
@@ -70,6 +89,7 @@ export class KycService {
       back?: string | null;
       selfie?: string | null;
     },
+    dateOfBirth?: Date,
   ) {
     const frontImage =
       urls.front ??
@@ -105,7 +125,7 @@ export class KycService {
         null,
       first_name: dto.first_name ?? existing?.first_name,
       last_name: dto.last_name ?? existing?.last_name,
-      date_of_birth: dto.date_of_birth ?? dto.dob ?? existing?.date_of_birth,
+      date_of_birth: dateOfBirth ?? existing?.date_of_birth,
       gender: dto.gender ?? existing?.gender,
       nationality: dto.nationality ?? existing?.nationality,
       phone: dto.phone ?? dto.phone_number ?? existing?.phone,
@@ -159,6 +179,7 @@ export class KycService {
         status: { in: ['pending', 'under_review', 'additional_info_required'] },
       },
     });
+    const dateOfBirth = this.parseDateOfBirth(dto.date_of_birth ?? dto.dob);
 
     let frontUrl: string | null = null;
     let backUrl: string | null = null;
@@ -191,6 +212,7 @@ export class KycService {
             back: backUrl,
             selfie: selfieUrl,
           },
+          dateOfBirth,
         );
         doc = await this.prisma.kyc_documents.update({
           where: { id: existingSubmission.id },
@@ -200,11 +222,16 @@ export class KycService {
         doc = await this.prisma.kyc_documents.create({
           data: {
             user_id: userId,
-            ...this.buildKycDocumentPayload(null, dto, {
-              front: frontUrl,
-              back: backUrl,
-              selfie: selfieUrl,
-            }),
+            ...this.buildKycDocumentPayload(
+              null,
+              dto,
+              {
+                front: frontUrl,
+                back: backUrl,
+                selfie: selfieUrl,
+              },
+              dateOfBirth,
+            ),
           },
         });
       }
@@ -234,8 +261,7 @@ export class KycService {
         existingSubmission?.address_document,
       state: dto.state ?? existingSubmission?.county,
       address: dto.address ?? existingSubmission?.physical_address,
-      date_of_birth:
-        dto.date_of_birth ?? dto.dob ?? existingSubmission?.date_of_birth,
+      date_of_birth: dateOfBirth ?? existingSubmission?.date_of_birth,
     };
     const kycLevel = this.computeKycLevel(mergedDocData);
 
