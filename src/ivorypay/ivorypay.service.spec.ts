@@ -222,7 +222,32 @@ describe('IvorypayService', () => {
         reference: 'withdrawal-reference',
       }),
     ).rejects.toThrow(
-      'IvoryPay crypto withdrawals are not enabled for this merchant account',
+      'Crypto payouts are disabled in FARM configuration; verify IvoryPay payout permission before enabling IVORYPAY_CRYPTO_PAYOUTS_ENABLED',
+    );
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing API key separately from disabled payout configuration', async () => {
+    const unconfiguredService = new IvorypayService({
+      get: jest.fn((key: string, defaultValue?: any) =>
+        key === 'IVORYPAY_BASE_URL'
+          ? 'https://api.ivorypay.io/api'
+          : key === 'IVORYPAY_CRYPTO_PAYOUTS_ENABLED'
+            ? 'true'
+            : defaultValue,
+      ),
+    } as unknown as ConfigService);
+
+    await expect(
+      unconfiguredService.createWithdrawal({
+        amount: 1,
+        token: 'USDC',
+        network: 'POLYGON',
+        address: '0x0e892b10a8104855837652906a869acadd07a142',
+        reference: 'withdrawal-reference',
+      }),
+    ).rejects.toThrow(
+      'IvoryPay crypto payouts are not configured because IVORYPAY_API_KEY is missing',
     );
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });

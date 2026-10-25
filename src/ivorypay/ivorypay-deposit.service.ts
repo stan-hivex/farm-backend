@@ -24,8 +24,9 @@ export class IvorypayDepositService {
   ) {}
 
   async getSupportedPaymentTokens() {
-    const tokens = await this.ivorypayService.getSupportedPaymentTokens();
-    return { success: true, data: tokens };
+    const options = await this.ivorypayService.getSupportedPaymentOptions();
+    const tokens = [...new Set(options.map((option) => option.token))].sort();
+    return { success: true, data: tokens, options };
   }
 
   async createDeposit(userId: string, dto: any) {

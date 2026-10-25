@@ -44,9 +44,14 @@ export class IvorypayService {
   }
 
   private assertCryptoPayoutsEnabled() {
-    if (!this.cryptoPayoutsEnabled || !this.apiKey) {
+    if (!this.apiKey) {
       throw new ServiceUnavailableException(
-        'IvoryPay crypto withdrawals are not enabled for this merchant account',
+        'IvoryPay crypto payouts are not configured because IVORYPAY_API_KEY is missing',
+      );
+    }
+    if (!this.cryptoPayoutsEnabled) {
+      throw new ServiceUnavailableException(
+        'Crypto payouts are disabled in FARM configuration; verify IvoryPay payout permission before enabling IVORYPAY_CRYPTO_PAYOUTS_ENABLED',
       );
     }
   }
@@ -86,11 +91,7 @@ export class IvorypayService {
         string,
         { token: string; network: string; networkName: string }
       >();
-      const addOption = (
-        entry: any,
-        fallbackNetworkName = '',
-        legacy = false,
-      ) => {
+      const addOption = (entry: any, fallbackNetworkName = '') => {
         const token =
           typeof entry?.token === 'string'
             ? entry.token.trim().toUpperCase()
@@ -98,10 +99,9 @@ export class IvorypayService {
         const network =
           typeof (entry?.network ?? entry?.blockchain) === 'string'
             ? (entry.network ?? entry.blockchain).trim()
-            : '';
-        const isEnabled = legacy
-          ? entry?.isActive === true || entry?.isSupported === true
-          : entry?.isSupported === true || entry?.isActive === true;
+            : fallbackNetworkName;
+        const isEnabled =
+          entry?.isSupported === true || entry?.isActive === true;
         const networkName =
           typeof entry?.networkName === 'string' && entry.networkName.trim()
             ? entry.networkName.trim()
@@ -120,7 +120,7 @@ export class IvorypayService {
       } else {
         for (const [networkName, entries] of Object.entries(data)) {
           if (!Array.isArray(entries)) continue;
-          for (const entry of entries) addOption(entry, networkName, true);
+          for (const entry of entries) addOption(entry, networkName);
         }
       }
       if (options.size === 0) {
@@ -140,15 +140,18 @@ export class IvorypayService {
       ) {
         throw error;
       }
+      const status = (error as any)?.response?.status;
       this.logger.error(
-        `IvoryPay crypto payout options lookup failed: ${
+        `IvoryPay crypto payout options lookup failed status=${status ?? 'unavailable'}: ${
           (error as any)?.response?.data?.message ??
           (error as Error)?.message ??
           'unknown error'
         }`,
       );
       throw new BadGatewayException(
-        'Could not load enabled crypto payout options from IvoryPay',
+        status
+          ? `Could not load enabled crypto payout options from IvoryPay (HTTP ${status})`
+          : 'Could not reach IvoryPay to load enabled crypto payout options',
       );
     }
   }
@@ -707,27 +710,32 @@ export class IvorypayService {
         string,
         { token: string; network: string; networkName: string }
       >();
-      for (const [networkName, networkTokens] of Object.entries(
-        groupedTokens,
-      )) {
-        if (!Array.isArray(networkTokens)) continue;
-        for (const item of networkTokens) {
-          if (
-            item?.isActive === true &&
-            typeof item.token === 'string' &&
-            item.token.trim()
-          ) {
-            const token = item.token.trim().toUpperCase();
-            const network =
-              typeof item.blockchain === 'string' && item.blockchain.trim()
-                ? item.blockchain.trim()
-                : networkName;
-            options.set(`${token}:${network}`, {
-              token,
-              network,
-              networkName,
-            });
-          }
+      const addOption = (item: any, fallbackNetworkName = '') => {
+        const token =
+          typeof item?.token === 'string' ? item.token.trim().toUpperCase() : '';
+        const network =
+          typeof (item?.network ?? item?.blockchain) === 'string'
+            ? (item.network ?? item.blockchain).trim()
+            : fallbackNetworkName;
+        const isActive =
+          item?.isActive === true || item?.isSupported === true;
+        const networkName =
+          typeof item?.networkName === 'string' && item.networkName.trim()
+            ? item.networkName.trim()
+            : fallbackNetworkName || network;
+        if (isActive && token && network) {
+          options.set(`${token}:${network}`, { token, network, networkName });
+        }
+      };
+
+      if (Array.isArray(groupedTokens)) {
+        for (const item of groupedTokens) addOption(item);
+      } else {
+        for (const [networkName, networkTokens] of Object.entries(
+          groupedTokens,
+        )) {
+          if (!Array.isArray(networkTokens)) continue;
+          for (const item of networkTokens) addOption(item, networkName);
         }
       }
       if (options.size === 0) {
@@ -751,9 +759,14 @@ export class IvorypayService {
         (error as any)?.response?.data?.message ??
         (error as Error)?.message ??
         'IvoryPay token lookup failed';
-      this.logger.error(`IvoryPay supported-token lookup failed: ${message}`);
+      const status = (error as any)?.response?.status;
+      this.logger.error(
+        `IvoryPay supported-token lookup failed status=${status ?? 'unavailable'}: ${message}`,
+      );
       throw new BadGatewayException(
-        'Could not load supported crypto payment options from IvoryPay',
+        status
+          ? `Could not load supported crypto payment options from IvoryPay (HTTP ${status})`
+          : 'Could not reach IvoryPay to load supported crypto payment options',
       );
     }
   }

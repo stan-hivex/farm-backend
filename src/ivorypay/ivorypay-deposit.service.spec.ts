@@ -109,12 +109,16 @@ describe('IvorypayDepositService', () => {
     );
   });
 
-  it('returns the unique supported payment tokens', async () => {
+  it('returns the supported payment tokens and their active networks', async () => {
     await expect(service.getSupportedPaymentTokens()).resolves.toEqual({
       success: true,
       data: ['USDC', 'USDT'],
+      options: [
+        { token: 'USDT', network: 'BSC', networkName: 'BSC' },
+        { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
+      ],
     });
-    expect(ivorypay.getSupportedPaymentTokens).toHaveBeenCalledTimes(1);
+    expect(ivorypay.getSupportedPaymentOptions).toHaveBeenCalledTimes(1);
   });
 
   it('requires a supported token and validates any selected network', async () => {
