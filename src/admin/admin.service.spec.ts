@@ -75,7 +75,11 @@ describe('AdminService transaction list details', () => {
       net_amount: 250,
       currency: 'KES',
       description: 'Crypto deposit',
-      metadata: { user_id: 'user-1', payment_method: 'CRYPTO', payment_provider: 'IvoryPay' },
+      metadata: {
+        user_id: 'user-1',
+        payment_method: 'CRYPTO',
+        payment_provider: 'IvoryPay',
+      },
       created_at: new Date('2024-05-01T10:15:30.000Z'),
       processed_at: null,
       wallets_transactions_sender_wallet_idTowallets: null,
@@ -87,30 +91,42 @@ describe('AdminService transaction list details', () => {
         count: jest.fn().mockResolvedValue(1),
       },
       users: {
-        findMany: jest.fn().mockResolvedValue([{
-          id: 'user-1',
-          username: 'alice',
-          first_name: 'Alice',
-          last_name: 'Example',
-          email: 'alice@example.com',
-          phone: '+254700000000',
-        }]),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'user-1',
+            username: 'alice',
+            first_name: 'Alice',
+            last_name: 'Example',
+            email: 'alice@example.com',
+            phone: '+254700000000',
+          },
+        ]),
       },
     };
-    const service = new AdminService(prisma, {} as any, {} as any, {} as any, {} as any);
+    const service = new AdminService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
 
-    const result = await service.listTransactions({ transaction_type: 'deposit' });
+    const result = await service.listTransactions({
+      transaction_type: 'deposit',
+    });
 
-    expect(result.data[0]).toEqual(expect.objectContaining({
-      user_id: 'user-1',
-      username: 'alice',
-      user_name: 'Alice Example',
-      method: 'CRYPTO',
-      date: '2024-05-01',
-      time: '10:15:30',
-      sender_name: 'IvoryPay',
-      receiver_name: 'Alice Example',
-    }));
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        user_id: 'user-1',
+        username: 'alice',
+        user_name: 'Alice Example',
+        method: 'CRYPTO',
+        date: '2024-05-01',
+        time: '10:15:30',
+        sender_name: 'IvoryPay',
+        receiver_name: 'Alice Example',
+      }),
+    );
   });
 
   it('includes withdrawal owner, destination, method, and timestamp in admin withdrawal rows', async () => {
@@ -142,21 +158,29 @@ describe('AdminService transaction list details', () => {
         count: jest.fn().mockResolvedValue(1),
       },
     };
-    const service = new AdminService(prisma, {} as any, {} as any, {} as any, {} as any);
+    const service = new AdminService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
 
     const result = await service.listAllWithdrawals({});
 
-    expect(result.data[0]).toEqual(expect.objectContaining({
-      user_id: 'user-2',
-      username: 'bob',
-      user_name: 'Bob Example',
-      transaction_reference: 'withdrawal-ref-1',
-      method: 'MOBILE_MONEY',
-      sender_name: 'Bob Example',
-      receiver_name: '+254700000001',
-      date: '2024-05-02',
-      time: '11:16:17',
-    }));
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        user_id: 'user-2',
+        username: 'bob',
+        user_name: 'Bob Example',
+        transaction_reference: 'withdrawal-ref-1',
+        method: 'MOBILE_MONEY',
+        sender_name: 'Bob Example',
+        receiver_name: '+254700000001',
+        date: '2024-05-02',
+        time: '11:16:17',
+      }),
+    );
   });
 });
 
@@ -362,6 +386,74 @@ describe('AdminService KYC image responses', () => {
   });
 });
 
+describe('AdminService KYC review notifications', () => {
+  it.each([
+    ['verified', 'KYC Approved', 'kyc_update'],
+    ['rejected', 'KYC Rejected', 'kyc_update'],
+  ] as const)(
+    'notifies the user when KYC status becomes %s',
+    async (status, title, type) => {
+      const document = {
+        id: 'kyc-1',
+        user_id: 'user-1',
+        status: 'pending',
+        first_name: 'Ada',
+        last_name: 'Lovelace',
+        date_of_birth: new Date('1990-12-10T00:00:00.000Z'),
+        document_type: 'National ID',
+        document_number: 'ID-123',
+        front_image: 'https://res.cloudinary.com/demo/front.jpg',
+      };
+      const prisma: any = {
+        kyc_documents: {
+          findUnique: jest.fn().mockResolvedValue(document),
+          update: jest.fn().mockResolvedValue({ ...document, status }),
+        },
+        users: { update: jest.fn().mockResolvedValue({}) },
+        audit_logs: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const notifications = {
+        sendNotification: jest.fn().mockResolvedValue({ id: 'notification-1' }),
+      };
+      const service = new AdminService(
+        prisma,
+        {} as any,
+        notifications as any,
+        {} as any,
+        {} as any,
+      );
+
+      await service.reviewKyc('kyc-1', 'admin-1', {
+        status,
+        ...(status === 'rejected'
+          ? { rejection_reason: 'Image is unclear' }
+          : {}),
+      });
+
+      expect(notifications.sendNotification).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({
+          type,
+          entityId: 'kyc-1',
+          title,
+          metadata: expect.objectContaining({
+            kyc_id: 'kyc-1',
+            kyc_status: status,
+          }),
+        }),
+      );
+      if (status === 'rejected') {
+        expect(notifications.sendNotification).toHaveBeenCalledWith(
+          'user-1',
+          expect.objectContaining({
+            body: expect.stringContaining('Image is unclear'),
+          }),
+        );
+      }
+    },
+  );
+});
+
 describe('AdminService admin management', () => {
   it('lists only non-deleted admin accounts', async () => {
     const prisma = {
@@ -413,7 +505,9 @@ describe('AdminService admin management', () => {
           }),
         },
         withdrawal: {
-          aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0, settlement: 0 } }),
+          aggregate: jest
+            .fn()
+            .mockResolvedValue({ _sum: { amount: 0, settlement: 0 } }),
         },
         transactions: {
           aggregate: jest.fn(({ where }) => {
@@ -584,7 +678,9 @@ describe('AdminService admin management', () => {
       users: { update: jest.fn().mockResolvedValue({ id: 'admin-1' }) },
       user_sessions: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       device_tokens: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
-      biometric_settings: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      biometric_settings: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       api_keys: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
       notifications: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
       audit_logs: { create: jest.fn().mockResolvedValue({}) },
@@ -621,7 +717,10 @@ describe('AdminService admin management', () => {
     );
     expect(tx.user_sessions.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { user_id: 'admin-1', OR: [{ is_revoked: false }, { is_revoked: null }] },
+        where: {
+          user_id: 'admin-1',
+          OR: [{ is_revoked: false }, { is_revoked: null }],
+        },
         data: expect.objectContaining({ is_revoked: true }),
       }),
     );
@@ -685,10 +784,7 @@ describe('AdminService admin management', () => {
   });
 
   it('excludes admin and superadmin roles from the superadmin dashboard total', async () => {
-    const revenueByType: Record<
-      string,
-      { fee: number; count: number }
-    > = {
+    const revenueByType: Record<string, { fee: number; count: number }> = {
       escrow_lock: { fee: 9.78, count: 4 },
       escrow_release: { fee: 8.6, count: 2 },
       withdrawal: { fee: 4.35, count: 3 },
@@ -840,15 +936,13 @@ describe('AdminService.broadcastNotification recipient targeting', () => {
   it('sends to explicitly supplied recipients when recipient IDs are provided', async () => {
     const prisma = {
       users: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([
-            {
-              id: 'user-2',
-              email: 'user2@example.com',
-              phone: '+254700000001',
-            },
-          ]),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'user-2',
+            email: 'user2@example.com',
+            phone: '+254700000001',
+          },
+        ]),
       },
       audit_logs: {
         create: jest.fn().mockResolvedValue({}),

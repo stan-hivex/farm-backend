@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-validator';
 import { MerchantsService } from './merchants.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -22,11 +22,11 @@ import { Throttle } from '@nestjs/throttler';
 
 class ApplyDto {
   @IsNotEmpty() @IsString() business_name!: string;
-  @IsOptional() @IsString() business_type?: string;
-  @IsOptional() @IsString() business_email?: string;
-  @IsOptional() @IsString() business_phone?: string;
-  @IsOptional() @IsString() country?: string;
-  @IsOptional() @IsString() city?: string;
+  @IsNotEmpty() @IsString() business_type!: string;
+  @IsNotEmpty() @IsEmail() business_email!: string;
+  @IsNotEmpty() @IsString() business_phone!: string;
+  @IsNotEmpty() @IsString() country!: string;
+  @IsNotEmpty() @IsString() city!: string;
 }
 class PayoutDto {
   @IsNumber() @IsPositive() amount!: number;

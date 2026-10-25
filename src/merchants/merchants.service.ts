@@ -11,9 +11,9 @@ export class MerchantsService {
   constructor(private prisma: PrismaService, private qrService: QrService) {}
 
   async apply(userId: string, dto: {
-    business_name: string; business_type?: string;
-    business_email?: string; business_phone?: string;
-    country?: string; city?: string;
+    business_name: string; business_type: string;
+    business_email: string; business_phone: string;
+    country: string; city: string;
   }) {
     const existing = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
     if (existing) {
@@ -243,6 +243,10 @@ export class MerchantsService {
   }
 
   async getTransactions(userId: string, query: any) {
+    const merchant = await this.getMerchantByUser(userId);
+    if (merchant.status !== 'approved') {
+      throw new ForbiddenException('Merchant application is pending approval');
+    }
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const [items, total] = await Promise.all([
@@ -297,6 +301,9 @@ export class MerchantsService {
 
   async getPayouts(userId: string, query: any) {
     const merchant = await this.getMerchantByUser(userId);
+    if (merchant.status !== 'approved') {
+      throw new ForbiddenException('Merchant application is pending approval');
+    }
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const [items, total] = await Promise.all([
       this.prisma.merchant_payouts.findMany({

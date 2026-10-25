@@ -282,13 +282,14 @@ export class KycService {
 
     await this.notificationsService
       .sendNotification(userId, {
-        type: 'kyc_submitted',
+        type: 'kyc_update',
         entityId: doc.id,
         title: 'KYC Submitted',
         body: 'Your KYC documents have been submitted for review. You will receive updates as we process them.',
         metadata: {
           kyc_level: kycLevel,
           kyc_id: doc.id,
+          kyc_status: 'pending',
         },
       })
       .catch((error) =>
@@ -426,7 +427,7 @@ export class KycService {
       notificationMap[dto.status] || notificationMap['under_review'];
     await this.notificationsService
       .sendNotification(doc.user_id!, {
-        type: `kyc_${dto.status}`,
+        type: 'kyc_update',
         entityId: doc.id,
         title: notifData.title,
         body: notifData.body,
