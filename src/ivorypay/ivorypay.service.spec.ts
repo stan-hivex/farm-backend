@@ -32,7 +32,6 @@ describe('IvorypayService', () => {
             'https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000',
         },
       },
-      status: 201,
     } as any);
 
     const result = await service.createPayment({
@@ -99,7 +98,6 @@ describe('IvorypayService', () => {
           checkoutUrl: 'https://checkout.ivorypay.io/checkout/reference',
         },
       },
-      status: 201,
     } as any);
 
     await configuredService.createPayment({
@@ -224,32 +222,7 @@ describe('IvorypayService', () => {
         reference: 'withdrawal-reference',
       }),
     ).rejects.toThrow(
-      'IvoryPay crypto payouts are disabled by FARM configuration; enable IVORYPAY_CRYPTO_PAYOUTS_ENABLED only after payout access is confirmed with IvoryPay',
-    );
-    expect(mockedAxios.post).not.toHaveBeenCalled();
-  });
-
-  it('reports missing API credentials separately from a disabled payout feature', async () => {
-    const unconfiguredService = new IvorypayService({
-      get: jest.fn((key: string, defaultValue?: any) =>
-        key === 'IVORYPAY_BASE_URL'
-          ? 'https://api.ivorypay.io/api'
-          : key === 'IVORYPAY_CRYPTO_PAYOUTS_ENABLED'
-            ? 'true'
-            : defaultValue,
-      ),
-    } as unknown as ConfigService);
-
-    await expect(
-      unconfiguredService.createWithdrawal({
-        amount: 1,
-        token: 'USDC',
-        network: 'POLYGON',
-        address: '0x0e892b10a8104855837652906a869acadd07a142',
-        reference: 'withdrawal-reference',
-      }),
-    ).rejects.toThrow(
-      'IvoryPay crypto payouts are not configured because IVORYPAY_API_KEY is missing',
+      'IvoryPay crypto withdrawals are not enabled for this merchant account',
     );
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });

@@ -44,14 +44,9 @@ export class IvorypayService {
   }
 
   private assertCryptoPayoutsEnabled() {
-    if (!this.apiKey) {
+    if (!this.cryptoPayoutsEnabled || !this.apiKey) {
       throw new ServiceUnavailableException(
-        'IvoryPay crypto payouts are not configured because IVORYPAY_API_KEY is missing',
-      );
-    }
-    if (!this.cryptoPayoutsEnabled) {
-      throw new ServiceUnavailableException(
-        'IvoryPay crypto payouts are disabled by FARM configuration; enable IVORYPAY_CRYPTO_PAYOUTS_ENABLED only after payout access is confirmed with IvoryPay',
+        'IvoryPay crypto withdrawals are not enabled for this merchant account',
       );
     }
   }
@@ -582,14 +577,6 @@ export class IvorypayService {
           : null,
       };
 
-      this.logger.log(
-        `IvoryPay createPayment request endpoint=${this.baseUrl}/v1/transactions ` +
-          `reference=${options.reference} amount=${body.amount} baseFiat=${body.baseFiat} ` +
-          `type=${body.type} mode=${body.mode} crypto=${body.crypto ?? 'missing'} ` +
-          `chain=${body.chain ?? 'missing'} emailProvided=${Boolean(body.email)} ` +
-          `metadataProvided=${body.metadata !== null}`,
-      );
-
       const response = await axios.post(
         `${this.baseUrl}/v1/transactions`,
         body,
@@ -605,10 +592,15 @@ export class IvorypayService {
       const data = rawData?.data ?? rawData;
       if (!data) {
         this.logger.error(
-          `IvoryPay createPayment returned an empty response body status=${response.status}`,
+          'Ivorypay createPayment returned invalid response',
+          rawData,
         );
         throw new BadRequestException('Invalid Ivorypay response');
       }
+
+      this.logger.log(
+        `IvoryPay raw response: ${JSON.stringify(rawData, null, 2)}`,
+      );
 
       const providerIdentifiers = this.extractProviderIdentifiers(rawData);
       const providerReference = this.determinePrimaryProviderReference(
@@ -646,13 +638,12 @@ export class IvorypayService {
       }
 
       this.logger.log(
-        `IvoryPay createPayment response status=${response.status} success=${rawData?.success === true} ` +
-          `responseFields=${Object.keys(data).sort().join(',')} internalReference=${options.reference} ` +
+        `Ivorypay createPayment success: internalReference=${options.reference} ` +
           `providerTransactionId=${providerTransactionId ?? 'missing'} ` +
           `checkoutId=${providerIdentifiers.checkout_id ?? 'missing'} ` +
           `paymentId=${providerIdentifiers.payment_id ?? 'missing'} ` +
           `providerReference=${providerReference ?? 'missing'} ` +
-          `checkoutUrl=${redirectUrl ? 'present' : 'missing'}`,
+          `redirectUrl=${redirectUrl ?? 'missing'}`,
       );
 
       return {
@@ -672,16 +663,16 @@ export class IvorypayService {
       const endpoint = `${this.baseUrl}/v1/transactions`;
 
       this.logger.error(
-        `IvoryPay createPayment error [${statusCode ?? 'unknown'}] ${endpoint}: ${message}`,
+        `Ivorypay createPayment error [${statusCode}] ${endpoint}: ${message}`,
       );
       if (e.response?.data?.errors) {
         this.logger.debug(
-          `IvoryPay validation error fields: ${Object.keys(e.response.data.errors).sort().join(',')}`,
+          `Ivorypay validation errors: ${JSON.stringify(e.response.data.errors)}`,
         );
       }
       if (e.response?.data) {
         this.logger.debug(
-          `IvoryPay error response fields: ${Object.keys(e.response.data).sort().join(',')}`,
+          `Ivorypay response body: ${JSON.stringify(e.response.data)}`,
         );
       }
       throw new BadRequestException(`Ivorypay integration failed: ${message}`);
