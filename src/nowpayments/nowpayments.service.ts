@@ -141,6 +141,48 @@ export class NowpaymentsService {
     )].sort();
   }
 
+  async getMinimumPaymentAmount(currency: string): Promise<{
+    currency: string;
+    minimumAmount: number;
+    minimumUsd: number;
+  }> {
+    const normalizedCurrency = currency.trim().toLowerCase();
+    if (!/^[a-z0-9]{2,20}$/.test(normalizedCurrency)) {
+      throw new BadGatewayException('Invalid NOWPayments currency');
+    }
+    const response = this.asRecord(
+      await this.request('get', '/min-amount', undefined, {
+        currency_from: normalizedCurrency,
+        currency_to: 'usd',
+      }),
+      'minimum payment amount',
+    );
+    const minimumAmount = Number(response.min_amount);
+    if (!Number.isFinite(minimumAmount) || minimumAmount <= 0) {
+      throw new BadGatewayException(
+        'NOWPayments did not return a valid minimum payment amount',
+      );
+    }
+    let minimumUsd = Number(response.fiat_equivalent);
+    if (!Number.isFinite(minimumUsd) || minimumUsd <= 0) {
+      minimumUsd = await this.estimateAmount(
+        minimumAmount,
+        normalizedCurrency,
+        'usd',
+      );
+    }
+    if (!Number.isFinite(minimumUsd) || minimumUsd <= 0) {
+      throw new BadGatewayException(
+        'NOWPayments did not return a valid USD equivalent for the minimum payment',
+      );
+    }
+    return {
+      currency: normalizedCurrency,
+      minimumAmount,
+      minimumUsd,
+    };
+  }
+
   async createPayment(input: {
     priceAmount: number;
     priceCurrency: string;
@@ -181,7 +223,8 @@ export class NowpaymentsService {
       pay_amount: amount,
       pay_currency: currency,
       payment_status: data.payment_status?.toString() ?? 'waiting',
-      expiration_estimate: data.expiration_estimate ?? null,
+      expiration_estimate:
+        data.expiration_estimate_date ?? data.expiration_estimate ?? null,
       qr_url: await QRCode.toDataURL(address),
     };
   }

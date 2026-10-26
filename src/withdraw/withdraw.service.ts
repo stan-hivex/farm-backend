@@ -341,6 +341,23 @@ export class WithdrawService {
     return { data: currencies };
   }
 
+  async getNowpaymentsCryptoMinimum() {
+    const rate = await this.currencyConversionService.getCurrentRate();
+    const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
+    if (!Number.isFinite(farmUsdRate) || farmUsdRate <= 0) {
+      throw new BadRequestException('The FARM/USD exchange rate is unavailable');
+    }
+    const minimumUsd = 1;
+    const minimumFarm = Math.ceil((minimumUsd / farmUsdRate) * 1e8) / 1e8;
+    return {
+      data: {
+        minimumUsd,
+        farmUsdRate,
+        minimumFarm,
+      },
+    };
+  }
+
   async createNowpaymentsCryptoWithdrawal(
     userId: string,
     dto: CreateWithdrawDto,
@@ -375,10 +392,8 @@ export class WithdrawService {
       ''
     ).trim();
     const currency = (dto.cryptoAsset ?? dto.token ?? '').trim().toLowerCase();
-    if (!Number.isFinite(amount) || amount < 100) {
-      throw new BadRequestException(
-        'Minimum crypto withdrawal is 100 FARM',
-      );
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('Enter a valid crypto withdrawal amount');
     }
     if (dto.method !== 'CRYPTO' || !address || !/^[a-z0-9]{2,20}$/.test(currency)) {
       throw new BadRequestException(
@@ -408,10 +423,16 @@ export class WithdrawService {
     const settlement = Number((amount - fee).toFixed(8));
     const rate = await this.currencyConversionService.getCurrentRate();
     const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
-    const settlementUsd = Number((settlement * farmUsdRate).toFixed(2));
-    if (!Number.isFinite(settlementUsd) || settlementUsd < 10) {
+    const grossAmountUsd = Number((amount * farmUsdRate).toFixed(8));
+    if (!Number.isFinite(grossAmountUsd) || grossAmountUsd < 1) {
       throw new BadRequestException(
-        'The crypto payout must be at least 10 USD after the withdrawal fee',
+        'Minimum crypto withdrawal is USD 1 before the 1.5% withdrawal fee',
+      );
+    }
+    const settlementUsd = Number((settlement * farmUsdRate).toFixed(2));
+    if (!Number.isFinite(settlementUsd) || settlementUsd <= 0) {
+      throw new BadRequestException(
+        'The crypto withdrawal amount is too small after the withdrawal fee',
       );
     }
 

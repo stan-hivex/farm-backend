@@ -31,6 +31,19 @@ export class DepositService {
     return { data: currencies };
   }
 
+  async getNowpaymentsCryptoMinimum(currency: string) {
+    const normalizedCurrency = currency.trim().toLowerCase();
+    const currencies = await this.nowpayments.getAvailableCurrencies();
+    if (!currencies.includes(normalizedCurrency)) {
+      throw new BadRequestException(
+        'The selected cryptocurrency is not currently available',
+      );
+    }
+    const minimum =
+      await this.nowpayments.getMinimumPaymentAmount(normalizedCurrency);
+    return { data: minimum };
+  }
+
   async createNowpaymentsCryptoDeposit(
     userId: string,
     dto: {
@@ -44,11 +57,11 @@ export class DepositService {
     const payCurrency = dto.pay_currency?.trim().toLowerCase();
     if (
       !Number.isFinite(priceAmount) ||
-      priceAmount < 10 ||
+      priceAmount <= 0 ||
       priceCurrency !== 'usd'
     ) {
       throw new BadRequestException(
-        'Crypto deposits must be at least 10 USD and use USD pricing',
+        'Crypto deposits must use USD pricing and a valid positive amount',
       );
     }
     if (!/^[a-z0-9]{2,20}$/.test(payCurrency ?? '')) {
@@ -58,6 +71,18 @@ export class DepositService {
     if (!currencies.includes(payCurrency)) {
       throw new BadRequestException(
         'The selected cryptocurrency is not currently available',
+      );
+    }
+    const minimum =
+      await this.nowpayments.getMinimumPaymentAmount(payCurrency);
+    const estimatedCryptoAmount = await this.nowpayments.estimateAmount(
+      priceAmount,
+      'usd',
+      payCurrency,
+    );
+    if (estimatedCryptoAmount < minimum.minimumAmount) {
+      throw new BadRequestException(
+        `The minimum deposit for ${payCurrency.toUpperCase()} is approximately USD ${minimum.minimumUsd.toFixed(2)}`,
       );
     }
 

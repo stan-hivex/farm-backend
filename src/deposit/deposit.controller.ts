@@ -180,6 +180,12 @@ export class NowpaymentsWalletController {
     return this.depositService.getNowpaymentsCurrencies();
   }
 
+  @Permissions('payments:read')
+  @Get('crypto/minimum/:currency')
+  minimum(@Param('currency') currency: string) {
+    return this.depositService.getNowpaymentsCryptoMinimum(currency);
+  }
+
   @Permissions('payments:write')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('crypto')
