@@ -16,10 +16,11 @@ import { ReceiptsService } from '../receipts/receipts.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { PUBLIC_CHECKOUT_BASE_URL } from '../qr/merchant-checkout.constants';
 import { CreateQrPaymentDto } from './create-qr-payment.dto';
+import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
 const DEFAULT_PUBLIC_PAY_SUCCESS_URL = `${PUBLIC_CHECKOUT_BASE_URL}/pay/success`;
 
-type QrProvider = 'paystack' | 'ivorypay';
+type QrProvider = 'paystack' | 'ivorypay' | 'nowpayments';
 
 @Injectable()
 export class QrPaymentsService {
@@ -34,6 +35,7 @@ export class QrPaymentsService {
     private readonly websocket: WebsocketGateway,
     private readonly notifications: NotificationsService,
     private readonly receipts: ReceiptsService,
+    private readonly nowpayments: NowpaymentsService,
   ) {}
 
   async getPublicMerchant(merchantId: string) {
@@ -78,8 +80,12 @@ export class QrPaymentsService {
   }
 
   async getPublicCryptoOptions() {
-    const options = await this.ivorypay.getSupportedPaymentOptions();
-    const tokens = [...new Set(options.map((option) => option.token))].sort();
+    const tokens = await this.nowpayments.getAvailableCurrencies();
+    const options = tokens.map((token) => ({
+      token: token.toUpperCase(),
+      network: token,
+      networkName: token.toUpperCase(),
+    }));
     return { data: { tokens, options } };
   }
 
@@ -120,8 +126,9 @@ export class QrPaymentsService {
       throw new BadRequestException('The FARM exchange rate is unavailable');
     }
 
-    const provider: QrProvider =
-      dto.method === 'crypto' ? 'ivorypay' : 'paystack';
+    const provider = (
+      dto.method === 'crypto' ? 'nowpayments' : 'paystack'
+    ) as QrProvider;
     const reference =
       provider === 'ivorypay'
         ? randomUUID()
@@ -137,21 +144,14 @@ export class QrPaymentsService {
     }
     let amountUsd: number | undefined;
     let crypto: string | undefined;
-    if (provider === 'ivorypay') {
-      const options = await this.ivorypay.getSupportedPaymentOptions();
-      const availableTokens = [
-        ...new Set(
-          options
-            .map((option) => option.token)
-            .filter((token) => token === 'USDC' || token === 'USDT'),
-        ),
-      ];
-      if (!availableTokens.length) {
+    if (provider === 'nowpayments') {
+      const availableTokens = await this.nowpayments.getAvailableCurrencies();
+      crypto = (dto.crypto || 'usdttrc20').trim().toLowerCase();
+      if (!availableTokens.includes(crypto)) {
         throw new BadRequestException(
-          'No supported stablecoin is currently enabled for IvoryPay',
+          'The selected cryptocurrency is not currently available',
         );
       }
-      crypto = availableTokens.includes('USDT') ? 'USDT' : availableTokens[0];
       const farmUsdRate = Number(rate.farm_usd_rate);
       if (!Number.isFinite(farmUsdRate) || farmUsdRate <= 0) {
         throw new BadRequestException(
@@ -220,7 +220,7 @@ export class QrPaymentsService {
     try {
       const callbackUrl = new URL(DEFAULT_PUBLIC_PAY_SUCCESS_URL);
       callbackUrl.searchParams.set('reference', reference);
-      if (provider === 'ivorypay') {
+      if (provider !== 'paystack') {
         callbackUrl.searchParams.set('farm_reference', reference);
       }
       let paymentUrl: string | undefined;
@@ -252,7 +252,7 @@ export class QrPaymentsService {
         });
         paymentUrl =
           initialized.authorization_url ?? initialized.authorizationUrl;
-      } else {
+      } else if (provider === 'ivorypay') {
         const initialized = await this.ivorypay.createPayment({
           amount: amountUsd,
           currency: 'USD',
@@ -299,6 +299,20 @@ export class QrPaymentsService {
             providerMetadata[metadataKey] = identifier.trim();
           }
         }
+      } else {
+        const initialized = await this.nowpayments.createInvoice({
+          priceAmount: amountUsd!,
+          priceCurrency: 'usd',
+          payCurrency: crypto!,
+          orderId: reference,
+          description: `QR merchant payment to ${merchant.business_name}`,
+          successUrl: callbackUrl.toString(),
+          cancelUrl: callbackUrl.toString(),
+        });
+        paymentUrl = initialized.invoice_url;
+        providerReference = initialized.invoice_id;
+        providerMetadata.provider_ref = providerReference;
+        providerMetadata.nowpayments_invoice_id = initialized.invoice_id;
       }
 
       if (!paymentUrl || !/^https:\/\//i.test(paymentUrl)) {
@@ -348,7 +362,7 @@ export class QrPaymentsService {
     const provider = metadata.provider as QrProvider | undefined;
     const canVerify =
       transaction.status === 'pending' ||
-      (provider === 'ivorypay' && transaction.status === 'failed');
+      (provider !== 'paystack' && transaction.status === 'failed');
     if (canVerify) {
       const internalReference = transaction.transaction_reference;
       if (provider === 'paystack') {
@@ -405,6 +419,22 @@ export class QrPaymentsService {
             internalReference,
             'Payment provider reported failure',
           );
+        }
+      } else if (provider === 'nowpayments') {
+        const paymentId = metadata.nowpayments_payment_id?.toString();
+        if (paymentId) {
+          const verified = await this.nowpayments.getPayment(paymentId);
+          const status = verified.payment_status?.toString().toLowerCase();
+          if (['finished', 'confirmed'].includes(status ?? '')) {
+            await this.complete(internalReference, 'nowpayments', verified);
+          } else if (
+            ['failed', 'refunded', 'expired'].includes(status ?? '')
+          ) {
+            await this.markFailed(
+              internalReference,
+              'NOWPayments reported payment failure',
+            );
+          }
         }
       }
     }
@@ -557,6 +587,30 @@ export class QrPaymentsService {
       ) {
         this.logger.warn(
           `Paystack QR verification did not match ref=${reference}`,
+        );
+        return false;
+      }
+    } else if (provider === 'nowpayments') {
+      const status = verifiedPayment.payment_status?.toString().toLowerCase();
+      const verifiedReference = verifiedPayment.order_id?.toString();
+      const verifiedCurrency = verifiedPayment.pay_currency
+        ?.toString()
+        .toLowerCase();
+      const expectedCurrency = metadata.crypto?.toString().toLowerCase();
+      const expectedUsd = Number(metadata.amount_usd);
+      const verifiedUsd = Number(verifiedPayment.price_amount);
+      if (
+        !['finished', 'confirmed'].includes(status ?? '') ||
+        verifiedReference !== reference ||
+        !expectedCurrency ||
+        verifiedCurrency !== expectedCurrency ||
+        verifiedPayment.price_currency?.toString().toLowerCase() !== 'usd' ||
+        !Number.isFinite(expectedUsd) ||
+        !Number.isFinite(verifiedUsd) ||
+        Math.abs(expectedUsd - verifiedUsd) > 0.01
+      ) {
+        this.logger.warn(
+          `NOWPayments QR verification did not match ref=${reference}`,
         );
         return false;
       }

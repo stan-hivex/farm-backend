@@ -1,4 +1,5 @@
 ﻿import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -14,6 +15,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsPositive,
 } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -91,7 +93,6 @@ export class DepositController {
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-
     return this.depositService.createDeposit(userId, dto);
   }
 
@@ -151,5 +152,56 @@ export class DepositController {
   async getOne(@Param('id') id: string, @Req() req: any) {
     const userId = req.user?.id;
     return this.depositService.getDepositById(id, userId);
+  }
+}
+
+class CreateNowpaymentsDepositDto {
+  @IsNumber()
+  @IsPositive()
+  price_amount!: number;
+
+  @IsString()
+  @IsIn(['usd', 'USD'])
+  price_currency!: string;
+
+  @IsNotEmpty()
+  @IsString()
+  pay_currency!: string;
+}
+
+@Controller({ path: 'wallet/deposit', version: '1' })
+@UseGuards(JwtAuthGuard)
+export class NowpaymentsWalletController {
+  constructor(private readonly depositService: DepositService) {}
+
+  @Permissions('payments:read')
+  @Get('crypto/currencies')
+  currencies() {
+    return this.depositService.getNowpaymentsCurrencies();
+  }
+
+  @Permissions('payments:write')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('crypto')
+  createCrypto(@Req() req: any, @Body() dto: CreateNowpaymentsDepositDto) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID not found in request');
+    }
+    return this.depositService.createNowpaymentsCryptoDeposit(userId, dto);
+  }
+
+  @Permissions('payments:read')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('status/:paymentId')
+  status(@Req() req: any, @Param('paymentId') paymentId: string) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID not found in request');
+    }
+    return this.depositService.getNowpaymentsCryptoDepositStatus(
+      userId,
+      paymentId,
+    );
   }
 }

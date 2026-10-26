@@ -6,6 +6,7 @@ import { PaystackModule } from '../paystack/paystack.module';
 import { PrismaModule } from '../database/prisma.module';
 import { WebsocketModule } from '../websocket/websocket.module';
 import { ReceiptsModule } from '../receipts/receipts.module';
+import { NowpaymentsModule } from '../nowpayments/nowpayments.module';
 import { QrPaymentsController } from './qr-payments.controller';
 import { QrPaymentsService } from './qr-payments.service';
 
@@ -18,6 +19,7 @@ import { QrPaymentsService } from './qr-payments.service';
     NotificationsModule,
     WebsocketModule,
     ReceiptsModule,
+    NowpaymentsModule,
   ],
   controllers: [QrPaymentsController],
   providers: [QrPaymentsService],

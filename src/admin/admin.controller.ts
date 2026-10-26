@@ -31,6 +31,13 @@ class CurrencyRateDto {
   @IsNumber() usd_kes_rate!: number;
 }
 
+class NowpaymentsPayoutVerificationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  verification_code!: string;
+}
+
 class RejectWithdrawalDto {
   @IsOptional()
   @IsString()
@@ -157,6 +164,39 @@ export class AdminController {
   @Post('merchants/:id/decision') decision(@Param('id') id: string, @CurrentUser() u: any, @Body() dto: MerchantDecisionDto) { return this.svc.approveMerchant(id, u.id, dto); }
   @Permissions('admin:read')
   @Get('payouts')                 payouts(@Query() q: any) { return this.svc.listPayouts(q); }
+  @Permissions('admin:read')
+  @Get('crypto-withdrawals/pending')
+  async pendingNowpaymentsCryptoWithdrawals() {
+    return {
+      data: await this.withdrawService.getPendingNowpaymentsCryptoWithdrawals(),
+    };
+  }
+  @Permissions('admin:write')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Post('crypto-withdrawals/:reference/approve')
+  approveNowpaymentsCryptoWithdrawal(
+    @Param('reference') reference: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.withdrawService.approveNowpaymentsCryptoWithdrawal(
+      reference,
+      user.id,
+    );
+  }
+  @Permissions('admin:write')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Post('crypto-withdrawals/:reference/verify')
+  verifyNowpaymentsCryptoWithdrawal(
+    @Param('reference') reference: string,
+    @Body() dto: NowpaymentsPayoutVerificationDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.withdrawService.verifyNowpaymentsCryptoWithdrawal(
+      reference,
+      dto.verification_code,
+      user.id,
+    );
+  }
   @Permissions('admin:read')
   @Get('fees')                    fees() { return this.svc.getFees(); }
   @Permissions('admin:write')

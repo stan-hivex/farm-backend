@@ -92,7 +92,7 @@ export class PaymentsController {
   @ApiBearerAuth('JWT')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary: 'Get crypto tokens and networks enabled for IvoryPay checkout',
+    summary: 'Get crypto currencies enabled for NOWPayments checkout',
   })
   cryptoOptions() {
     return this.svc.getCryptoPaymentOptions();

@@ -22,6 +22,9 @@ export class WebhookSignatureGuard implements CanActivate {
     if (req.path.includes('ivorypay')) {
       return this.verifyIvorypay(req);
     }
+    if (req.path.includes('nowpayments')) {
+      return this.verifyNowpayments(req);
+    }
 
     this.logger.warn(`Unknown webhook path: ${req.path}`);
     throw new UnauthorizedException('Unknown webhook provider');
@@ -110,6 +113,51 @@ export class WebhookSignatureGuard implements CanActivate {
       throw new UnauthorizedException('Ivorypay signature verification failed');
     }
 
+    return true;
+  }
+
+  private verifyNowpayments(req: Request): boolean {
+    const secret = this.cfg.get<string>('NOWPAYMENTS_IPN_SECRET');
+    if (!secret) {
+      this.logger.error(
+        'NOWPAYMENTS_IPN_SECRET not set — rejecting webhook',
+      );
+      throw new UnauthorizedException('Webhook secret not configured');
+    }
+    const signature = req.headers['x-nowpayments-sig'];
+    if (typeof signature !== 'string' || !signature.trim()) {
+      throw new UnauthorizedException('Missing NOWPayments signature');
+    }
+    if (!req.body || typeof req.body !== 'object') {
+      throw new UnauthorizedException('Invalid NOWPayments webhook payload');
+    }
+
+    const sortObject = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(sortObject);
+      if (!value || typeof value !== 'object') return value;
+      return Object.keys(value as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((sorted, key) => {
+          sorted[key] = sortObject(
+            (value as Record<string, unknown>)[key],
+          );
+          return sorted;
+        }, {});
+    };
+    const canonicalPayload = JSON.stringify(sortObject(req.body));
+    const expected = createHmac('sha512', secret)
+      .update(canonicalPayload)
+      .digest('hex');
+    const normalizedSignature = signature.trim().toLowerCase();
+    if (
+      !/^[0-9a-f]{128}$/.test(normalizedSignature) ||
+      !timingSafeEqual(
+        Buffer.from(normalizedSignature, 'hex'),
+        Buffer.from(expected, 'hex'),
+      )
+    ) {
+      throw new UnauthorizedException('NOWPayments signature mismatch');
+    }
     return true;
   }
 }

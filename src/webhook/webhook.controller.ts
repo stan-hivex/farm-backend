@@ -41,6 +41,20 @@ async paystack(@Body() body: any) {
     return { received: true };
   }
 
+  @UseGuards(WebhookSignatureGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('nowpayments')
+  async nowpayments(@Body() body: any) {
+    return this.webhookService.handleNowpaymentsWebhook(body);
+  }
+
+  @UseGuards(WebhookSignatureGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('nowpayments-payout')
+  async nowpaymentsPayout(@Body() body: any) {
+    return this.webhookService.handleNowpaymentsPayoutWebhook(body);
+  }
+
   @Get('ivorypay')
   async ivorypayHealth() {
     return { status: 'ok', provider: 'ivorypay' };
@@ -75,6 +89,20 @@ export class WebhookNoVersionController {
   async ivorypay(@Body() body: any) {
     await this.webhookService.handleIvorypayWebhook(body, true);
     return { received: true };
+  }
+
+  @UseGuards(WebhookSignatureGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('nowpayments')
+  async nowpayments(@Body() body: any) {
+    return this.webhookService.handleNowpaymentsWebhook(body);
+  }
+
+  @UseGuards(WebhookSignatureGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('nowpayments-payout')
+  async nowpaymentsPayout(@Body() body: any) {
+    return this.webhookService.handleNowpaymentsPayoutWebhook(body);
   }
 
   @Get('ivorypay')

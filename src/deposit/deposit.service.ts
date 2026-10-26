@@ -8,6 +8,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { CacheService } from '../common/cache/cache.service';
 import { assertResourceAccess } from '../common/utils/access-control.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CurrencyConversionService } from '../currency/currency-conversion.service';
+import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
 @Injectable()
 export class DepositService {
@@ -20,7 +22,268 @@ export class DepositService {
     private websocket: WebsocketGateway,
     private cache: CacheService,
     private notificationsService: NotificationsService,
+    private readonly currencyConversion: CurrencyConversionService,
+    private readonly nowpayments: NowpaymentsService,
   ) {}
+
+  async getNowpaymentsCurrencies() {
+    const currencies = await this.nowpayments.getAvailableCurrencies();
+    return { data: currencies };
+  }
+
+  async createNowpaymentsCryptoDeposit(
+    userId: string,
+    dto: {
+      price_amount: number;
+      price_currency: string;
+      pay_currency: string;
+    },
+  ) {
+    const priceAmount = Number(dto.price_amount);
+    const priceCurrency = dto.price_currency?.trim().toLowerCase();
+    const payCurrency = dto.pay_currency?.trim().toLowerCase();
+    if (
+      !Number.isFinite(priceAmount) ||
+      priceAmount < 10 ||
+      priceCurrency !== 'usd'
+    ) {
+      throw new BadRequestException(
+        'Crypto deposits must be at least 10 USD and use USD pricing',
+      );
+    }
+    if (!/^[a-z0-9]{2,20}$/.test(payCurrency ?? '')) {
+      throw new BadRequestException('Choose a valid NOWPayments currency');
+    }
+    const currencies = await this.nowpayments.getAvailableCurrencies();
+    if (!currencies.includes(payCurrency)) {
+      throw new BadRequestException(
+        'The selected cryptocurrency is not currently available',
+      );
+    }
+
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId, is_active: true },
+    });
+    if (!wallet) {
+      throw new BadRequestException('Active wallet not found');
+    }
+    const amountFarm = await this.currencyConversion.usdToFarm(priceAmount);
+    if (!Number.isFinite(amountFarm) || amountFarm <= 0) {
+      throw new BadRequestException('The USD/FARM exchange rate is unavailable');
+    }
+
+    const reference = uuidv4();
+    const rate = await this.currencyConversion.getCurrentRate();
+    const deposit = await this.prisma.$transaction(async (tx) => {
+      const createdDeposit = await tx.deposit.create({
+        data: {
+          userId,
+          amount: amountFarm,
+          fee: 0,
+          total: amountFarm,
+          currency: 'FARM',
+          paymentMethod: 'CRYPTO',
+          provider: 'nowpayments',
+          reference,
+          status: 'PENDING',
+        },
+      });
+      await tx.transactions.create({
+        data: {
+          transaction_reference: reference,
+          receiver_wallet_id: wallet.id,
+          transaction_type: 'deposit',
+          status: 'pending',
+          amount: amountFarm,
+          fee: 0,
+          net_amount: amountFarm,
+          currency: 'FARM',
+          description: `Pending NOWPayments crypto deposit (${priceAmount.toFixed(2)} USD)`,
+          metadata: {
+            provider: 'nowpayments',
+            payment_method: 'CRYPTO',
+            user_id: userId,
+            order_id: reference,
+            amount_farm: amountFarm,
+            amount_usd: priceAmount,
+            currency_fiat: 'USD',
+            pay_currency: payCurrency,
+            farm_usd_rate: rate.farm_usd_rate,
+          },
+        },
+      });
+      return createdDeposit;
+    });
+
+    try {
+      const payment = await this.nowpayments.createPayment({
+        priceAmount,
+        priceCurrency,
+        payCurrency,
+        orderId: reference,
+        description: `FARM crypto deposit ${reference}`,
+      });
+      await this.prisma.$transaction([
+        this.prisma.deposit.update({
+          where: { id: deposit.id },
+          data: { providerRef: payment.payment_id },
+        }),
+        this.prisma.transactions.update({
+          where: { transaction_reference: reference },
+          data: {
+            metadata: {
+              provider: 'nowpayments',
+              payment_method: 'CRYPTO',
+              user_id: userId,
+              order_id: reference,
+              nowpayments_payment_id: payment.payment_id,
+              nowpayments_payment_status:
+                payment.payment_status?.toString() ?? 'waiting',
+              nowpayments_address: payment.pay_address,
+              nowpayments_amount: payment.pay_amount,
+              nowpayments_currency: payment.pay_currency,
+              amount_farm: amountFarm,
+              amount_usd: priceAmount,
+              currency_fiat: priceCurrency,
+              pay_currency: payCurrency,
+              farm_usd_rate: rate.farm_usd_rate,
+            },
+          },
+        }),
+      ]);
+
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'deposit_initiated',
+          entity_type: 'transaction',
+          new_values: {
+            reference,
+            provider: 'nowpayments',
+            amount_usd: priceAmount,
+            amount_farm: amountFarm,
+            pay_currency: payment.pay_currency,
+          },
+        },
+      });
+
+      return {
+        data: {
+          ...payment,
+          reference,
+          order_id: reference,
+          amount_farm: amountFarm,
+          status: 'waiting',
+        },
+        message: 'Crypto deposit initiated via NOWPayments',
+      };
+    } catch (error) {
+      await this.prisma.$transaction([
+        this.prisma.deposit.update({
+          where: { id: deposit.id },
+          data: { status: 'FAILED' },
+        }),
+        this.prisma.transactions.update({
+          where: { transaction_reference: reference },
+          data: {
+            status: 'failed',
+            metadata: {
+              provider: 'nowpayments',
+              payment_method: 'CRYPTO',
+              user_id: userId,
+              order_id: reference,
+              amount_farm: amountFarm,
+              amount_usd: priceAmount,
+              pay_currency: payCurrency,
+              nowpayments_initialization_error:
+                error instanceof Error ? error.message : 'Provider error',
+            },
+          },
+        }),
+      ]);
+      throw error;
+    }
+  }
+
+  async getNowpaymentsCryptoDepositStatus(userId: string, paymentId: string) {
+    if (!/^\d+$/.test(paymentId)) {
+      throw new BadRequestException('Invalid NOWPayments payment ID');
+    }
+    const transaction = await this.prisma.transactions.findFirst({
+      where: {
+        metadata: { path: ['nowpayments_payment_id'], equals: paymentId },
+        transaction_type: 'deposit',
+      },
+    });
+    const metadata =
+      (transaction?.metadata as Record<string, unknown> | null) ?? {};
+    if (
+      !transaction ||
+      metadata.provider !== 'nowpayments' ||
+      metadata.user_id !== userId
+    ) {
+      throw new BadRequestException('Crypto deposit was not found');
+    }
+
+    const payment = await this.nowpayments.getPayment(paymentId);
+    const orderId = payment.order_id?.toString();
+    const paymentStatus = payment.payment_status?.toString().toLowerCase();
+    const expectedAmount = Number(metadata.amount_usd);
+    const verifiedAmount = Number(payment.price_amount);
+    if (
+      orderId !== transaction.transaction_reference ||
+      payment.pay_currency?.toString().toLowerCase() !==
+        String(metadata.pay_currency).toLowerCase() ||
+      payment.price_currency?.toString().toLowerCase() !== 'usd' ||
+      !Number.isFinite(expectedAmount) ||
+      !Number.isFinite(verifiedAmount) ||
+      Math.abs(expectedAmount - verifiedAmount) > 0.01
+    ) {
+      throw new BadRequestException(
+        'NOWPayments status did not match the pending deposit',
+      );
+    }
+
+    await this.prisma.transactions.update({
+      where: { id: transaction.id },
+      data: {
+        metadata: {
+          ...metadata,
+          nowpayments_payment_status: paymentStatus ?? 'unknown',
+          nowpayments_last_checked_at: new Date().toISOString(),
+        },
+      },
+    });
+
+    let credited = false;
+    if (['finished', 'confirmed'].includes(paymentStatus ?? '')) {
+      credited = await this.finalizeSuccessfulDeposit(
+        transaction.transaction_reference,
+      );
+    } else if (
+      ['failed', 'refunded', 'expired'].includes(paymentStatus ?? '')
+    ) {
+      await this.prisma.$transaction([
+        this.prisma.deposit.updateMany({
+          where: { reference: transaction.transaction_reference, status: 'PENDING' },
+          data: { status: 'FAILED' },
+        }),
+        this.prisma.transactions.updateMany({
+          where: { id: transaction.id, status: { in: ['pending', 'processing'] } },
+          data: { status: 'failed', processed_at: new Date() },
+        }),
+      ]);
+    }
+
+    return {
+      data: {
+        payment_id: paymentId,
+        reference: transaction.transaction_reference,
+        status: paymentStatus ?? 'unknown',
+        credited,
+      },
+    };
+  }
 
   async createDeposit(userId: string, dto: any) {
     const paymentMethod = (
@@ -34,10 +297,10 @@ export class DepositService {
 
     if (paymentMethod === 'CRYPTO') {
       this.logger.log(
-        `DepositService: delegating crypto deposit to dedicated IvoryPay flow for user=${userId}`,
+        `DepositService: crypto deposit requested through the standard deposit endpoint for user=${userId}`,
       );
       throw new BadRequestException(
-        'Crypto deposits must use the dedicated /api/v1/crypto/deposit endpoint',
+        'Crypto deposits must use the NOWPayments endpoint /api/v1/wallet/deposit/crypto',
       );
     }
 
@@ -407,8 +670,45 @@ export class DepositService {
           );
           return false;
         }
+      } else if (provider === 'nowpayments') {
+        const paymentId = String(metadata.nowpayments_payment_id ?? '');
+        try {
+          const verified = await this.nowpayments.getPayment(paymentId);
+          const expectedUsd = Number(metadata.amount_usd);
+          const actualUsd = Number(verified.price_amount);
+          if (
+            !['finished', 'confirmed'].includes(
+              verified.payment_status?.toString().toLowerCase() ?? '',
+            ) ||
+            verified.order_id?.toString() !== reference ||
+            verified.price_currency?.toString().toLowerCase() !== 'usd' ||
+            verified.pay_currency?.toString().toLowerCase() !==
+              String(metadata.pay_currency ?? metadata.crypto ?? '').toLowerCase() ||
+            !Number.isFinite(expectedUsd) ||
+            !Number.isFinite(actualUsd) ||
+            Math.abs(expectedUsd - actualUsd) > 0.01
+          ) {
+            this.logger.warn(
+              `NOWPayments verification did not match successful deposit ref=${reference}`,
+            );
+            return false;
+          }
+        } catch (error) {
+          this.logger.warn(
+            `NOWPayments verification failed for ${reference}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return false;
+        }
       }
     } catch (e) {
+      if (transactionMetadata.provider === 'nowpayments') {
+        this.logger.error(
+          `NOWPayments verification could not be completed for ${reference}`,
+        );
+        return false;
+      }
       this.logger.debug(
         'finalizeSuccessfulDeposit: provider verification skipped due to error',
         e as any,
@@ -418,8 +718,9 @@ export class DepositService {
     if (!deposit && transaction?.amount) {
       const metadata = transaction.metadata as any;
       const userId = metadata?.user_id;
+      const metadataProvider = metadata?.provider?.toString()?.toLowerCase();
       const paymentMethod =
-        metadata?.provider?.toString()?.toLowerCase() === 'ivorypay'
+        ['ivorypay', 'nowpayments'].includes(metadataProvider)
           ? 'CRYPTO'
           : 'CARD';
       if (!userId) {
@@ -438,10 +739,9 @@ export class DepositService {
             total: Number(transaction.amount),
             currency: transaction.currency || 'FARM',
             paymentMethod,
-            provider:
-              metadata?.provider?.toString()?.toLowerCase() === 'ivorypay'
-                ? 'ivorypay'
-                : 'paystack',
+            provider: ['ivorypay', 'nowpayments'].includes(metadataProvider)
+              ? metadataProvider
+              : 'paystack',
             status: 'PENDING',
             userId,
           },

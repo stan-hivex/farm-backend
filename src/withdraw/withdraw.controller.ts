@@ -94,6 +94,27 @@ export class WithdrawController {
 
   @Permissions('withdraw:read')
   @UseGuards(JwtAuthGuard)
+  @Get('crypto/currencies')
+  async getNowpaymentsCryptoCurrencies() {
+    return this.withdrawService.getNowpaymentsCryptoCurrencies();
+  }
+
+  @Permissions('withdraw:write')
+  @UseGuards(JwtAuthGuard, KycGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('crypto')
+  async createNowpaymentsCrypto(
+    @Req() req: any,
+    @Body() dto: CreateWithdrawDto,
+  ) {
+    return this.withdrawService.createNowpaymentsCryptoWithdrawal(
+      req.user.id,
+      dto,
+    );
+  }
+
+  @Permissions('withdraw:read')
+  @UseGuards(JwtAuthGuard)
   @Get('crypto/networks')
   async getCryptoNetworks(@Req() req, @Query('token') token: string) {
     return this.withdrawService.getProviderNetworks(token);

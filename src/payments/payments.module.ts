@@ -11,6 +11,7 @@ import { KycGuard } from '../common/guards/kyc.guard';
 import { AuthModule } from '../auth/auth.module';
 import { CurrencyModule } from '../currency/currency.module';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
+import { NowpaymentsModule } from '../nowpayments/nowpayments.module';
 
 @Module({
 	imports: [
@@ -21,6 +22,7 @@ import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard'
 		forwardRef(() => PaystackModule),
 		forwardRef(() => WithdrawModule),
 		CurrencyModule,
+		NowpaymentsModule,
 	],
 	controllers: [PaymentsController, PaymentsWebhookController],
 	providers: [PaymentsService, KycGuard, WebhookSignatureGuard],

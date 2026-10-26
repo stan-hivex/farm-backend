@@ -16,6 +16,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { HIDDEN_TRANSACTION_HISTORY_STATUSES } from '../common/utils/hidden-transaction-history-statuses';
+import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
 @Injectable()
 export class PaymentsService {
@@ -28,6 +29,7 @@ export class PaymentsService {
     private paystack: PaystackService,
     private cache: CacheService,
     private currencyConversionService: CurrencyConversionService,
+    private readonly nowpayments: NowpaymentsService,
   ) {}
 
   async initiateDeposit(
@@ -235,14 +237,17 @@ export class PaymentsService {
       const email = dto.email?.trim() || user.email?.trim();
       if (!email) {
         throw new BadRequestException(
-          'An email address is required for IvoryPay crypto deposits',
+          'An email address is required for crypto merchant checkout',
         );
       }
-      const crypto = (dto.crypto || 'USDT').trim().toUpperCase();
-      this.ivorypay.getProviderNetworks(crypto);
+      const crypto = (dto.crypto || 'usdttrc20').trim().toLowerCase();
+      const currencies = await this.nowpayments.getAvailableCurrencies();
+      if (!currencies.includes(crypto)) {
+        throw new BadRequestException(
+          'The selected cryptocurrency is not currently available',
+        );
+      }
 
-      // Convert FARM -> USD using the active superadmin-managed currency rate.
-      const farmAmount = amount_farm; // amount in FARM
       const currentRate = await this.currencyConversionService.getCurrentRate();
       const farmToUsdRate = Number(currentRate.farm_usd_rate);
       if (!Number.isFinite(farmToUsdRate) || farmToUsdRate <= 0) {
@@ -250,7 +255,7 @@ export class PaymentsService {
           'The FARM/USD conversion rate is unavailable',
         );
       }
-      const amountUsd = Number((farmAmount * farmToUsdRate).toFixed(2));
+      const amountUsd = Number((amount_farm * farmToUsdRate).toFixed(2));
       if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
         throw new BadRequestException(
           'The deposit amount is too small to convert to a positive USD amount',
@@ -258,41 +263,16 @@ export class PaymentsService {
       }
       const usdToFarmRate = Number((1 / farmToUsdRate).toFixed(8));
 
-      const payment = await this.ivorypay.createPayment({
-        amount: amountUsd,
-        currency: 'USD',
-        reference,
-        email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        description: `Farm deposit - ${farmAmount.toFixed(4)} FARM → ${amountUsd.toFixed(2)} USD`,
-        crypto,
-        chain: dto.chain,
-        baseFiat: 'USD',
-        redirect_url: callbackUrl || 'https://farmapp.africa/payment-callback',
-        metadata: {
-          provider: 'ivorypay',
-          amount_farm: farmAmount,
-          amount_usd: amountUsd,
-          amount_fiat: amountUsd,
-          farm_to_usd_rate: farmToUsdRate,
-          usd_to_farm_rate: usdToFarmRate,
-          currency_fiat: 'USD',
-          exchange_rate: rate,
-          user_id: userId,
-          device_risk: ctx?.deviceRisk ?? null,
-          ip: ctx?.ip ?? null,
-          payment_method: 'CRYPTO',
-          crypto,
-          chain: dto.chain ?? null,
-        },
+      const payment = await this.nowpayments.createInvoice({
+        priceAmount: amountUsd,
+        priceCurrency: 'usd',
+        payCurrency: crypto,
+        orderId: reference,
+        description: `FARM merchant crypto payment ${reference}`,
+        successUrl: callbackUrl,
+        cancelUrl: callbackUrl,
       });
-
-      const providerRef =
-        (payment as any).providerReference ??
-        (payment as any).data?.id ??
-        (payment as any).data?.reference ??
-        reference;
+      const providerRef = payment.invoice_id;
 
       const tx = await this.prisma.transactions.create({
         data: {
@@ -304,11 +284,14 @@ export class PaymentsService {
           fee: 0,
           net_amount: amount_farm,
           currency: 'FARM',
-          description: `Pending crypto deposit via Ivorypay (${farmAmount} FARM → ${amountUsd} USD)`,
+          description: `Pending crypto merchant checkout via NOWPayments (${amount_farm} FARM -> ${amountUsd} USD)`,
           metadata: {
-            provider: 'ivorypay',
+            provider: 'nowpayments',
             provider_ref: providerRef,
-            amount_farm: farmAmount,
+            nowpayments_invoice_id: providerRef,
+            order_id: reference,
+            pay_currency: crypto,
+            amount_farm,
             amount_usd: amountUsd,
             amount_fiat: amountUsd,
             farm_to_usd_rate: farmToUsdRate,
@@ -326,7 +309,7 @@ export class PaymentsService {
       });
 
       this.logger.log(
-        `initiateDeposit: created Ivorypay crypto transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`,
+        `initiateDeposit: created NOWPayments crypto invoice transaction id=${tx.id} reference=${reference} amount_farm=${amount_farm}`,
       );
 
       await this.prisma.audit_logs.create({
@@ -335,7 +318,12 @@ export class PaymentsService {
           action: 'deposit_initiated',
           entity_type: 'transaction',
           entity_id: tx.id,
-          new_values: { reference, amount_fiat: dto.amount_fiat, amount_farm },
+          new_values: {
+            reference,
+            provider: 'nowpayments',
+            amount_fiat: dto.amount_fiat,
+            amount_farm,
+          },
         },
       });
 
@@ -347,7 +335,7 @@ export class PaymentsService {
           total: amount_farm,
           currency: 'FARM',
           paymentMethod: 'CRYPTO',
-          provider: 'ivorypay',
+          provider: 'nowpayments',
           reference,
           providerRef,
           status: 'PENDING',
@@ -356,13 +344,14 @@ export class PaymentsService {
 
       return {
         data: {
-          provider: 'IVORYPAY',
+          provider: 'NOWPAYMENTS',
           reference,
-          payment_link: (payment as any).checkout_url,
-          checkout_url: (payment as any).checkout_url,
-          checkoutUrl: (payment as any).checkout_url,
+          invoice_id: providerRef,
+          payment_link: payment.invoice_url,
+          checkout_url: payment.invoice_url,
+          checkoutUrl: payment.invoice_url,
         },
-        message: 'Crypto deposit initiated via Ivorypay',
+        message: 'Crypto merchant checkout initiated via NOWPayments',
       };
     }
 
@@ -542,8 +531,13 @@ export class PaymentsService {
   }
 
   async getCryptoPaymentOptions() {
-    const options = await this.ivorypay.getSupportedPaymentOptions();
-    const tokens = [...new Set(options.map((option) => option.token))].sort();
+    const currencies = await this.nowpayments.getAvailableCurrencies();
+    const tokens = currencies.map((currency) => currency.toUpperCase());
+    const options = tokens.map((token) => ({
+      token,
+      network: token,
+      networkName: token,
+    }));
     return { success: true, data: { tokens, options } };
   }
 

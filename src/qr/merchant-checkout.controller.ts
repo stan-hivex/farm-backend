@@ -18,6 +18,7 @@ import {
   IsPositive,
   IsString,
   Length,
+  MaxLength,
 } from 'class-validator';
 import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../database/prisma.service';
@@ -48,11 +49,13 @@ class MerchantCheckoutPaymentDto {
   email!: string;
 
   @IsOptional()
-  @IsIn(['USDC', 'USDT'])
+  @IsString()
+  @MaxLength(20)
   crypto?: string;
 
   @IsOptional()
-  @IsIn(['BSC', 'POLYGON', 'SOL', 'BASE', 'STARKNET', 'ALGORAND'])
+  @IsString()
+  @MaxLength(128)
   chain?: string;
 }
 
@@ -82,6 +85,8 @@ export class MerchantCheckoutController {
         'This QR code is not a merchant payment QR',
       );
     }
+    const cryptoOptions = await this.paymentsService.getCryptoPaymentOptions();
+    const cryptoTokens = cryptoOptions.data.tokens;
 
     return {
       data: {
@@ -89,15 +94,8 @@ export class MerchantCheckoutController {
         business_name: validation.business_name,
         currency: 'KES',
         fiat_methods: ['CARD', 'MOBILE_MONEY', 'BANK_TRANSFER'],
-        crypto_tokens: ['USDC', 'USDT'],
-        crypto_networks: [
-          'BSC',
-          'POLYGON',
-          'SOL',
-          'BASE',
-          'STARKNET',
-          'ALGORAND',
-        ],
+        crypto_tokens: cryptoTokens,
+        crypto_networks: cryptoTokens,
       },
     };
   }

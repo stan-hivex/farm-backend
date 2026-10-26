@@ -1,5 +1,10 @@
 // src/withdraw/withdraw.service.ts
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadGatewayException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -15,6 +20,7 @@ import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { PaystackTransferInitiationError } from '../paystack/paystack.service';
 import { Cron } from '@nestjs/schedule';
 import { IvorypayPayoutOutcomeUnknownError } from '../ivorypay/ivorypay.service';
+import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
 @Injectable()
 export class WithdrawService {
@@ -32,9 +38,15 @@ export class WithdrawService {
     private notificationsService: NotificationsService,
     private readonly currencyConversionService: CurrencyConversionService,
     private readonly websocket: WebsocketGateway,
+    private readonly nowpayments: NowpaymentsService,
   ) {}
 
   async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
+    const requestedMethod: string = dto.method;
+    if (requestedMethod === 'CRYPTO') {
+      return this.createNowpaymentsCryptoWithdrawal(userId, dto);
+    }
+
     // Support biometric-based authorization: verify device fingerprint server-side
     if (dto.biometric_auth) {
       const deviceFingerprint =
@@ -324,6 +336,473 @@ export class WithdrawService {
     return { success: true, reference, withdrawal };
   }
 
+  async getNowpaymentsCryptoCurrencies() {
+    const currencies = await this.nowpayments.getAvailableCurrencies();
+    return { data: currencies };
+  }
+
+  async createNowpaymentsCryptoWithdrawal(
+    userId: string,
+    dto: CreateWithdrawDto,
+  ) {
+    if (dto.biometric_auth) {
+      const fingerprint = dto.device_fingerprint;
+      if (!fingerprint) {
+        throw new BadRequestException(
+          'Device fingerprint required for biometric authorization',
+        );
+      }
+      const verified = await this.securityService.verifyDevice(
+        userId,
+        fingerprint,
+      );
+      if (!verified || (verified as any).trusted !== true) {
+        throw new BadRequestException('Biometric device verification failed');
+      }
+    } else {
+      if (!dto.pin) {
+        throw new BadRequestException('Transaction PIN is required');
+      }
+      await this.authService.verifyPin(userId, dto.pin);
+    }
+
+    const amount = Number(dto.amount);
+    const address = (
+      dto.cryptoAddress ??
+      dto.walletAddress ??
+      dto.walletaddress ??
+      dto.wallet_address ??
+      ''
+    ).trim();
+    const currency = (dto.cryptoAsset ?? dto.token ?? '').trim().toLowerCase();
+    if (!Number.isFinite(amount) || amount < 100) {
+      throw new BadRequestException(
+        'Minimum crypto withdrawal is 100 FARM',
+      );
+    }
+    if (dto.method !== 'CRYPTO' || !address || !/^[a-z0-9]{2,20}$/.test(currency)) {
+      throw new BadRequestException(
+        'A valid crypto currency and destination address are required',
+      );
+    }
+    const supportedCurrencies = await this.nowpayments.getAvailableCurrencies();
+    if (!supportedCurrencies.includes(currency)) {
+      throw new BadRequestException(
+        'The selected cryptocurrency is not currently available',
+      );
+    }
+
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId, is_active: true },
+    });
+    if (!wallet) {
+      throw new BadRequestException('Active wallet not found');
+    }
+    const availableBalance =
+      Number(wallet.balance ?? 0) - Number(wallet.locked_balance ?? 0);
+    if (availableBalance < amount) {
+      throw new BadRequestException('Insufficient balance for this withdrawal');
+    }
+
+    const fee = Number((amount * 0.015).toFixed(8));
+    const settlement = Number((amount - fee).toFixed(8));
+    const rate = await this.currencyConversionService.getCurrentRate();
+    const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
+    const settlementUsd = Number((settlement * farmUsdRate).toFixed(2));
+    if (!Number.isFinite(settlementUsd) || settlementUsd < 10) {
+      throw new BadRequestException(
+        'The crypto payout must be at least 10 USD after the withdrawal fee',
+      );
+    }
+
+    const payoutAmount = await this.nowpayments.estimateAmount(
+      settlementUsd,
+      'usd',
+      currency,
+    );
+    const minimumPayout = await this.nowpayments.getPayoutMinimum(currency);
+    if (payoutAmount < minimumPayout) {
+      throw new BadRequestException(
+        `NOWPayments minimum payout is ${minimumPayout} ${currency.toUpperCase()}`,
+      );
+    }
+    const networkFee = await this.nowpayments.estimatePayoutFee(
+      currency,
+      payoutAmount,
+    );
+
+    const reference = uuidv4();
+    const withdrawal = await this.prisma.$transaction(async (tx) => {
+      const lock = await tx.wallets.updateMany({
+        where: {
+          id: wallet.id,
+          balance: { gte: amount },
+          locked_balance: {
+            lte: Number(wallet.balance ?? 0) - amount,
+          },
+        },
+        data: { locked_balance: { increment: amount } },
+      });
+      if (lock.count !== 1) {
+        throw new BadRequestException(
+          'Wallet balance changed; refresh and try again',
+        );
+      }
+      const created = await tx.withdrawal.create({
+        data: {
+          userId,
+          amount,
+          fee,
+          settlement,
+          total: amount,
+          currency: 'FARM',
+          method: 'CRYPTO',
+          cryptoAddress: address,
+          cryptoAsset: currency.toUpperCase(),
+          network: dto.network?.trim() || currency.toUpperCase(),
+          reference,
+          status: 'PENDING',
+        },
+      });
+      await tx.transactions.create({
+        data: {
+          transaction_reference: reference,
+          sender_wallet_id: wallet.id,
+          transaction_type: 'withdrawal',
+          status: 'pending',
+          amount,
+          fee,
+          net_amount: settlement,
+          currency: 'FARM',
+          description: 'Pending NOWPayments crypto withdrawal approval',
+          metadata: {
+            provider: 'nowpayments',
+            method: 'CRYPTO',
+            user_id: userId,
+            reference,
+            nowpayments_currency: currency,
+            nowpayments_address: address,
+            nowpayments_payout_amount: payoutAmount,
+            nowpayments_network_fee_estimate: networkFee,
+            nowpayments_payout_status: 'awaiting_admin_approval',
+            payout_approval_status: 'pending',
+            amount_farm: amount,
+            fee_farm: fee,
+            settlement_farm: settlement,
+            amount_usd: settlementUsd,
+            farm_usd_rate: farmUsdRate,
+            conversion_timestamp: new Date().toISOString(),
+          },
+        },
+      });
+      return created;
+    });
+
+    await Promise.all([
+      this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`),
+      this.cache.cacheInvalidatePattern(`dashboard:${userId}`),
+      this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
+    ]);
+    this.websocket.emitBalanceUpdate(userId, availableBalance - amount);
+    return {
+      success: true,
+      reference,
+      status: 'PENDING_ADMIN_APPROVAL',
+      withdrawal,
+      estimated_crypto_amount: payoutAmount,
+      estimated_network_fee: networkFee,
+      currency: currency.toUpperCase(),
+      message: 'Withdrawal submitted for administrator approval',
+    };
+  }
+
+  async getPendingNowpaymentsCryptoWithdrawals() {
+    const transactions = await this.prisma.transactions.findMany({
+      where: {
+        transaction_type: 'withdrawal',
+        status: { in: ['pending', 'processing'] },
+      },
+      select: {
+        transaction_reference: true,
+        amount: true,
+        metadata: true,
+        status: true,
+        created_at: true,
+      },
+      orderBy: { created_at: 'asc' },
+      take: 100,
+    });
+    const pending = transactions.filter((transaction) => {
+      const metadata =
+        (transaction.metadata as Record<string, unknown> | null) ?? {};
+      const payoutStatus = String(
+        metadata.nowpayments_payout_status ?? '',
+      ).toLowerCase();
+      return (
+        metadata.provider === 'nowpayments' &&
+        ['pending', 'processing'].includes(
+          String(transaction.status).toLowerCase(),
+        ) &&
+        ['pending', 'approved'].includes(
+          String(metadata.payout_approval_status),
+        ) &&
+        (!metadata.nowpayments_payout_id ||
+          ['creating', 'unknown'].includes(payoutStatus) ||
+          metadata.payout_approval_status === 'pending')
+      );
+    });
+    return Promise.all(
+      pending.map(async (transaction) => ({
+        ...transaction,
+        withdrawal: await this.prisma.withdrawal.findUnique({
+          where: { reference: transaction.transaction_reference },
+        }),
+      })),
+    );
+  }
+
+  async approveNowpaymentsCryptoWithdrawal(reference: string, adminId: string) {
+    const withdrawal = await this.prisma.withdrawal.findUnique({
+      where: { reference },
+    });
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
+    const metadata =
+      (transaction?.metadata as Record<string, any> | null) ?? {};
+    if (
+      !withdrawal ||
+      !transaction ||
+      metadata.provider !== 'nowpayments' ||
+      withdrawal.method !== 'CRYPTO'
+    ) {
+      throw new BadRequestException('NOWPayments withdrawal was not found');
+    }
+    if (metadata.nowpayments_payout_id) {
+      return {
+        success: true,
+        payout_id: metadata.nowpayments_payout_id,
+        status: metadata.nowpayments_payout_status,
+        requires_provider_verification:
+          metadata.nowpayments_payout_status === 'creating',
+      };
+    }
+    const retryUnknownPayout =
+      withdrawal.status === 'PROCESSING' &&
+      metadata.payout_approval_status === 'approved' &&
+      ['creating', 'unknown'].includes(
+        String(metadata.nowpayments_payout_status ?? '').toLowerCase(),
+      );
+    if (
+      !retryUnknownPayout &&
+      (withdrawal.status !== 'PENDING' ||
+        metadata.payout_approval_status !== 'pending')
+    ) {
+      throw new BadRequestException(
+        'This crypto withdrawal is no longer awaiting approval',
+      );
+    }
+
+    const claimed = retryUnknownPayout
+      ? true
+      : await this.prisma.$transaction(async (tx) => {
+          const updated = await tx.withdrawal.updateMany({
+            where: { reference, status: 'PENDING' },
+            data: { status: 'PROCESSING' },
+          });
+          if (updated.count !== 1) return false;
+          await tx.transactions.update({
+            where: { id: transaction.id },
+            data: {
+              metadata: {
+                ...metadata,
+                payout_approval_status: 'approved',
+                payout_approved_by: adminId,
+                payout_approved_at: new Date().toISOString(),
+                nowpayments_payout_status: 'creating',
+              },
+            },
+          });
+          return true;
+        });
+    if (!claimed) {
+      throw new BadRequestException(
+        'This crypto withdrawal was already approved',
+      );
+    }
+
+    let payout: Record<string, any>;
+    try {
+      payout = await this.nowpayments.createPayout({
+        address: String(metadata.nowpayments_address),
+        currency: String(metadata.nowpayments_currency),
+        amount: Number(metadata.nowpayments_payout_amount),
+        reference,
+      });
+    } catch (error) {
+      const current = await this.prisma.transactions.findUnique({
+        where: { id: transaction.id },
+        select: { metadata: true },
+      });
+      const currentMetadata =
+        (current?.metadata as Record<string, any> | null) ?? metadata;
+      await this.prisma.transactions.update({
+        where: { id: transaction.id },
+        data: {
+          metadata: {
+            ...currentMetadata,
+            payout_approval_status: 'approved',
+            nowpayments_payout_status: 'unknown',
+            nowpayments_payout_creation_error:
+              error instanceof Error ? error.message : 'Provider error',
+            nowpayments_payout_last_attempt_at: new Date().toISOString(),
+          },
+        },
+      });
+      this.logger.error(
+        `NOWPayments payout creation outcome is unknown for ${reference}; funds remain reserved`,
+      );
+      throw new BadGatewayException(
+        'NOWPayments payout status is not yet known. Funds remain reserved; retry approval to reconcile this payout.',
+      );
+    }
+    const payoutId = String(
+      payout.id ?? payout.batch_withdrawal_id ?? payout.withdrawals?.[0]?.id ?? '',
+    );
+    if (!payoutId) {
+      throw new BadRequestException(
+        'NOWPayments payout was submitted but did not return a payout ID; funds remain reserved for reconciliation',
+      );
+    }
+    const payoutStatus = String(
+      payout.status ?? payout.withdrawals?.[0]?.status ?? 'creating',
+    ).toLowerCase();
+    await this.prisma.transactions.update({
+      where: { id: transaction.id },
+      data: {
+        metadata: {
+          ...metadata,
+          payout_approval_status: 'approved',
+          payout_approved_by: adminId,
+          payout_approved_at: new Date().toISOString(),
+          nowpayments_payout_id: payoutId,
+          nowpayments_payout_status: payoutStatus,
+          nowpayments_payout_response: payout,
+        },
+      },
+    });
+    return {
+      success: true,
+      payout_id: payoutId,
+      status: payoutStatus,
+      requires_provider_verification: payoutStatus === 'creating',
+    };
+  }
+
+  async verifyNowpaymentsCryptoWithdrawal(
+    reference: string,
+    verificationCode: string,
+    adminId: string,
+  ) {
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
+    const metadata =
+      (transaction?.metadata as Record<string, any> | null) ?? {};
+    const payoutId = String(metadata.nowpayments_payout_id ?? '');
+    if (
+      !transaction ||
+      metadata.provider !== 'nowpayments' ||
+      metadata.payout_approval_status !== 'approved' ||
+      !payoutId
+    ) {
+      throw new BadRequestException(
+        'An approved NOWPayments payout is required before verification',
+      );
+    }
+    const response = await this.nowpayments.verifyPayout(
+      payoutId,
+      verificationCode,
+    );
+    const status = String(
+      response.status ?? response.withdrawals?.[0]?.status ?? 'creating',
+    ).toLowerCase();
+    await this.prisma.transactions.update({
+      where: { id: transaction.id },
+      data: {
+        metadata: {
+          ...metadata,
+          nowpayments_payout_status: status,
+          nowpayments_payout_verified_by: adminId,
+          nowpayments_payout_verified_at: new Date().toISOString(),
+          nowpayments_payout_verification_response: response,
+        },
+      },
+    });
+    return {
+      success: true,
+      payout_id: payoutId,
+      status,
+      requires_provider_verification: status === 'creating',
+    };
+  }
+
+  async reconcileNowpaymentsPayoutWebhook(payload: Record<string, any>) {
+    const payoutId = String(
+      payload.id ??
+        payload.payout_id ??
+        payload.batch_withdrawal_id ??
+        payload.withdrawal_id ??
+        '',
+    );
+    if (!payoutId) {
+      this.logger.warn('NOWPayments payout webhook did not include a payout ID');
+      return false;
+    }
+    const transaction = await this.prisma.transactions.findFirst({
+      where: {
+        transaction_type: 'withdrawal',
+        metadata: {
+          path: ['nowpayments_payout_id'],
+          equals: payoutId,
+        },
+      },
+    });
+    if (!transaction) {
+      this.logger.warn(
+        `NOWPayments payout webhook did not match payout ${payoutId}`,
+      );
+      return false;
+    }
+    const verified = await this.nowpayments.getPayout(payoutId);
+    const status = String(
+      verified.status ?? verified.withdrawals?.[0]?.status ?? '',
+    ).toLowerCase();
+    const metadata =
+      (transaction.metadata as Record<string, unknown> | null) ?? {};
+    await this.prisma.transactions.update({
+      where: { id: transaction.id },
+      data: {
+        metadata: {
+          ...metadata,
+          nowpayments_payout_status: status || 'unknown',
+          nowpayments_payout_last_checked_at: new Date().toISOString(),
+          nowpayments_payout_response: verified,
+        },
+      },
+    });
+    if (['finished', 'success', 'completed'].includes(status)) {
+      return this.markAsSuccess(transaction.transaction_reference);
+    }
+    if (['failed', 'rejected', 'cancelled', 'canceled'].includes(status)) {
+      return this.rejectWithdrawal(
+        transaction.transaction_reference,
+        String(verified.failure_reason ?? 'NOWPayments payout failed'),
+      );
+    }
+    return false;
+  }
+
   async getUserWithdrawals(userId: string) {
     return this.prisma.withdrawal.findMany({
       where: { userId, status: { not: 'FAILED' } },
@@ -332,7 +811,20 @@ export class WithdrawService {
   }
 
   getProviderNetworks(token?: string) {
-    return this.ivorypay.getProviderNetworks(token);
+    return this.nowpayments.getAvailableCurrencies().then((currencies) => {
+      const normalizedToken = token?.trim().toLowerCase();
+      const options = currencies
+        .filter(
+          (currency) =>
+            !normalizedToken || currency.startsWith(normalizedToken),
+        )
+        .map((currency) => ({
+          token: currency.toUpperCase(),
+          network: currency,
+          networkName: currency.toUpperCase(),
+        }));
+      return { data: options };
+    });
   }
 
   async getWithdrawal(id: string, userId?: string) {
@@ -371,7 +863,75 @@ export class WithdrawService {
       rejection_reason: withdrawal.rejectionReason,
     };
 
-    if (withdrawal.method === 'CRYPTO') {
+    if (
+      withdrawal.method === 'CRYPTO' &&
+      metadata.provider === 'nowpayments'
+    ) {
+      statusResult.nowpayments_payout_id = metadata.nowpayments_payout_id;
+      statusResult.nowpayments_payout_status =
+        metadata.nowpayments_payout_status;
+      statusResult.payout_approval_status = metadata.payout_approval_status;
+      statusResult.estimated_crypto_amount =
+        metadata.nowpayments_payout_amount;
+      if (
+        metadata.nowpayments_payout_id &&
+        withdrawal.status.toUpperCase() === 'PROCESSING'
+      ) {
+        try {
+          const verified = await this.nowpayments.getPayout(
+            String(metadata.nowpayments_payout_id),
+          );
+          const providerStatus = String(
+            verified.status ?? verified.withdrawals?.[0]?.status ?? '',
+          ).toLowerCase();
+          statusResult.nowpayments_payout_status =
+            providerStatus || metadata.nowpayments_payout_status;
+          const latestMetadata =
+            (transaction?.metadata as Record<string, unknown> | null) ?? {};
+          if (transaction) {
+            await this.prisma.transactions.update({
+              where: { id: transaction.id },
+              data: {
+                metadata: {
+                  ...latestMetadata,
+                  nowpayments_payout_status:
+                    providerStatus || metadata.nowpayments_payout_status,
+                  nowpayments_payout_last_checked_at:
+                    new Date().toISOString(),
+                  nowpayments_payout_response: verified,
+                },
+              },
+            });
+          }
+          if (['finished', 'success', 'completed'].includes(providerStatus)) {
+            await this.markAsSuccess(reference);
+          } else if (
+            ['failed', 'rejected', 'cancelled', 'canceled'].includes(
+              providerStatus,
+            )
+          ) {
+            await this.rejectWithdrawal(
+              reference,
+              String(verified.failure_reason ?? 'NOWPayments payout failed'),
+            );
+          }
+          const latestWithdrawal = await this.prisma.withdrawal.findFirst({
+            where: { reference, userId },
+          });
+          if (latestWithdrawal) {
+            statusResult.withdrawal_status = latestWithdrawal.status;
+          }
+        } catch (error) {
+          statusResult.nowpayments_status_error =
+            error instanceof Error
+              ? error.message
+              : 'Unable to verify NOWPayments payout status';
+          this.logger.warn(
+            `NOWPayments withdrawal status check failed for ${reference}: ${statusResult.nowpayments_status_error}`,
+          );
+        }
+      }
+    } else if (withdrawal.method === 'CRYPTO') {
       statusResult.ivorypay_withdrawal_id = metadata.ivorypay_withdrawal_id;
       statusResult.ivorypay_withdrawal_status =
         metadata.ivorypay_withdrawal_status;
@@ -966,24 +1526,31 @@ export class WithdrawService {
       });
 
       if (transaction) {
+        const existingMetadata =
+          (transaction.metadata as Record<string, any> | null) ?? {};
+        const provider = existingMetadata.provider;
         await tx.transactions.update({
           where: { id: transaction.id },
           data: {
             status: 'completed',
             processed_at: new Date(),
             description: 'Successful withdrawal',
-            metadata:
-              withdrawal.method === 'CRYPTO'
+            metadata: withdrawal.method === 'CRYPTO'
+              ? provider === 'nowpayments'
                 ? {
-                    ...((transaction.metadata as any) ?? {}),
+                    ...existingMetadata,
+                    nowpayments_payout_status: 'finished',
+                  }
+                : {
+                    ...existingMetadata,
                     provider: 'ivorypay',
                     ivorypay_withdrawal_status: 'success',
                   }
-                : {
-                    ...((transaction.metadata as any) ?? {}),
-                    provider: 'paystack',
-                    paystack_transfer_status: 'success',
-                  },
+              : {
+                  ...existingMetadata,
+                  provider: 'paystack',
+                  paystack_transfer_status: 'success',
+                },
           },
         });
 
@@ -1170,13 +1737,19 @@ export class WithdrawService {
       if (transaction) {
         const metadata = (transaction.metadata as any) ?? {};
         const failureMetadata =
-          withdrawal.method === 'CRYPTO'
+          withdrawal.method === 'CRYPTO' && metadata.provider === 'nowpayments'
             ? {
                 ...metadata,
-                provider: 'ivorypay',
-                ivorypay_failure_reason: reason,
-                ivorypay_withdrawal_status: 'failed',
+                nowpayments_failure_reason: reason,
+                nowpayments_payout_status: 'failed',
               }
+            : withdrawal.method === 'CRYPTO'
+              ? {
+                  ...metadata,
+                  provider: 'ivorypay',
+                  ivorypay_failure_reason: reason,
+                  ivorypay_withdrawal_status: 'failed',
+                }
             : {
                 ...metadata,
                 provider: 'paystack',

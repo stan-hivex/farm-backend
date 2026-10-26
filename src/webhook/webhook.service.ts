@@ -30,6 +30,7 @@ import type { Redis } from 'ioredis';
 import { verifyPaystackSignature } from '../payments/utils/paystack-webhook.util';
 import { resolveDepositCreditAmount } from '../deposit/deposit.utils';
 import { QrPaymentsService } from '../qr-payments/qr-payments.service';
+import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
 @Injectable()
 export class WebhookService {
@@ -45,9 +46,127 @@ export class WebhookService {
     private readonly paystackService: PaystackService,
     private readonly ivorypayService: IvorypayService,
     private readonly qrPaymentsService: QrPaymentsService,
+    private readonly nowpayments: NowpaymentsService,
     @InjectQueue(QUEUES.WEBHOOKS) private readonly webhookQueue: Queue,
     @Optional() private readonly redisService?: RedisService,
   ) {}
+
+  async handleNowpaymentsWebhook(payload: Record<string, any>) {
+    const paymentId = String(payload.payment_id ?? '');
+    const orderId = String(payload.order_id ?? '');
+    if (!/^\d+$/.test(paymentId) || !orderId) {
+      this.logger.warn('NOWPayments payment webhook is missing its identifiers');
+      return { received: true, processed: false };
+    }
+
+    const transaction = await this.prisma.transactions.findFirst({
+      where: {
+        transaction_type: { in: ['deposit', 'merchant_payment'] },
+        OR: [
+          { transaction_reference: orderId },
+          {
+            metadata: {
+              path: ['nowpayments_payment_id'],
+              equals: paymentId,
+            },
+          },
+        ],
+      },
+    });
+    const metadata =
+      (transaction?.metadata as Record<string, any> | null) ?? {};
+    if (
+      !transaction ||
+      metadata.provider !== 'nowpayments' ||
+      transaction.transaction_reference !== orderId
+    ) {
+      this.logger.warn(
+        `NOWPayments webhook did not match a pending transaction order=${orderId}`,
+      );
+      return { received: true, processed: false };
+    }
+
+    const verified = await this.nowpayments.getPayment(paymentId);
+    const status = String(
+      verified.payment_status ?? '',
+    ).toLowerCase();
+    const expectedAmount = Number(metadata.amount_usd);
+    const receivedAmount = Number(verified.price_amount);
+    const expectedCurrency = String(
+      metadata.crypto ?? metadata.pay_currency ?? '',
+    ).toLowerCase();
+    if (
+      verified.payment_id?.toString() !== paymentId ||
+      verified.order_id?.toString() !== orderId ||
+      verified.price_currency?.toString().toLowerCase() !== 'usd' ||
+      verified.pay_currency?.toString().toLowerCase() !== expectedCurrency ||
+      !Number.isFinite(expectedAmount) ||
+      !Number.isFinite(receivedAmount) ||
+      Math.abs(expectedAmount - receivedAmount) > 0.01
+    ) {
+      this.logger.warn(
+        `NOWPayments authenticated status did not match order=${orderId}`,
+      );
+      return { received: true, processed: false };
+    }
+
+    await this.prisma.transactions.update({
+      where: { id: transaction.id },
+      data: {
+        metadata: {
+          ...metadata,
+          nowpayments_payment_id: paymentId,
+          nowpayments_payment_status: status || 'unknown',
+          nowpayments_last_webhook_at: new Date().toISOString(),
+          nowpayments_payment_response: verified,
+        },
+      },
+    });
+
+    if (['finished', 'confirmed'].includes(status)) {
+      if (transaction.transaction_type === 'merchant_payment') {
+        await this.qrPaymentsService.complete(
+          transaction.transaction_reference,
+          'nowpayments',
+          verified,
+        );
+      } else {
+        await this.depositService.finalizeSuccessfulDeposit(
+          transaction.transaction_reference,
+        );
+      }
+    } else if (['failed', 'refunded', 'expired'].includes(status)) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.transactions.updateMany({
+          where: {
+            id: transaction.id,
+            status: { in: ['pending', 'processing'] },
+          },
+          data: { status: 'failed', processed_at: new Date() },
+        });
+        await tx.deposit.updateMany({
+          where: {
+            reference: transaction.transaction_reference,
+            status: 'PENDING',
+          },
+          data: { status: 'FAILED' },
+        });
+        await tx.qr_payments.updateMany({
+          where: {
+            transaction_id: transaction.id,
+            status: { in: ['pending', 'processing'] },
+          },
+          data: { status: 'failed' },
+        });
+      });
+    }
+    return { received: true, processed: true, status };
+  }
+
+  async handleNowpaymentsPayoutWebhook(payload: Record<string, any>) {
+    await this.withdrawService.reconcileNowpaymentsPayoutWebhook(payload);
+    return { received: true };
+  }
 
   private getRedisClient(): Redis | null {
     try {
