@@ -40,6 +40,7 @@ import { TransferRequestsModule } from './transfer-requests/transfer-requests.mo
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 import { SupportModule } from './support/support.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { DiditModule } from './didit/didit.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 @Module({
@@ -121,6 +122,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     PaymentRequestsModule,
     SupportModule,
     UploadsModule,
+    DiditModule,
   ],
   providers: [
     ExpiryTasksService,

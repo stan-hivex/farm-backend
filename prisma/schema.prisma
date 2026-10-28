@@ -242,6 +242,14 @@ model kyc_documents {
   users_kyc_documents_user_idTousers     users?      @relation("kyc_documents_user_idTousers", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
+model didit_webhook_events {
+  event_id     String   @id @db.VarChar(128)
+  webhook_type String?
+  session_id   String?
+  status       String?
+  processed_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
 model ledger_entries {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   transaction_id String?       @db.Uuid
