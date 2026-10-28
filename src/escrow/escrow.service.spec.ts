@@ -353,6 +353,42 @@ describe('EscrowService dispute resolution', () => {
   });
 });
 
+describe('EscrowService transaction party details', () => {
+  it('returns the escrow creator as sender and the seller as recipient', async () => {
+    const escrow = {
+      id: 'escrow-1',
+      buyer_id: 'buyer-1',
+      seller_id: 'seller-1',
+      amount: 25,
+      fee: 0.38,
+      users_escrow_contracts_buyer_idTousers: { username: 'escrow-creator' },
+      users_escrow_contracts_seller_idTousers: { username: 'seller' },
+    };
+    const prisma: any = {
+      escrow_contracts: {
+        findUnique: jest.fn().mockResolvedValue(escrow),
+      },
+      transactions: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const service = new EscrowService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    const result = await service.getOne('escrow-1', 'buyer-1');
+
+    expect(result.data).toMatchObject({
+      sender_username: 'escrow-creator',
+      recipient_username: 'seller',
+    });
+  });
+});
+
 describe('EscrowService dispute evidence', () => {
   const buildService = () => {
     const tx: any = {

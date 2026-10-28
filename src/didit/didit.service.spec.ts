@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { UnauthorizedException } from '@nestjs/common';
+import { Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import {
@@ -71,11 +71,35 @@ describe('DiditService', () => {
         body: JSON.stringify({
           workflow_id: '9d75ebb3-2dbe-410e-9062-5c84c41af087',
           vendor_data: userId,
-          callback: 'https://farmapp.africa',
         }),
       }),
     );
     fetch.mockRestore();
+  });
+
+  it('logs Didit rejection details without logging the API key', async () => {
+    const apiKey = 'test-api-key-secret';
+    const fetch = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () =>
+        `{"detail":"callback domain rejected","debug":"${apiKey}"}`,
+    } as Response);
+    const config = {
+      get: jest.fn().mockReturnValue(apiKey),
+    } as unknown as ConfigService;
+    const service = new DiditService(config, {} as PrismaService);
+    const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+
+    await expect(
+      service.createSession('c0a80101-0000-4000-8000-000000000001'),
+    ).rejects.toThrow('Didit session creation failed');
+
+    expect(errorLog).toHaveBeenCalledWith(
+      'Didit session request returned HTTP 400: {"detail":"callback domain rejected","debug":"[redacted]"}',
+    );
+    fetch.mockRestore();
+    errorLog.mockRestore();
   });
 
   it('verifies the signature and updates the authenticated user status', async () => {

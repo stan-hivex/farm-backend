@@ -649,6 +649,10 @@ export class EscrowService {
         ...escrow,
         amount: Number(escrow.amount),
         fee: Number(escrow.fee),
+        sender_username:
+          escrow.users_escrow_contracts_buyer_idTousers?.username ?? null,
+        recipient_username:
+          escrow.users_escrow_contracts_seller_idTousers?.username ?? null,
         release_fee:
           releaseTransaction == null
             ? null

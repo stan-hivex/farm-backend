@@ -11,7 +11,6 @@ import { PrismaService } from '../database/prisma.service';
 
 const WORKFLOW_ID = '9d75ebb3-2dbe-410e-9062-5c84c41af087';
 const DIDIT_SESSION_URL = 'https://verification.didit.me/v3/session/';
-const CALLBACK_URL = 'https://farmapp.africa';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -116,7 +115,6 @@ export class DiditService {
         body: JSON.stringify({
           workflow_id: WORKFLOW_ID,
           vendor_data: userId,
-          callback: CALLBACK_URL,
         }),
         signal: AbortSignal.timeout(12_000),
       });
@@ -128,8 +126,12 @@ export class DiditService {
     }
 
     if (!response.ok) {
+      const upstreamDetail = (await response.text())
+        .replaceAll(apiKey, '[redacted]')
+        .replaceAll(userId, '[redacted]')
+        .slice(0, 1_000);
       this.logger.error(
-        `Didit session request returned HTTP ${response.status}`,
+        `Didit session request returned HTTP ${response.status}: ${upstreamDetail || '(empty response)'}`,
       );
       throw new BadGatewayException('Didit session creation failed');
     }

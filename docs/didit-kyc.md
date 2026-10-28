@@ -17,7 +17,9 @@ environment variable.
 
 - `POST /api/verify/create-session` requires the user's JWT. It derives
   `vendor_data` from the authenticated account and returns `url`, `session_id`,
-  and `session_token` for the native Flutter SDK.
+  and `session_token` for the native Flutter SDK. It intentionally omits the
+  optional `callback` field: native verification does not require a redirect,
+  and Didit rejects HTTP(S) callbacks whose origin is not allowlisted.
 - `POST /api/webhooks/didit` is public and accepts Didit's
   `X-Signature-V2` webhook. Register a V3 destination for `status.updated` and
   `data.updated` at the backend's public HTTPS URL.
@@ -26,6 +28,10 @@ The webhook validates the canonical signed body and its `timestamp` (300-second
 window), then inserts `event_id` and updates the user's KYC status in one
 database transaction. The unique event ID makes retries safe. Apply the
 `20261027100000_add_didit_webhook_events` migration before deploying.
+
+If session creation fails, check the backend service logs for the Didit HTTP
+status and bounded response detail. The response detail is redacted against the
+configured API key before logging.
 
 ## Flutter
 
