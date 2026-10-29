@@ -22,6 +22,8 @@ import { Cron } from '@nestjs/schedule';
 import { IvorypayPayoutOutcomeUnknownError } from '../ivorypay/ivorypay.service';
 import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
+const MIN_NOWPAYMENTS_CRYPTO_WITHDRAWAL_USD = 2;
+
 @Injectable()
 export class WithdrawService {
   private readonly logger = new Logger(WithdrawService.name);
@@ -347,7 +349,7 @@ export class WithdrawService {
     if (!Number.isFinite(farmUsdRate) || farmUsdRate <= 0) {
       throw new BadRequestException('The FARM/USD exchange rate is unavailable');
     }
-    const minimumUsd = 1;
+    const minimumUsd = MIN_NOWPAYMENTS_CRYPTO_WITHDRAWAL_USD;
     const minimumFarm = Math.ceil((minimumUsd / farmUsdRate) * 1e8) / 1e8;
     return {
       data: {
@@ -424,9 +426,12 @@ export class WithdrawService {
     const rate = await this.currencyConversionService.getCurrentRate();
     const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
     const grossAmountUsd = Number((amount * farmUsdRate).toFixed(8));
-    if (!Number.isFinite(grossAmountUsd) || grossAmountUsd < 1) {
+    if (
+      !Number.isFinite(grossAmountUsd) ||
+      grossAmountUsd < MIN_NOWPAYMENTS_CRYPTO_WITHDRAWAL_USD
+    ) {
       throw new BadRequestException(
-        'Minimum crypto withdrawal is USD 1 before the 1.5% withdrawal fee',
+        `Minimum crypto withdrawal is USD ${MIN_NOWPAYMENTS_CRYPTO_WITHDRAWAL_USD.toFixed(2)} before the 1.5% withdrawal fee`,
       );
     }
     const settlementUsd = Number((settlement * farmUsdRate).toFixed(2));

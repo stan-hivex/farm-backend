@@ -11,6 +11,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
+const MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD = 2;
+
 @Injectable()
 export class DepositService {
   private readonly logger = new Logger(DepositService.name);
@@ -57,11 +59,11 @@ export class DepositService {
     const payCurrency = dto.pay_currency?.trim().toLowerCase();
     if (
       !Number.isFinite(priceAmount) ||
-      priceAmount <= 0 ||
+      priceAmount < MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD ||
       priceCurrency !== 'usd'
     ) {
       throw new BadRequestException(
-        'Crypto deposits must use USD pricing and a valid positive amount',
+        `Crypto deposits must be at least USD ${MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD.toFixed(2)}`,
       );
     }
     if (!/^[a-z0-9]{2,20}$/.test(payCurrency ?? '')) {
@@ -82,7 +84,7 @@ export class DepositService {
     );
     if (estimatedCryptoAmount < minimum.minimumAmount) {
       throw new BadRequestException(
-        `The minimum deposit for ${payCurrency.toUpperCase()} is approximately USD ${minimum.minimumUsd.toFixed(2)}`,
+        `NOWPayments requires at least ${minimum.minimumAmount} ${payCurrency.toUpperCase()}. Increase the USD deposit amount for this currency.`,
       );
     }
 

@@ -153,7 +153,8 @@ export class NowpaymentsService {
     const response = this.asRecord(
       await this.request('get', '/min-amount', undefined, {
         currency_from: normalizedCurrency,
-        currency_to: 'usd',
+        currency_to: normalizedCurrency,
+        fiat_equivalent: 'usd',
       }),
       'minimum payment amount',
     );

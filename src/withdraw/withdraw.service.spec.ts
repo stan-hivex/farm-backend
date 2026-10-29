@@ -11,6 +11,7 @@ import { CurrencyConversionService } from '../currency/currency-conversion.servi
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { PaystackTransferInitiationError } from '../paystack/paystack.service';
 import { IvorypayPayoutOutcomeUnknownError } from '../ivorypay/ivorypay.service';
+import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
 describe('WithdrawService', () => {
   let service: WithdrawService;
@@ -96,6 +97,15 @@ describe('WithdrawService', () => {
             emitTransactionUpdate: jest.fn(),
           },
         },
+        {
+          provide: NowpaymentsService,
+          useValue: {
+            getAvailableCurrencies: jest.fn().mockResolvedValue(['btc']),
+            estimateAmount: jest.fn(),
+            getPayoutMinimum: jest.fn(),
+            estimatePayoutFee: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -115,6 +125,41 @@ describe('WithdrawService', () => {
       },
       orderBy: { createdAt: 'desc' },
     });
+  });
+
+  it('reports the USD 2 crypto withdrawal minimum', async () => {
+    const result = await service.getNowpaymentsCryptoMinimum();
+
+    expect(result.data.minimumUsd).toBe(2);
+    expect(result.data.minimumFarm).toBeGreaterThan(0);
+    expect(result.data.farmUsdRate).toBe(0.00666667);
+  });
+
+  it('rejects NOWPayments crypto withdrawals below USD 2 before reserving funds', async () => {
+    jest
+      .spyOn(service as any, 'processWithdrawal')
+      .mockResolvedValue(undefined);
+    (service as any).currencyConversionService.getCurrentRate.mockResolvedValue({
+      farm_usd_rate: 1,
+    });
+    prisma.wallets.findFirst.mockResolvedValue({
+      id: 'wallet-1',
+      balance: 100,
+      locked_balance: 0,
+    });
+
+    await expect(
+      service.createNowpaymentsCryptoWithdrawal('user-1', {
+        amount: 1.99,
+        method: 'CRYPTO',
+        cryptoAddress: 'bc1qexample',
+        cryptoAsset: 'BTC',
+        pin: '1234',
+      } as any),
+    ).rejects.toThrow(
+      'Minimum crypto withdrawal is USD 2.00 before the 1.5% withdrawal fee',
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('persists the selected crypto asset for crypto withdrawals', async () => {
