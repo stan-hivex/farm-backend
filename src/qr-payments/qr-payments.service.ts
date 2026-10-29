@@ -185,7 +185,7 @@ export class QrPaymentsService {
       platform_fee_type: 'merchant_sale',
       platform_fee_percent: 1,
       ...(amountUsd !== undefined ? { amount_usd: amountUsd } : {}),
-      ...(crypto ? { crypto } : {}),
+      ...(crypto ? { requested_crypto: crypto } : {}),
     };
 
     const transaction = await this.prisma.$transaction(async (tx) => {
@@ -303,7 +303,6 @@ export class QrPaymentsService {
         const initialized = await this.nowpayments.createInvoice({
           priceAmount: amountUsd!,
           priceCurrency: 'usd',
-          payCurrency: crypto!,
           orderId: reference,
           description: `QR merchant payment to ${merchant.business_name}`,
           successUrl: callbackUrl.toString(),
@@ -596,14 +595,20 @@ export class QrPaymentsService {
       const verifiedCurrency = verifiedPayment.pay_currency
         ?.toString()
         .toLowerCase();
-      const expectedCurrency = metadata.crypto?.toString().toLowerCase();
+      const expectedCurrency = (
+        metadata.crypto ??
+        metadata.pay_currency ??
+        ''
+      )
+        .toString()
+        .toLowerCase();
       const expectedUsd = Number(metadata.amount_usd);
       const verifiedUsd = Number(verifiedPayment.price_amount);
       if (
         !['finished', 'confirmed'].includes(status ?? '') ||
         verifiedReference !== reference ||
-        !expectedCurrency ||
-        verifiedCurrency !== expectedCurrency ||
+        !/^[a-z0-9]{2,20}$/.test(verifiedCurrency ?? '') ||
+        (expectedCurrency.length > 0 && verifiedCurrency !== expectedCurrency) ||
         verifiedPayment.price_currency?.toString().toLowerCase() !== 'usd' ||
         !Number.isFinite(expectedUsd) ||
         !Number.isFinite(verifiedUsd) ||

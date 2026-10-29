@@ -232,7 +232,7 @@ export class NowpaymentsService {
   async createInvoice(input: {
     priceAmount: number;
     priceCurrency: string;
-    payCurrency: string;
+    payCurrency?: string;
     orderId: string;
     description: string;
     successUrl?: string;
@@ -242,7 +242,9 @@ export class NowpaymentsService {
       await this.request('post', '/invoice', {
         price_amount: input.priceAmount,
         price_currency: input.priceCurrency.toLowerCase(),
-        pay_currency: input.payCurrency.toLowerCase(),
+        ...(input.payCurrency
+          ? { pay_currency: input.payCurrency.toLowerCase() }
+          : {}),
         order_id: input.orderId,
         order_description: input.description,
         ipn_callback_url: this.getIpnCallbackUrl(),

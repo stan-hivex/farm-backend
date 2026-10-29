@@ -35,7 +35,9 @@ ends with `/webhooks/nowpayments`; setting both explicitly is recommended.
   address, asset/currency, transaction PIN or verified biometric details
 - `GET /api/v1/qr-payments/crypto-options`
 - `POST /api/v1/qr-payments/initialize` with the merchant, KES amount, method,
-  email, and selected `crypto` currency
+  email, and optional preferred `crypto` currency. The hosted NOWPayments
+  invoice leaves `pay_currency` unset so the customer can choose from the
+  provider's supported currencies during checkout.
 
 Crypto withdrawals reserve the FARM balance until an administrator approves
 the payout. Admin routes are `GET /api/v1/admin/crypto-withdrawals/pending`,
@@ -54,8 +56,10 @@ Both webhook routes verify `x-nowpayments-sig` as HMAC-SHA512 using
 The backend then fetches the payment or payout status with the API key before
 settling. Deposits and merchant QR payments settle only for authenticated
 `confirmed` or `finished` payment statuses; repeated notifications are
-idempotent. Payouts debit the reserved balance only after provider confirmation
-and release the reservation if NOWPayments reports a terminal failure.
+idempotent. QR invoice settlement validates the amount, order, and actual
+provider-selected currency before crediting the merchant wallet. Payouts debit
+the reserved balance only after provider confirmation and release the
+reservation if NOWPayments reports a terminal failure.
 
 The client status endpoints are for display and reconciliation; only server
 verification can credit a wallet.

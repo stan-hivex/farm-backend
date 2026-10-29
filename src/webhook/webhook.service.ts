@@ -95,11 +95,16 @@ export class WebhookService {
     const expectedCurrency = String(
       metadata.crypto ?? metadata.pay_currency ?? '',
     ).toLowerCase();
+    const receivedCurrency = String(
+      verified.pay_currency ?? '',
+    ).toLowerCase();
     if (
       verified.payment_id?.toString() !== paymentId ||
       verified.order_id?.toString() !== orderId ||
       verified.price_currency?.toString().toLowerCase() !== 'usd' ||
-      verified.pay_currency?.toString().toLowerCase() !== expectedCurrency ||
+      !receivedCurrency ||
+      (expectedCurrency.length > 0 &&
+        receivedCurrency !== expectedCurrency) ||
       !Number.isFinite(expectedAmount) ||
       !Number.isFinite(receivedAmount) ||
       Math.abs(expectedAmount - receivedAmount) > 0.01
