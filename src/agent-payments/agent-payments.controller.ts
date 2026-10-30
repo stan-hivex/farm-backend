@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Length, Max, Min } from 'class-validator';
+import { IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Length, Max, Min, Matches } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
@@ -27,10 +27,12 @@ export class IntentBody {
   @IsOptional() @IsString() @Length(1, 100) reference?: string;
   @IsOptional() @IsObject() metadata?: Record<string, unknown>;
   @IsOptional() @IsInt() @Min(5) @Max(10080) expires_in_minutes?: number;
+  @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{8,100}$/) idempotency_key?: string;
 }
 export class RefundBody {
   @IsOptional() @IsNumber() @Min(0.01) amount?: number;
   @IsOptional() @IsString() @Length(1, 255) reason?: string;
+  @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{8,100}$/) idempotency_key?: string;
 }
 export class DashboardRefundBody extends RefundBody {
   @IsString() @Length(4, 6) pin!: string;
@@ -38,6 +40,7 @@ export class DashboardRefundBody extends RefundBody {
 export class AgentRequestBody {
   @IsUUID() authorization_id!: string;
   @IsUUID() payment_intent_id!: string;
+  @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{8,100}$/) idempotency_key?: string;
 }
 
 /** Payer side: pay intents, manage agent mandates, approve agent requests. */
@@ -94,7 +97,7 @@ export class BusinessIntentsController {
     return { data: await this.svc.listIntents(c.businessId, true, status) };
   }
   @Post('payment-intents') async create(@CurrentUser() u: any, @Body() b: IntentBody, @Headers('idempotency-key') idem?: string) {
-    return this.svc.createIntent(await this.ctx(u.id, 'links:manage'), b, idem);
+    return this.svc.createIntent(await this.ctx(u.id, 'links:manage'), b, idem ?? b.idempotency_key);
   }
   @Get('payment-intents/:id') async get(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) {
     return this.svc.getIntent((await this.ctx(u.id, 'links:read')).businessId, id, true);
@@ -107,7 +110,7 @@ export class BusinessIntentsController {
   }
   @Post('payment-intents/:id/refunds') @Throttle({ default: { limit: 10, ttl: 60_000 } })
   refund(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string, @Body() b: DashboardRefundBody, @Headers('idempotency-key') idem?: string) {
-    return this.svc.refundFromDashboard(u.id, id, b, idem);
+    return this.svc.refundFromDashboard(u.id, id, b, idem ?? b.idempotency_key);
   }
   @Get('agent-authorizations') async mandates(@CurrentUser() u: any) {
     return { data: await this.svc.businessMandates((await this.ctx(u.id, 'links:read')).businessId) };

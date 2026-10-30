@@ -27,7 +27,7 @@ export class AgentPaymentsApiController {
   @Post('payment-intents') @RequireScope('payment_intents:write')
   create(@Req() req: any, @Body() b: IntentBody, @Headers('idempotency-key') idem?: string) {
     const c = this.ctx(req);
-    return this.wrap(c.live, this.svc.createIntent(c, b, idem));
+    return this.wrap(c.live, this.svc.createIntent(c, b, idem ?? b.idempotency_key));
   }
   @Get('payment-intents/:id') @RequireScope('payment_intents:read')
   get(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
@@ -52,7 +52,7 @@ export class AgentPaymentsApiController {
   @Post('payment-intents/:id/refunds') @RequireScope('refunds:write')
   refund(@Req() req: any, @Param('id', ParseUUIDPipe) id: string, @Body() b: RefundBody, @Headers('idempotency-key') idem?: string) {
     const c = this.ctx(req);
-    return this.wrap(c.live, this.svc.refund(c, id, b, idem));
+    return this.wrap(c.live, this.svc.refund(c, id, b, idem ?? b.idempotency_key));
   }
   @Get('agent-authorizations') @RequireScope('agent_payments:read')
   async mandates(@Req() req: any) {
@@ -62,7 +62,7 @@ export class AgentPaymentsApiController {
   @Post('agent-payment-requests') @RequireScope('agent_payments:write')
   request(@Req() req: any, @Body() b: AgentRequestBody, @Headers('idempotency-key') idem?: string) {
     const c = this.ctx(req);
-    return this.wrap(c.live, this.svc.createAgentRequest(c, b, idem));
+    return this.wrap(c.live, this.svc.createAgentRequest(c, b, idem ?? b.idempotency_key));
   }
   @Get('agent-payment-requests/:id') @RequireScope('agent_payments:read')
   getRequest(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
