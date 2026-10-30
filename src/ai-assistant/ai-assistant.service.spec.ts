@@ -24,7 +24,7 @@ function mkPrisma(perm: any = null, committed = 0) {
 }
 const cfg = (env: Record<string, string>) => ({ get: (k: string) => env[k] }) as any;
 const ON = { AI_ASSISTANT_ENABLED: 'true', AI_API_KEY: 'k' };
-const PERM = { enabled: true, revoked_at: null, per_tx_cap: 1000, daily_cap: 2000, allowed_actions: ['send_farm'] };
+const PERM = { enabled: true, revoked_at: null, per_tx_cap: 1000, daily_cap: 2000, allowed_actions: ['send_farm'], spend_categories: ['Hotels', 'Flights', 'Transport', 'Shopping', 'Bills', 'Services', 'Investments', 'Crypto'] };
 
 function mk(prisma: any, env = ON, provider?: any, wallets?: any, travel: any = { search: jest.fn(), offer: jest.fn() }, agent: any = { payIntent: jest.fn(), publicIntent: jest.fn(), myRequests: jest.fn() }) {
   const p = provider ?? new AiProvider(cfg(env));
@@ -152,3 +152,31 @@ describe('Mkulima pay_intent (Phase 9)', () => {
   });
 });
 
+
+describe('Mkulima spending categories & activity (gap fix)', () => {
+  const IID = '11111111-1111-1111-1111-111111111111';
+  const intent = { id: IID, business_name: 'Shamba Ltd', amount: 500, status: 'requires_payment', description: 'Seeds', expires_at: new Date(Date.now() + 3600e3) };
+  it('blocks a payment whose category is turned off', async () => {
+    const agent = { publicIntent: jest.fn().mockResolvedValue(intent), payIntent: jest.fn() };
+    const pr = mkPrisma({ ...PERM, allowed_actions: ['pay_intent'], spend_categories: ['Flights'] });
+    const svc = mk(pr, ON, undefined, undefined, undefined, agent);
+    await expect(svc.proposeIntent(U, { payment_intent_id: IID })).rejects.toThrow('Services is turned off');
+  });
+  it('rejects unknown categories', async () => {
+    const svc = mk(mkPrisma(PERM));
+    await expect(svc.updatePermissions(U, { enabled: true, per_tx_cap: 1, daily_cap: 2, allowed_actions: [], spend_categories: ['Casino'] })).rejects.toThrow('Unknown category');
+  });
+  it('maps requests and bookings to the activity shape and statuses', async () => {
+    const pr = mkPrisma(PERM);
+    const now = new Date();
+    pr.ai_action_requests.findMany.mockResolvedValue([
+      { id: 'a1', action: 'pay_intent', status: 'pending', amount: 5, recipient_identifier: 'Shamba', description: 'Seeds', expires_at: new Date(Date.now() + 6e4), created_at: now },
+      { id: 'a2', action: 'book_flight', status: 'executed', amount: 900, recipient_identifier: 'NBO-MBA', transaction_ref: 'TX1', expires_at: now, created_at: now },
+      { id: 'a3', action: 'send_farm', status: 'rejected', amount: 1, recipient_identifier: 'bob', expires_at: now, created_at: now },
+    ]);
+    pr.travel_bookings = { findMany: jest.fn().mockResolvedValue([{ ai_action_id: 'a2', provider: 'duffel', total_farm: 950, booking_reference: 'ABC123', status: 'failed_refunded' }]) };
+    const a = await mk(pr).activity(U);
+    expect(a.map((x: any) => x.status)).toEqual(['Awaiting Approval', 'Refunded', 'Cancelled']);
+    expect(a[1]).toMatchObject({ provider: 'duffel', amount: 950, booking_ref: 'ABC123', confirmation: 'TX1', refund_status: 'Refunded', payment_method: 'FARM wallet', category: 'Flights' });
+  });
+});

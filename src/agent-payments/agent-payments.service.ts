@@ -6,9 +6,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+  ServiceUnavailableException, Optional } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { BusinessAccessService } from '../business-ops/business-access.service';
@@ -61,6 +61,7 @@ export class AgentPaymentsService {
     private readonly access: BusinessAccessService,
     private readonly finance: BusinessFinanceService,
     private readonly webhooks: BusinessWebhooksService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   private get env() { return process.env; }
@@ -377,6 +378,13 @@ export class AgentPaymentsService {
     const r = await this.prisma.agent_payment_requests.create({
       data: { authorization_id: m.id, user_id: m.user_id, business_id: ctx.businessId, intent_id: i.id, amount, idempotency_key: idem ?? null, expires_at: exp },
     });
+    if (this.notifications)
+      Promise.resolve(
+        this.notifications.createInApp(m.user_id, {
+          type: 'payment_request', title: 'Payment awaiting your approval', body: `An agent requested ${amount} FARM. Confirm or reject it with your PIN.`,
+          entityId: r.id, metadata: { kind: 'agent_payment_request' },
+        }),
+      ).catch(() => undefined);
     this.webhooks.emit(ctx.businessId, 'live', 'agent_payment.requested', { request_id: r.id, authorization_id: m.id, payment_intent_id: i.id, amount });
     return this.requestView(r);
   }

@@ -1756,6 +1756,8 @@ model ai_spend_permissions {
   per_tx_cap      Decimal   @default(0) @db.Decimal(20, 2)
   daily_cap       Decimal   @default(0) @db.Decimal(20, 2)
   allowed_actions String[]  @default([])
+  /// Gap fix: spending categories the user allows Mkulima to pay in (all on by default).
+  spend_categories String[] @default(["Hotels", "Flights", "Transport", "Shopping", "Bills", "Services", "Investments", "Crypto"])
   revoked_at      DateTime?
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt

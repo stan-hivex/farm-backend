@@ -5,9 +5,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+  ServiceUnavailableException, Optional } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
 import { RateService } from '../chain-wallet/rate.service';
 import { generateTxReference } from '../common/utils/reference.util';
@@ -35,7 +35,14 @@ export class TravelService {
     private readonly auth: AuthService,
     private readonly rates: RateService,
     private readonly flights: DuffelProvider,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
+
+  /** Centralized in-app notification; never blocks or fails a booking. */
+  private notify(userId: string, title: string, body: string, entityId: string) {
+    if (!this.notifications) return;
+    Promise.resolve(this.notifications.createInApp(userId, { type: 'transaction', title, body, entityId, metadata: { kind: 'travel_booking' } })).catch(() => undefined);
+  }
 
   private get env(): NodeJS.ProcessEnv {
     return process.env;
@@ -246,12 +253,14 @@ export class TravelService {
           data: { status: 'confirmed', provider_order_id: order.id, booking_reference: order.booking_reference },
         });
       });
+      this.notify(done.user_id, 'Flight booked', `Booking reference ${done.booking_reference ?? '-'}.`, done.id);
       return this.view(done);
     } catch (e) {
       if (e instanceof ProviderUnknownError) {
         // Outcome unknown: keep funds held, flag for review; never double-book or refund blindly.
         this.log.error(`Travel booking ${booking.id} outcome unknown: ${e.message}`);
         const b = await this.prisma.travel_bookings.update({ where: { id: booking.id }, data: { status: 'needs_review', failure_reason: e.message.slice(0, 200) } });
+        this.notify(b.user_id, 'Booking under review', 'We are confirming your flight with the airline. Your payment is held safely.', b.id);
         return this.view(b);
       }
       const reason = (e as Error).message?.slice(0, 200) ?? 'Booking failed';
@@ -262,6 +271,12 @@ export class TravelService {
 
   /** Full refund to the wallet for a booking whose payment is held. Idempotent. */
   async refund(bookingId: string, reason: string) {
+    const out = await this.refundTx(bookingId, reason);
+    if (out?.status === 'failed_refunded') this.notify(out.user_id, 'Booking refunded', `${Number(out.total_farm)} FARM was returned to your wallet.`, out.id);
+    return out;
+  }
+
+  private async refundTx(bookingId: string, reason: string) {
     return this.prisma.$transaction(async (tx) => {
       const b = await tx.travel_bookings.findUnique({ where: { id: bookingId } });
       if (!b) throw new NotFoundException('Booking not found');

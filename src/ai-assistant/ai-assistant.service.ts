@@ -8,6 +8,17 @@ import { TravelService } from '../travel/travel.service';
 import { AgentPaymentsService } from '../agent-payments/agent-payments.service';
 
 export const AI_ACTIONS = ['send_farm', 'book_flight', 'pay_intent'] as const;
+export const SPEND_CATEGORIES = ['Hotels', 'Flights', 'Transport', 'Shopping', 'Bills', 'Services', 'Investments', 'Crypto'] as const;
+/** Category each AI action spends in. Sending FARM to a person is a transfer, governed by allowed_actions only. */
+const ACTION_CATEGORY: Record<string, string | undefined> = { book_flight: 'Flights', pay_intent: 'Services' };
+const ACTIVITY_STATUS: Record<string, string> = {
+  pending: 'Awaiting Approval', processing: 'Processing', executed: 'Completed', failed: 'Failed',
+  rejected: 'Cancelled', cancelled: 'Cancelled', expired: 'Cancelled',
+};
+const BOOKING_STATUS: Record<string, string> = {
+  pending: 'Pending', payment_held: 'Processing', confirmed: 'Completed', needs_review: 'Pending',
+  refunding: 'Processing', failed_refunded: 'Refunded',
+};
 const ACTION_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 4;
 const HISTORY = 20;
@@ -145,19 +156,21 @@ export class AiAssistantService {
   // ---------- spend permissions ----------
   async getPermissions(userId: string) {
     const p = await this.prisma.ai_spend_permissions.findUnique({ where: { user_id: userId } });
-    if (!p) return { enabled: false, per_tx_cap: 0, daily_cap: 0, allowed_actions: [] as string[], revoked_at: null, spent_today: 0 };
-    return { enabled: p.enabled && !p.revoked_at, per_tx_cap: Number(p.per_tx_cap), daily_cap: Number(p.daily_cap), allowed_actions: p.allowed_actions, revoked_at: p.revoked_at, spent_today: await this.committedToday(userId) };
+    if (!p) return { enabled: false, per_tx_cap: 0, daily_cap: 0, allowed_actions: [] as string[], spend_categories: [...SPEND_CATEGORIES] as string[], revoked_at: null, spent_today: 0 };
+    return { enabled: p.enabled && !p.revoked_at, per_tx_cap: Number(p.per_tx_cap), daily_cap: Number(p.daily_cap), allowed_actions: p.allowed_actions, spend_categories: p.spend_categories, revoked_at: p.revoked_at, spent_today: await this.committedToday(userId) };
   }
 
-  async updatePermissions(userId: string, dto: { enabled: boolean; per_tx_cap: number; daily_cap: number; allowed_actions: string[] }) {
+  async updatePermissions(userId: string, dto: { enabled: boolean; per_tx_cap: number; daily_cap: number; allowed_actions: string[]; spend_categories?: string[] }) {
     const actions = [...new Set(dto.allowed_actions ?? [])];
+    const cats = dto.spend_categories === undefined ? undefined : [...new Set(dto.spend_categories)];
+    if (cats?.some((c) => !(SPEND_CATEGORIES as readonly string[]).includes(c))) throw new BadRequestException('Unknown category');
     if (actions.some((a) => !(AI_ACTIONS as readonly string[]).includes(a))) throw new BadRequestException('Unknown action');
     if (!(dto.per_tx_cap >= 0) || !(dto.daily_cap >= 0)) throw new BadRequestException('Caps must be zero or more');
     if (dto.per_tx_cap > dto.daily_cap) throw new BadRequestException('Per-transaction cap cannot exceed the daily cap');
     if (dto.daily_cap > 100_000) throw new BadRequestException('Daily cap cannot exceed 100,000 FARM');
-    const data = { enabled: !!dto.enabled, per_tx_cap: dto.per_tx_cap, daily_cap: dto.daily_cap, allowed_actions: actions, revoked_at: null };
+    const data = { enabled: !!dto.enabled, per_tx_cap: dto.per_tx_cap, daily_cap: dto.daily_cap, allowed_actions: actions, ...(cats ? { spend_categories: cats } : {}), revoked_at: null };
     await this.prisma.ai_spend_permissions.upsert({ where: { user_id: userId }, create: { user_id: userId, ...data }, update: data });
-    await this.audit(userId, 'permissions_updated', { enabled: data.enabled, per_tx_cap: dto.per_tx_cap, daily_cap: dto.daily_cap, allowed_actions: actions });
+    await this.audit(userId, 'permissions_updated', { enabled: data.enabled, per_tx_cap: dto.per_tx_cap, daily_cap: dto.daily_cap, allowed_actions: actions, spend_categories: cats });
     return this.getPermissions(userId);
   }
 
@@ -186,6 +199,8 @@ export class AiAssistantService {
     const p = await this.prisma.ai_spend_permissions.findUnique({ where: { user_id: userId } });
     if (!p || !p.enabled || p.revoked_at) throw new ForbiddenException('AI payments are turned off. Enable them in Assistant settings.');
     if (!p.allowed_actions.includes(action)) throw new ForbiddenException(`${({ book_flight: 'Booking flights', pay_intent: 'Paying businesses' } as Record<string, string>)[action] ?? 'Sending FARM'} is not an allowed AI action`);
+    const cat = ACTION_CATEGORY[action];
+    if (cat && !(p.spend_categories ?? []).includes(cat)) throw new ForbiddenException(`${cat} is turned off in your Mkulima spending categories`);
     if (amount > Number(p.per_tx_cap)) throw new ForbiddenException(`Amount exceeds your per-transaction AI cap of ${Number(p.per_tx_cap)} FARM`);
     let today = await this.committedToday(userId);
     if (excludeId) {
@@ -300,5 +315,38 @@ export class AiAssistantService {
 
   auditLog(userId: string) {
     return this.prisma.ai_audit_log.findMany({ where: { user_id: userId }, orderBy: { created_at: 'desc' }, take: 100 });
+  }
+
+  // ---------- unified activity ----------
+  /** Everything Mkulima did or proposed, in one shape. Real records only. */
+  async activity(userId: string) {
+    const reqs = await this.prisma.ai_action_requests.findMany({ where: { user_id: userId }, orderBy: { created_at: 'desc' }, take: 100 });
+    const ids = reqs.map((r) => r.id);
+    const bookings = ids.length
+      ? await this.prisma.travel_bookings.findMany({ where: { user_id: userId, ai_action_id: { in: ids } } })
+      : [];
+    const byAction = new Map(bookings.map((b) => [b.ai_action_id, b]));
+    const label: Record<string, string> = { send_farm: 'Send FARM', book_flight: 'Book flight', pay_intent: 'Pay business' };
+    return reqs.map((r) => {
+      const b = byAction.get(r.id);
+      const pendingExpired = r.status === 'pending' && r.expires_at <= new Date();
+      let status = pendingExpired ? 'Cancelled' : (ACTIVITY_STATUS[r.status] ?? 'Pending');
+      if (b) status = BOOKING_STATUS[b.status] ?? status;
+      return {
+        id: r.id,
+        request: r.description ?? null,
+        agent_action: label[r.action] ?? r.action,
+        category: ACTION_CATEGORY[r.action] ?? null,
+        provider: b?.provider ?? r.recipient_identifier,
+        amount: Number(b?.total_farm ?? r.amount),
+        payment_method: 'FARM wallet',
+        status,
+        timestamp: r.created_at,
+        booking_ref: b?.booking_reference ?? null,
+        confirmation: r.transaction_ref ?? null,
+        refund_status: b ? (b.status === 'failed_refunded' ? 'Refunded' : b.status === 'refunding' ? 'Refunding' : null) : null,
+        failure_reason: r.failure_reason ?? b?.failure_reason ?? null,
+      };
+    });
   }
 }

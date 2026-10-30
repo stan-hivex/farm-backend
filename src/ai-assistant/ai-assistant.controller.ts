@@ -16,6 +16,7 @@ class PermissionsDto {
   @IsNumber() @Min(0) per_tx_cap!: number;
   @IsNumber() @Min(0) daily_cap!: number;
   @IsArray() @ArrayMaxSize(5) @IsString({ each: true }) allowed_actions!: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(8) @IsString({ each: true }) spend_categories?: string[];
 }
 class ConfirmDto {
   @IsNotEmpty() @IsString() @Length(4, 6) pin!: string;
@@ -49,5 +50,6 @@ export class AiAssistantController {
   }
   @Post('actions/:id/reject') reject(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) { return this.svc.rejectAction(u.id, id); }
 
+  @Get('activity') async activity(@CurrentUser() u: any) { return { data: await this.svc.activity(u.id) }; }
   @Get('audit') async audit(@CurrentUser() u: any) { return { data: await this.svc.auditLog(u.id) }; }
 }
