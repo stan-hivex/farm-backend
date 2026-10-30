@@ -29,7 +29,7 @@ export interface PreparedTransfer {
 /**
  * All algod/indexer access for Phase 6. Keys are only held in memory for the
  * duration of a call and never logged. FARM ASA is never created here: it is
- * created once by the owner's reserve account (MainNet asset 3759199569) and
+ * created once by the owner's reserve account (MainNet asset 3759208862) and
  * referenced by FARM_ASA_ID. Keys may be ed25519 or Falcon-1024 (see signer.ts).
  */
 @Injectable()
