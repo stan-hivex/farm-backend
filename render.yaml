@@ -13,6 +13,7 @@ services:
       node ./scripts/ensure-render-entrypoint.js
 
     startCommand: bash ./start.sh
+    healthCheckPath: /health
 
     envVars:
       - key: NODE_ENV
@@ -71,7 +72,7 @@ services:
       # CORS configuration
       - key: CORS_ORIGINS
         # Replace with your Cloudflare origin(s), comma-separated if multiple.
-        value: https://*.algorandfarm686.workers.dev,http://localhost:3000,http://localhost:3001
+        value: https://*.algorandfarm686.workers.dev
       
       # Paystack Configuration
       - key: PAYSTACK_SECRET_KEY
@@ -91,7 +92,8 @@ services:
         value: https://api.ivorypay.io
       
       # JWT Configuration
-      - key: JWT_SECRET
+      # Must match the name the code reads (JwtStrategy / AuthService).
+      - key: JWT_ACCESS_SECRET
         sync: false
       
       - key: JWT_EXPIRATION
@@ -121,4 +123,22 @@ services:
         sync: false
       
       - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+
+      # Secrets required by the code (production validation / webhooks / KYC).
+      - key: QR_HMAC_SECRET
+        sync: false
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_WEBHOOK_SECRET
+        sync: false
+      - key: NOWPAYMENTS_IPN_SECRET
+        sync: false
+      - key: DIDIT_API_KEY
+        sync: false
+      - key: DIDIT_WEBHOOK_SECRET
+        sync: false
+      - key: DIDIT_SESSION_URL
         sync: false

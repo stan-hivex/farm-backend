@@ -10,8 +10,6 @@ import { SecurityModule } from '../security/security.module';
 import { TransferRequestsModule } from '../transfer-requests/transfer-requests.module';
 
 import { ExpiryTasksProcessor } from '../common/tasks/expiry-tasks.processor';
-import { WebsocketModule } from '../websocket/websocket.module';
-import { CloudinaryService } from '../common/cloudinary.service';
 
 @Module({
   imports: [
@@ -20,11 +18,10 @@ import { CloudinaryService } from '../common/cloudinary.service';
     NotificationsModule,
     SecurityModule,
     TransferRequestsModule,
-    WebsocketModule,
     BullModule.registerQueue({ name: 'expiry-tasks' }),
   ],
   controllers: [EscrowController],
-  providers: [EscrowService, KycGuard, ExpiryTasksProcessor, CloudinaryService],
+  providers: [EscrowService, KycGuard, ExpiryTasksProcessor],
   exports: [EscrowService],
 })
 export class EscrowModule {}
