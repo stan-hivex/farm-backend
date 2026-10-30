@@ -9,7 +9,13 @@ import { PrismaService } from '../database/prisma.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { AlgorandWalletClient } from './algorand-wallet.client';
 import { RateService } from './rate.service';
-import { chainConfig, FARM_DECIMALS, USDC_DECIMALS } from './chain-config';
+import {
+  ALGO_ASSET_ID,
+  ALGO_DECIMALS,
+  chainConfig,
+  FARM_DECIMALS,
+  USDC_DECIMALS,
+} from './chain-config';
 import { sealSecret, walletSigner } from './key-vault';
 import { AlgoSigner } from './signer';
 
@@ -267,6 +273,87 @@ export class ChainWalletService {
           data: { last_round: maxRound },
         });
     }
+    const algo = await this.pollAlgo(c.network, reserve);
+    return { seen: seen + algo.seen, recorded: recorded + algo.recorded };
+  }
+
+  /**
+   * Native ALGO received by custodial addresses. Ignored: the funder's
+   * provisioning payment (and anything else from the funder), the FARM
+   * reserve, other custodial addresses (internal moves) and self payments.
+   * Idempotent via the unique (network, tx_id, asset_id=0) key.
+   */
+  async pollAlgo(network: string, reserve: string) {
+    const key = `${network}:algo:0`;
+    const cur = await this.prisma.chain_sync_state.findUnique({
+      where: { key },
+    });
+    const head = await this.chain.currentRound();
+    if (!cur) {
+      // start from "now": nothing before go-live is backfilled
+      await this.prisma.chain_sync_state.create({
+        data: { key, last_round: head },
+      });
+      return { seen: 0, recorded: 0 };
+    }
+    const wallets = await this.prisma.user_chain_wallets.findMany({
+      where: { network, status: 'ready' },
+      select: { address: true, user_id: true, funded_tx_id: true },
+    });
+    if (!wallets.length) {
+      await this.prisma.chain_sync_state.update({
+        where: { key },
+        data: { last_round: head },
+      });
+      return { seen: 0, recorded: 0 };
+    }
+    const byAddr = new Map(wallets.map((w) => [w.address, w]));
+    const fundingTx = new Set(
+      wallets.map((w) => w.funded_tx_id).filter((x): x is string => !!x),
+    );
+    const funder = this.chain.funderAddress();
+    let seen = 0;
+    let recorded = 0;
+    for (const w of wallets) {
+      const txs = await this.chain.paymentsTo(w.address, cur.last_round);
+      seen += txs.length;
+      const rows = txs
+        .filter(
+          (t) =>
+            t.receiver === w.address &&
+            t.amount > 0n &&
+            t.sender !== t.receiver &&
+            t.sender !== funder &&
+            t.sender !== reserve &&
+            !byAddr.has(t.sender) &&
+            !fundingTx.has(t.txId),
+        )
+        .map((t) => ({
+          network,
+          tx_id: t.txId,
+          asset_id: ALGO_ASSET_ID,
+          asset_symbol: 'ALGO',
+          user_id: w.user_id,
+          address: w.address,
+          sender: t.sender,
+          amount_units: t.amount,
+          decimals: ALGO_DECIMALS,
+          confirmed_round: t.round,
+        }));
+      if (rows.length)
+        recorded += (
+          await this.prisma.chain_deposits.createMany({
+            data: rows,
+            skipDuplicates: true,
+          })
+        ).count;
+    }
+    // Rounds up to `head` were covered for every address; overlap is safe (idempotent).
+    if (head > cur.last_round)
+      await this.prisma.chain_sync_state.update({
+        where: { key },
+        data: { last_round: head },
+      });
     return { seen, recorded };
   }
 
@@ -287,25 +374,41 @@ export class ChainWalletService {
       }
     }
     pending = pending.filter((x) => x.asset_symbol !== 'FARM');
-    if (!pending.length) return { credited, waiting: 0 };
-    const rate = chainConfig().conversion.enabled
-      ? await this.rates.usdcKes()
-      : null;
-    if (!rate) {
-      await this.prisma.chain_deposits.updateMany({
-        where: { id: { in: pending.map((d) => d.id) }, status: 'detected' },
-        data: { status: 'pending_rate' },
-      });
-      return { credited, waiting: pending.length };
-    }
-    for (const d of pending) {
-      try {
-        if (await this.credit(d, rate)) credited++;
-      } catch (e: any) {
-        this.log.warn(`Credit of deposit ${d.id} failed: ${e?.message ?? e}`);
+    let waiting = 0;
+    const cfg = chainConfig();
+    for (const sym of ['USDC', 'ALGO'] as const) {
+      const group = pending.filter(
+        (x) => (x.asset_symbol === 'ALGO' ? 'ALGO' : 'USDC') === sym,
+      );
+      if (!group.length) continue;
+      const rate =
+        sym === 'USDC'
+          ? cfg.conversion.enabled
+            ? await this.rates.usdcKes()
+            : null
+          : cfg.algoConversion.enabled
+            ? await this.rates.algoKes()
+            : null;
+      if (!rate) {
+        // No live rate: hold, never guess.
+        await this.prisma.chain_deposits.updateMany({
+          where: { id: { in: group.map((d) => d.id) }, status: 'detected' },
+          data: { status: 'pending_rate' },
+        });
+        waiting += group.length;
+        continue;
+      }
+      for (const d of group) {
+        try {
+          if (await this.credit(d, rate)) credited++;
+          else waiting++;
+        } catch (e: any) {
+          waiting++;
+          this.log.warn(`Credit of deposit ${d.id} failed: ${e?.message ?? e}`);
+        }
       }
     }
-    return { credited, waiting: pending.length - credited };
+    return { credited, waiting };
   }
 
   private async credit(
@@ -350,8 +453,8 @@ export class ChainWalletService {
           fee: 0,
           net_amount: farm,
           description: isFarm
-            ? `FARM deposit ${usdc}`
-            : `USDC deposit ${usdc} @ ${rate.rate} KSh`,
+            ? `Received ${usdc} FARM on Algorand`
+            : `Received ${usdc} ${d.asset_symbol} on Algorand @ ${rate.rate} KSh`,
           metadata: {
             chain_deposit_id: d.id,
             tx_id: d.tx_id,
@@ -369,7 +472,7 @@ export class ChainWalletService {
           wallet_id: w.id,
           entry_type: 'credit',
           amount: farm,
-          description: `${d.asset_symbol} deposit`,
+          description: `${d.asset_symbol} received on Algorand`,
         },
       });
       await tx.blockchain_transactions.create({

@@ -13,6 +13,15 @@ Generated from a scan of `process.env` / ConfigService usage in `src/`. **Never 
 | `AI_DAILY_MESSAGE_LIMIT` | ai-assistant | optional | 50 |  |
 | `AI_MODEL` | ai-assistant | optional | AI_DEFAULT_MODEL |  |
 | `AI_TIMEOUT_MS` | ai-assistant | optional | 30000 |  |
+| `ALGO_KES_RATE_URL` | chain-wallet | optional | — | https URL returning the ALGO→KES price; required (with JSON_PATH) to credit ALGO deposits |
+| `ALGO_KES_RATE_JSON_PATH` | chain-wallet | optional | — | dot path to the KES price, e.g. `algorand.kes` |
+| `ALGO_KES_RATE_HEADER` | chain-wallet | optional | — | optional API-key header name |
+| `ALGO_KES_RATE_API_KEY` | chain-wallet | optional | — | optional — secret, Render env only |
+| `ALGO_KES_RATE_FALLBACK_URL` | chain-wallet | optional | — | optional second source |
+| `ALGO_KES_RATE_FALLBACK_JSON_PATH` | chain-wallet | optional | — | path for the fallback |
+| `ALGO_KES_RATE_MIN` | chain-wallet | optional | — | sanity floor, default 1 |
+| `ALGO_KES_RATE_MAX` | chain-wallet | optional | — | sanity ceiling, default 500 |
+| `ALGO_KES_RATE_MAX_AGE_SECONDS` | chain-wallet | optional | — | cache age |
 | `ALGORAND_FUNDER_MNEMONIC` | chain-wallet, x402 | optional | — (secret) | secret — store in Render env only |
 | `ALGORAND_INDEXER_TOKEN` | chain-wallet | optional | — (secret) | secret — store in Render env only |
 | `ALGORAND_INDEXER_URL` | blockchain, chain-wallet | optional | '', |  |

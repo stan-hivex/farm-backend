@@ -123,6 +123,9 @@ describe('Phase 6b – FARM from outside is a 1:1 deposit', () => {
       transfersSince: jest.fn((a: bigint) =>
         Promise.resolve(a === 42n ? farmTransfers : []),
       ),
+      currentRound: jest.fn().mockResolvedValue(500n),
+      funderAddress: jest.fn(() => 'FUNDER'),
+      paymentsTo: jest.fn().mockResolvedValue([]),
     };
     const rates: any = { usdcKes: jest.fn().mockResolvedValue(null) };
     return {
@@ -233,6 +236,8 @@ describe('Phase 6b – on-chain outbox', () => {
       assetBalance: jest.fn().mockResolvedValue(over.balance ?? 1_000_000n),
       txStatus: jest.fn().mockResolvedValue(over.status ?? 'unknown'),
       currentRound: jest.fn().mockResolvedValue(over.round ?? 500n),
+      funderAddress: jest.fn(() => 'FUNDER'),
+      paymentsTo: jest.fn().mockResolvedValue([]),
       reserveSigner: jest.fn(() => ({
         scheme: 'falcon1024',
         address: RES,

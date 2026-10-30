@@ -9,57 +9,75 @@ export interface KesRate {
 }
 
 /**
- * USDC -> KSh rate from a configured HTTPS source. No built-in or fallback
+ * USDC/ALGO -> KSh rate from a configured HTTPS source. No built-in or fallback
  * rate: if it is not configured or fails, conversion does not happen.
  */
 @Injectable()
 export class RateService {
   private readonly log = new Logger(RateService.name);
-  private cache: KesRate | null = null;
+  private cache = new Map<string, KesRate>();
 
   /**
    * Primary source, then optional fallback. The configured spread (basis
-   * points) is subtracted so FARM credited = USDC x rate x (1 - spread).
+   * points, USDC_KES_SPREAD_BPS, shared by all assets) is subtracted so
+   * FARM credited = amount x rate x (1 - spread).
    */
-  async usdcKes(env = process.env): Promise<KesRate | null> {
-    const maxAge = Number(env.USDC_KES_RATE_MAX_AGE_SECONDS ?? 300) * 1000;
-    if (this.cache && Date.now() - this.cache.at.getTime() < maxAge)
-      return this.cache;
+  usdcKes(env = process.env): Promise<KesRate | null> {
+    return this.kes('USDC', env, 50, 500);
+  }
+
+  /** ALGO -> KSh, same rules as USDC (ALGO_KES_RATE_* variables). */
+  algoKes(env = process.env): Promise<KesRate | null> {
+    return this.kes('ALGO', env, 1, 500);
+  }
+
+  private async kes(
+    asset: 'USDC' | 'ALGO',
+    env: Record<string, string | undefined>,
+    defMin: number,
+    defMax: number,
+  ): Promise<KesRate | null> {
+    const p = `${asset}_KES_RATE`;
+    const maxAge = Number(env[`${p}_MAX_AGE_SECONDS`] ?? 300) * 1000;
+    const cached = this.cache.get(asset);
+    if (cached && Date.now() - cached.at.getTime() < maxAge) return cached;
     const sources = [
       {
-        url: env.USDC_KES_RATE_URL,
-        path: env.USDC_KES_RATE_JSON_PATH,
-        hdr: env.USDC_KES_RATE_HEADER,
-        key: env.USDC_KES_RATE_API_KEY,
+        url: env[`${p}_URL`],
+        path: env[`${p}_JSON_PATH`],
+        hdr: env[`${p}_HEADER`],
+        key: env[`${p}_API_KEY`],
       },
-      {
-        url: env.USDC_KES_RATE_FALLBACK_URL,
-        path: env.USDC_KES_RATE_FALLBACK_JSON_PATH,
-      },
+      { url: env[`${p}_FALLBACK_URL`], path: env[`${p}_FALLBACK_JSON_PATH`] },
     ];
     const spreadBps = Math.min(
       Math.max(Number(env.USDC_KES_SPREAD_BPS ?? 0) || 0, 0),
       1000,
     );
+    const bounds = {
+      min: Number(env[`${p}_MIN`] ?? defMin),
+      max: Number(env[`${p}_MAX`] ?? defMax),
+    };
     for (const s of sources) {
-      const mid = await this.fetchOne(s, env);
+      const mid = await this.fetchOne(s, bounds);
       if (mid == null) continue;
       const rate = Math.floor(mid * (1 - spreadBps / 10_000) * 1e6) / 1e6;
-      this.cache = {
+      const r: KesRate = {
         rate,
         mid,
         spread_bps: spreadBps,
         source: new URL(s.url!).host,
         at: new Date(),
       };
-      return this.cache;
+      this.cache.set(asset, r);
+      return r;
     }
     return null;
   }
 
   private async fetchOne(
     s: { url?: string; path?: string; hdr?: string; key?: string },
-    env: Record<string, string | undefined>,
+    bounds: { min: number; max: number },
   ): Promise<number | null> {
     if (!s.url || !s.path || !s.url.startsWith('https://')) return null;
     try {
@@ -75,9 +93,7 @@ export class RateService {
         .split('.')
         .reduce<any>((o, k) => (o == null ? o : o[k]), body);
       const rate = Number(v);
-      const min = Number(env.USDC_KES_RATE_MIN ?? 50);
-      const max = Number(env.USDC_KES_RATE_MAX ?? 500);
-      if (!Number.isFinite(rate) || rate < min || rate > max)
+      if (!Number.isFinite(rate) || rate < bounds.min || rate > bounds.max)
         throw new Error('rate outside sanity bounds');
       return rate;
     } catch (e: any) {

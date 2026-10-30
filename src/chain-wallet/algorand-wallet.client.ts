@@ -229,6 +229,42 @@ export class AlgorandWalletClient {
     return BigInt(s.lastRound);
   }
 
+  /** Funder address (derived, key wiped immediately). */
+  funderAddress(): string {
+    const f = this.funder();
+    try {
+      return f.address;
+    } finally {
+      f.wipe();
+    }
+  }
+
+  /** Native ALGO payments received by `address` since `minRound`. */
+  async paymentsTo(
+    address: string,
+    minRound: bigint,
+    limit = 200,
+  ): Promise<IncomingTransfer[]> {
+    const r = await this.indexer()
+      .searchForTransactions()
+      .address(address)
+      .addressRole('receiver')
+      .txType('pay')
+      .minRound(minRound)
+      .limit(limit)
+      .do();
+    return (r.transactions ?? [])
+      .filter((t) => t.paymentTransaction && t.id && t.confirmedRound != null)
+      .map((t) => ({
+        txId: t.id!,
+        assetId: 0n,
+        sender: t.sender,
+        receiver: t.paymentTransaction!.receiver,
+        amount: BigInt(t.paymentTransaction!.amount),
+        round: BigInt(t.confirmedRound!),
+      }));
+  }
+
   async transfersSince(
     assetId: bigint,
     minRound: bigint,

@@ -160,6 +160,8 @@ function mocks(over: any = {}) {
       ),
     ),
     currentRound: jest.fn().mockResolvedValue(100n),
+    funderAddress: jest.fn(() => 'FUNDER'),
+    paymentsTo: jest.fn().mockResolvedValue([]),
   };
   const rates: any = {
     usdcKes: jest.fn().mockResolvedValue(over.rate ?? null),

@@ -10,6 +10,7 @@ export interface ChainConfig {
   wallets: { enabled: boolean; missing: string[]; problems: string[] };
   deposits: { enabled: boolean; missing: string[] };
   conversion: { enabled: boolean; missing: string[] };
+  algoConversion: { enabled: boolean; missing: string[] };
   mirror: { enabled: boolean; missing: string[] };
   sync: { enabled: boolean; missing: string[] };
 }
@@ -60,6 +61,14 @@ export function chainConfig(env: Env = process.env): ChainConfig {
     !/^https:\/\//.test(env.USDC_KES_RATE_URL!)
   )
     cMissing.push('USDC_KES_RATE_URL (must be https)');
+  const aMissing = ['ALGO_KES_RATE_URL', 'ALGO_KES_RATE_JSON_PATH'].filter(
+    (k) => !has(env, k),
+  );
+  if (
+    has(env, 'ALGO_KES_RATE_URL') &&
+    !/^https:\/\//.test(env.ALGO_KES_RATE_URL!)
+  )
+    aMissing.push('ALGO_KES_RATE_URL (must be https)');
   const reserveKey = has(env, 'FARM_RESERVE_MNEMONIC')
     ? []
     : ['FARM_RESERVE_MNEMONIC'];
@@ -80,11 +89,18 @@ export function chainConfig(env: Env = process.env): ChainConfig {
     wallets: { enabled: walletsOn, missing: wMissing, problems },
     deposits: { enabled: walletsOn && !dMissing.length, missing: dMissing },
     conversion: { enabled: walletsOn && !cMissing.length, missing: cMissing },
+    algoConversion: {
+      enabled: walletsOn && !aMissing.length,
+      missing: aMissing,
+    },
     mirror: { enabled: walletsOn && !mMissing.length, missing: mMissing },
     sync: { enabled: walletsOn && !sMissing.length, missing: sMissing },
   };
 }
 
 export const USDC_DECIMALS = 6;
+/** Native ALGO: 6 decimals (microAlgos). Stored in chain_deposits with asset_id 0. */
+export const ALGO_DECIMALS = 6;
+export const ALGO_ASSET_ID = 0n;
 /** FARM ASA: 2 decimals, 1 FARM = 1 KSh => 1 base unit = 0.01 KSh. */
 export const FARM_DECIMALS = 2;
