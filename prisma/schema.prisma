@@ -1819,3 +1819,88 @@ model travel_bookings {
   @@unique([user_id, idempotency_key])
   @@index([user_id, created_at])
 }
+
+/// Phase 9: a business's request to collect FARM. Paid by a user (PIN) or via an agent mandate (user still confirms with PIN).
+model payment_intents {
+  id                    String    @id @default(uuid()) @db.Uuid
+  business_id           String    @db.Uuid
+  created_by            String?   @db.Uuid
+  live_mode             Boolean   @default(true)
+  amount                Decimal   @db.Decimal(30, 8)
+  currency              String    @default("FARM") @db.VarChar(10)
+  description           String?   @db.VarChar(255)
+  reference             String?   @db.VarChar(100)
+  metadata              Json?
+  status                String    @default("requires_payment") @db.VarChar(30)
+  payer_user_id         String?   @db.Uuid
+  transaction_reference String?   @db.VarChar(255)
+  amount_refunded       Decimal   @default(0) @db.Decimal(30, 8)
+  idempotency_key       String?   @db.VarChar(255)
+  expires_at            DateTime
+  paid_at               DateTime?
+  canceled_at           DateTime?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  @@unique([business_id, idempotency_key])
+  @@index([business_id, created_at])
+  @@index([payer_user_id, created_at])
+}
+
+/// Phase 9: refunds of succeeded payment intents (business wallet → payer wallet).
+model payment_refunds {
+  id                    String   @id @default(uuid()) @db.Uuid
+  intent_id             String   @db.Uuid
+  business_id           String   @db.Uuid
+  created_by            String?  @db.Uuid
+  live_mode             Boolean  @default(true)
+  amount                Decimal  @db.Decimal(30, 8)
+  reason                String?  @db.VarChar(255)
+  status                String   @default("succeeded") @db.VarChar(20)
+  transaction_id        String?  @db.Uuid
+  idempotency_key       String?  @db.VarChar(255)
+  created_at            DateTime @default(now())
+
+  @@unique([business_id, idempotency_key])
+  @@index([intent_id])
+}
+
+/// Phase 9: a user's mandate letting a business's agent request payments within limits (SpendingLimit).
+model agent_authorizations {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  business_id  String    @db.Uuid
+  label        String?   @db.VarChar(100)
+  per_tx_cap   Decimal   @db.Decimal(30, 8)
+  daily_cap    Decimal   @db.Decimal(30, 8)
+  monthly_cap  Decimal   @db.Decimal(30, 8)
+  status       String    @default("active") @db.VarChar(20)
+  expires_at   DateTime
+  revoked_at   DateTime?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  @@index([user_id, status])
+  @@index([business_id, status])
+}
+
+/// Phase 9: an agent's payment request under a mandate. Money moves only after the user confirms with PIN.
+model agent_payment_requests {
+  id                    String    @id @default(uuid()) @db.Uuid
+  authorization_id      String    @db.Uuid
+  user_id               String    @db.Uuid
+  business_id           String    @db.Uuid
+  intent_id             String    @db.Uuid
+  amount                Decimal   @db.Decimal(30, 8)
+  status                String    @default("pending") @db.VarChar(20)
+  failure_reason        String?   @db.VarChar(255)
+  transaction_reference String?   @db.VarChar(255)
+  idempotency_key       String?   @db.VarChar(255)
+  expires_at            DateTime
+  decided_at            DateTime?
+  created_at            DateTime  @default(now())
+
+  @@unique([business_id, idempotency_key])
+  @@index([user_id, status])
+  @@index([authorization_id, created_at])
+}

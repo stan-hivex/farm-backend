@@ -48,6 +48,18 @@ export class AiToolsService {
       {
         type: 'function',
         function: {
+          name: 'propose_intent_payment',
+          description: 'Propose paying a business payment request (payment_intent_id shared by the business). Only creates a pending request; the user confirms with their PIN. The amount is set by the business.',
+          parameters: { type: 'object', properties: { payment_intent_id: { type: 'string' } }, required: ['payment_intent_id'], additionalProperties: false },
+        },
+      },
+      {
+        type: 'function',
+        function: { name: 'get_agent_payment_requests', description: 'Pending payment requests from businesses the user has authorized (agent payments). Read-only.', parameters: noArgs },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'propose_payment',
           description:
             'Propose sending FARM to a recipient (username, phone or wallet address). This only creates a pending request; the user must confirm it in the app with their PIN. Never claim a payment was sent.',

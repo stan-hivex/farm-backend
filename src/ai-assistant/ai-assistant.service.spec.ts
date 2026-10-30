@@ -26,9 +26,9 @@ const cfg = (env: Record<string, string>) => ({ get: (k: string) => env[k] }) as
 const ON = { AI_ASSISTANT_ENABLED: 'true', AI_API_KEY: 'k' };
 const PERM = { enabled: true, revoked_at: null, per_tx_cap: 1000, daily_cap: 2000, allowed_actions: ['send_farm'] };
 
-function mk(prisma: any, env = ON, provider?: any, wallets?: any, travel: any = { search: jest.fn(), offer: jest.fn() }) {
+function mk(prisma: any, env = ON, provider?: any, wallets?: any, travel: any = { search: jest.fn(), offer: jest.fn() }, agent: any = { payIntent: jest.fn(), publicIntent: jest.fn(), myRequests: jest.fn() }) {
   const p = provider ?? new AiProvider(cfg(env));
-  return new AiAssistantService(prisma, p, new AiToolsService(prisma), wallets ?? { sendFunds: jest.fn() }, cfg(env), travel as any);
+  return new AiAssistantService(prisma, p, new AiToolsService(prisma), wallets ?? { sendFunds: jest.fn() }, cfg(env), travel as any, agent as any);
 }
 
 describe('AiProvider', () => {
@@ -122,3 +122,33 @@ describe('AiAssistantService', () => {
     expect(pr.ai_action_requests.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { user_id: U, status: 'pending' } }));
   });
 });
+
+describe('Mkulima pay_intent (Phase 9)', () => {
+  const IID = '11111111-1111-1111-1111-111111111111';
+  const intent = { id: IID, business_name: 'Shamba Ltd', amount: 500, status: 'requires_payment', description: 'Seeds', expires_at: new Date(Date.now() + 3600e3) };
+  it('proposes only when pay_intent is allowed and within caps', async () => {
+    const agent = { publicIntent: jest.fn().mockResolvedValue(intent), payIntent: jest.fn() };
+    const pr = mkPrisma(PERM);
+    const svc = mk(pr, ON, undefined, undefined, undefined, agent);
+    await expect(svc.proposeIntent(U, { payment_intent_id: IID })).rejects.toThrow('Paying businesses is not an allowed AI action');
+    pr.ai_spend_permissions.findUnique.mockResolvedValue({ ...PERM, allowed_actions: ['pay_intent'], per_tx_cap: 100 });
+    await expect(svc.proposeIntent(U, { payment_intent_id: IID })).rejects.toBeInstanceOf(ForbiddenException);
+    pr.ai_spend_permissions.findUnique.mockResolvedValue({ ...PERM, allowed_actions: ['pay_intent'] });
+    const r = await svc.proposeIntent(U, { payment_intent_id: IID });
+    expect(r.action).toBe('pay_intent');
+    expect(r.amount).toBe(500);
+    expect(agent.payIntent).not.toHaveBeenCalled();
+  });
+  it('confirm pays the intent with the PIN via AgentPaymentsService', async () => {
+    const agent = { publicIntent: jest.fn(), payIntent: jest.fn().mockResolvedValue({ amount: 500, transaction_reference: 'TX1' }) };
+    const pr = mkPrisma({ ...PERM, allowed_actions: ['pay_intent'] });
+    pr.store.req = { id: 'req-1', action: 'pay_intent', user_id: U, status: 'pending', amount: 500, payload: { payment_intent_id: IID }, expires_at: new Date(Date.now() + 60e3), created_at: new Date() };
+    const wallets = { sendFunds: jest.fn() };
+    const svc = mk(pr, ON, undefined, wallets, undefined, agent);
+    const r = await svc.confirmAction(U, 'req-1', '1234', 'ip');
+    expect(agent.payIntent).toHaveBeenCalledWith(U, IID, '1234', 'ip', 'mkulima');
+    expect(wallets.sendFunds).not.toHaveBeenCalled();
+    expect(r.transaction_ref).toBe('TX1');
+  });
+});
+

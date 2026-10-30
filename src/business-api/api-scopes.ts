@@ -14,6 +14,11 @@ export const API_SCOPES = [
   'payouts:read',
   'payouts:write',
   'projects:read',
+  'payment_intents:read',
+  'payment_intents:write',
+  'refunds:write',
+  'agent_payments:read',
+  'agent_payments:write',
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
@@ -39,6 +44,11 @@ export const SCOPE_REQUIRES: Record<ApiScope, BusinessPermission> = {
   'payouts:read': 'payouts:read',
   'payouts:write': 'payouts:create',
   'projects:read': 'projects:read',
+  'payment_intents:read': 'links:read',
+  'payment_intents:write': 'links:manage',
+  'refunds:write': 'payouts:create',
+  'agent_payments:read': 'links:read',
+  'agent_payments:write': 'links:manage',
 };
 
 export const KEY_PREFIX = { sandbox: 'farm_sk_test_', live: 'farm_sk_live_' };
