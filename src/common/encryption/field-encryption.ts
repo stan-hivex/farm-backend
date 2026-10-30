@@ -10,7 +10,7 @@ const logger = new Logger('FieldEncryption');
  */
 export class FieldEncryption {
   private encryptionKey: Buffer;
-  private algorithm = 'aes-256-gcm';
+  private algorithm = 'aes-256-gcm' as const;
 
   constructor(encryptionKeyHex: string) {
     if (!encryptionKeyHex) {
@@ -76,6 +76,7 @@ export class FieldEncryption {
         this.algorithm,
         this.encryptionKey,
         iv,
+        { authTagLength: 16 },
       );
       // typings may not include setAuthTag; cast to any
       (decipher as any).setAuthTag(tag);

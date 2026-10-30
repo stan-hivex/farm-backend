@@ -31,6 +31,7 @@ export function openSecret(
     'aes-256-gcm',
     masterKey(env),
     Buffer.from(row.enc_iv, 'base64'),
+    { authTagLength: 16 },
   );
   d.setAAD(Buffer.from(aad));
   d.setAuthTag(Buffer.from(row.enc_tag, 'base64'));
