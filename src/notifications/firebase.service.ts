@@ -37,4 +37,18 @@ export class FirebaseService {
 
     this.messaging = admin.apps.length > 0 ? admin.messaging() : null;
   }
+
+  get auth(): admin.auth.Auth {
+    if (admin.apps.length === 0) {
+      throw new Error(
+        'Firebase Admin is not initialized. Configure Firebase credentials before using Firebase Auth.',
+      );
+    }
+
+    return admin.auth();
+  }
+
+  verifyIdToken(token: string): Promise<admin.auth.DecodedIdToken> {
+    return this.auth.verifyIdToken(token);
+  }
 }

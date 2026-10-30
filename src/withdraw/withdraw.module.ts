@@ -9,8 +9,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { SecurityModule } from '../security/security.module';
 import { CurrencyModule } from '../currency/currency.module';
 import { KycGuard } from '../common/guards/kyc.guard';
-import { WebsocketModule } from '../websocket/websocket.module';
-import { NowpaymentsModule } from '../nowpayments/nowpayments.module';
 
 @Module({
   imports: [
@@ -21,8 +19,6 @@ import { NowpaymentsModule } from '../nowpayments/nowpayments.module';
     IvorypayModule,
     SecurityModule,
     CurrencyModule,
-    WebsocketModule,
-    NowpaymentsModule,
   ],
   controllers: [WithdrawController],
   providers: [WithdrawService, KycGuard],
