@@ -7,6 +7,9 @@ import {
   NotFoundException,
   Logger,
   OnModuleInit,
+  ServiceUnavailableException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
@@ -1082,21 +1085,210 @@ export class AuthService implements OnModuleInit {
     };
   }
 
+  // ── Email verification ──────────────────────────────────────────────────────
+  static readonly EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+  static readonly EMAIL_VERIFICATION_RESEND_COOLDOWN_MS = 60 * 1000;
+  static readonly EMAIL_VERIFICATION_MAX_PER_DAY = 5;
+
+  private hashVerificationToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private emailVerificationBaseUrl(): string | null {
+    const explicit = this.cfg.get<string>('EMAIL_VERIFICATION_URL');
+    if (explicit) return explicit;
+    const app = this.cfg.get<string>('APP_URL');
+    return app ? `${app.replace(/\/+$/, '')}/verify-email` : null;
+  }
+
+  private assertEmailVerificationConfigured(): string {
+    const base = this.emailVerificationBaseUrl();
+    if (!this.notifications.isTransactionalEmailConfigured() || !base) {
+      throw new ServiceUnavailableException(
+        'Email verification is unavailable: no email provider is configured (RESEND_API_KEY, RESEND_FROM and APP_URL or EMAIL_VERIFICATION_URL are required)',
+      );
+    }
+    return base;
+  }
+
+  /**
+   * Issues a single-use, 24h, SHA-256-hashed token and emails the link.
+   * Rate limited to one per minute and five per day per user. The response is
+   * the same whether or not the address exists, to avoid account enumeration.
+   */
   async resendEmailVerification(email: string) {
-    return {
-      message: 'Email verification flow is not configured in this environment',
+    const base = this.assertEmailVerificationConfigured();
+    const generic = {
+      message:
+        'If the address belongs to an unverified account, a verification link has been sent',
     };
+    const normalized = email.trim().toLowerCase();
+    const user = await this.prisma.users.findFirst({
+      where: { email: { equals: normalized, mode: 'insensitive' } },
+      select: { id: true, email: true, email_verified: true },
+    });
+    if (!user?.email || user.email_verified) return generic;
+
+    const now = Date.now();
+    const recent = await this.prisma.email_verification_tokens.findMany({
+      where: {
+        user_id: user.id,
+        created_at: { gte: new Date(now - 24 * 60 * 60 * 1000) },
+      },
+      select: { created_at: true },
+      orderBy: { created_at: 'desc' },
+    });
+    if (
+      recent.length >= AuthService.EMAIL_VERIFICATION_MAX_PER_DAY ||
+      (recent[0] &&
+        now - recent[0].created_at.getTime() <
+          AuthService.EMAIL_VERIFICATION_RESEND_COOLDOWN_MS)
+    ) {
+      throw new HttpException(
+        'Too many verification emails requested. Please try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const token = randomBytes(32).toString('hex');
+    await this.prisma.$transaction([
+      // Any older unused link stops working once a new one is issued.
+      this.prisma.email_verification_tokens.updateMany({
+        where: { user_id: user.id, used_at: null },
+        data: { used_at: new Date(now) },
+      }),
+      this.prisma.email_verification_tokens.create({
+        data: {
+          user_id: user.id,
+          email: user.email,
+          token_hash: this.hashVerificationToken(token),
+          expires_at: new Date(now + AuthService.EMAIL_VERIFICATION_TTL_MS),
+        },
+      }),
+    ]);
+
+    const link = `${base}${base.includes('?') ? '&' : '?'}token=${token}`;
+    await this.notifications.sendEmailOrThrow(
+      user.email,
+      'Verify your FARM email',
+      `<html><body style="font-family:Arial,sans-serif;background:#f5f5f5;padding:24px;">` +
+        `<div style="max-width:540px;margin:auto;background:#fff;border:1px solid #e0e0e0;border-radius:12px;padding:24px;">` +
+        `<div style="font-size:14px;font-weight:700;color:#000;letter-spacing:1px;">FARM</div>` +
+        `<h2 style="margin:18px 0 12px;color:#000;">Verify your email</h2>` +
+        `<p style="font-size:15px;line-height:1.6;color:#333;">Tap the button below to confirm this email address. The link expires in 24 hours and can be used once.</p>` +
+        `<div style="text-align:center;margin:26px 0;"><a href="${link}" style="display:inline-block;background:#000;color:#fff;text-decoration:none;padding:14px 26px;border-radius:999px;font-weight:700;">VERIFY EMAIL</a></div>` +
+        `<p style="font-size:12px;color:#777;">If you did not request this, you can ignore this email.</p>` +
+        `</div></body></html>`,
+      `Confirm your FARM email address (link valid 24 hours, single use): ${link}`,
+    );
+    return generic;
   }
 
   async verifyEmail(token: string) {
-    return {
-      message: 'Email verification flow is not configured in this environment',
-    };
+    if (!token || !/^[a-f0-9]{64}$/i.test(token)) {
+      throw new BadRequestException('Invalid or expired verification link');
+    }
+    const tokenHash = this.hashVerificationToken(token.toLowerCase());
+    const row = await this.prisma.email_verification_tokens.findUnique({
+      where: { token_hash: tokenHash },
+      select: {
+        id: true,
+        user_id: true,
+        email: true,
+        used_at: true,
+        expires_at: true,
+      },
+    });
+    if (!row || row.used_at || row.expires_at.getTime() <= Date.now()) {
+      throw new BadRequestException('Invalid or expired verification link');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      // Atomic single-use claim: only one concurrent request can win.
+      const claimed = await tx.email_verification_tokens.updateMany({
+        where: { id: row.id, used_at: null, expires_at: { gt: new Date() } },
+        data: { used_at: new Date() },
+      });
+      if (claimed.count !== 1) {
+        throw new BadRequestException('Invalid or expired verification link');
+      }
+      // Only verify if the account still has the address the link was sent to.
+      const updated = await tx.users.updateMany({
+        where: { id: row.user_id, email: row.email },
+        data: { email_verified: true },
+      });
+      if (updated.count !== 1) {
+        throw new BadRequestException('Invalid or expired verification link');
+      }
+    });
+    return { message: 'Email verified successfully' };
   }
 
-  async changePassword(userId: string, dto: ChangePasswordDto) {
+  // ── Change password ─────────────────────────────────────────────────────────
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+    currentJti?: string,
+  ) {
+    if (dto.new_password !== dto.confirm_password) {
+      throw new BadRequestException('Passwords do not match');
+    }
+    if (dto.new_password === dto.current_password) {
+      throw new BadRequestException(
+        'New password must be different from the current password',
+      );
+    }
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { id: true, password_hash: true },
+    });
+    if (!user?.password_hash) {
+      throw new BadRequestException(
+        'Password sign-in is not set up for this account',
+      );
+    }
+    const valid = await bcrypt.compare(
+      dto.current_password,
+      user.password_hash,
+    );
+    if (!valid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
+    const passwordHash = await bcrypt.hash(dto.new_password, rounds);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.users.update({
+        where: { id: userId },
+        data: { password_hash: passwordHash, failed_login_attempts: 0 },
+      });
+      // Revoke every other session (and its refresh token); keep this one.
+      await tx.user_sessions.updateMany({
+        where: {
+          user_id: userId,
+          OR: [{ is_revoked: false }, { is_revoked: null }],
+          ...(currentJti ? { NOT: { jwt_id: currentJti } } : {}),
+        },
+        data: { is_revoked: true },
+      });
+      await tx.activity_logs.create({
+        data: { user_id: userId, activity: 'PASSWORD_CHANGED' },
+      });
+    });
+
+    try {
+      await this.notifications.sendNotification(userId, {
+        type: 'security',
+        title: 'Password changed',
+        body: 'Your FARM password was changed and other devices were signed out. If this was not you, contact support immediately.',
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Password-change notification failed for ${userId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     return {
-      message: 'Password change flow is not configured in this environment',
+      message: 'Password changed successfully. Other sessions were signed out.',
     };
   }
 

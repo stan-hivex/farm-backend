@@ -234,6 +234,14 @@ export class NotificationsService {
     }
   }
 
+  /** True when the transactional email API (Resend) has a key and sender. */
+  isTransactionalEmailConfigured(): boolean {
+    const apiKey = this.cfg.get<string>('RESEND_API_KEY');
+    const from =
+      this.cfg.get<string>('RESEND_FROM') || this.cfg.get<string>('SMTP_FROM');
+    return Boolean(apiKey && from);
+  }
+
   async sendEmailOrThrow(
     to: string,
     subject: string,

@@ -3,6 +3,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
 } from 'class-validator';
 
@@ -18,6 +19,12 @@ export class ResendEmailVerificationDto {
   @IsEmail()
   @MaxLength(254)
   email!: string;
+}
+
+export class VerifyEmailDto {
+  @IsNotEmpty()
+  @Matches(/^[a-fA-F0-9]{64}$/, { message: 'Invalid verification token' })
+  token!: string;
 }
 
 export class ResolveLoginEmailDto {

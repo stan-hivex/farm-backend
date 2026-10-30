@@ -26,6 +26,7 @@ import { AuthService } from './auth.service';
 import {
   DeviceTokenDto,
   ResendEmailVerificationDto,
+  VerifyEmailDto,
   ResendOtpDto,
   ResolveLoginEmailDto,
 } from './dto/auth-misc.dto';
@@ -292,6 +293,15 @@ export class AuthController {
     return this.authService.verifyEmail(token || queryToken || '');
   }
 
+  @Public()
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @ApiOperation({ summary: 'Verify email address (token in body)' })
+  verifyEmailPost(@Body() body: VerifyEmailDto) {
+    return this.authService.verifyEmail(body.token);
+  }
+
   /**
    * ================= LOGIN =================
    */
@@ -511,7 +521,7 @@ export class AuthController {
     @CurrentUser() user: AuthUser,
     @Body() dto: ChangePasswordDto,
   ) {
-    return this.authService.changePassword(user.id, dto);
+    return this.authService.changePassword(user.id, dto, user.jti);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
