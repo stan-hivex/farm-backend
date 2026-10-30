@@ -4,7 +4,10 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { computeFee, feeFor, ruleFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -36,6 +39,7 @@ export class EscrowService {
     private securityService: SecurityService,
     private websocket: WebsocketGateway,
     private cloudinaryService?: CloudinaryService,
+    @Optional() private fees?: FeesService,
   ) {}
 
   private async getSuperadminWallet() {
@@ -175,7 +179,7 @@ export class EscrowService {
       );
     }
 
-    const fee = Number((dto.amount * 0.015).toFixed(2)); // fixed 1.5% escrow creation fee
+    const fee = await feeFor(this.fees, 'escrow_creation', dto.amount); // half of the 3% escrow fee (see FEES.md)
     const totalRequired = dto.amount + fee;
     const available =
       Number(buyer.wallets[0].balance) -
@@ -717,7 +721,7 @@ export class EscrowService {
     const sellerWalletId = escrow.seller_wallet_id;
     const sellerId = escrow.seller_id ?? '';
 
-    const fee = Number((part * 0.015).toFixed(2));
+    const fee = await feeFor(this.fees, 'escrow_release', part);
     const toSeller = Number((part - fee).toFixed(8));
     const result = await this.prisma.$transaction(async (tx) => {
       // Atomic claim: never release more than is still locked.
@@ -784,7 +788,7 @@ export class EscrowService {
             wallet_id: sellerWalletId,
             entry_type: 'credit',
             amount: toSeller,
-            description: `Escrow milestone ${escrow.reference_code}: ${label} (after 1.5% fee)`,
+            description: `Escrow milestone ${escrow.reference_code}: ${label} (after release fee)`,
           },
         ],
       });
@@ -854,6 +858,8 @@ export class EscrowService {
       throw new BadRequestException('Escrow amount is invalid');
     }
     let releaseFee = 0;
+    const releaseRuleCfg = await ruleFor(this.fees, 'escrow_release');
+    const releaseRule = (amt: number) => computeFee(releaseRuleCfg, amt);
     let amountToSeller = 0;
     let amountLocked = 0;
 
@@ -890,7 +896,7 @@ export class EscrowService {
         select: { amount: true, released_amount: true },
       });
       amountLocked = remainingAmount(fresh ?? escrow);
-      releaseFee = Number((amountLocked * 0.015).toFixed(2)); // 1.5% release fee
+      releaseFee = releaseRule(amountLocked); // other half of the 3% escrow fee
       amountToSeller = Number((amountLocked - releaseFee).toFixed(8));
       if (amountLocked <= 0) {
         return {
@@ -941,7 +947,7 @@ export class EscrowService {
             wallet_id: escrow.seller_wallet_id,
             entry_type: 'credit',
             amount: amountToSeller,
-            description: `Escrow release ${escrow.reference_code} (after 1.5% fee)`,
+            description: `Escrow release ${escrow.reference_code} (after release fee)`,
           },
         ],
       });
@@ -1100,8 +1106,8 @@ export class EscrowService {
     }
 
     const resolutionText = resolution
-      ? `An admin resolved the dispute in your favor. ${amount} FARM was credited to your wallet. The 1.5% escrow creation fee is non-refundable.${resolution.note ? ` Note: ${resolution.note}` : ''}`
-      : `Your escrow for ${escrow.title} has been refunded. ${amount} FARM was returned. The 1.5% escrow creation fee is non-refundable.`;
+      ? `An admin resolved the dispute in your favor. ${amount} FARM was credited to your wallet. The escrow creation fee is non-refundable.${resolution.note ? ` Note: ${resolution.note}` : ''}`
+      : `Your escrow for ${escrow.title} has been refunded. ${amount} FARM was returned. The escrow creation fee is non-refundable.`;
     const refundNotifications = [
       this.notificationsService.sendNotification(escrow.buyer_id, {
         type: 'escrow_refunded',
@@ -1126,7 +1132,7 @@ export class EscrowService {
         this.notificationsService.sendNotification(escrow.seller_id, {
           type: 'escrow_refunded',
           title: "Dispute resolved in buyer's favor",
-          body: `The disputed escrow for ${escrow.title} was refunded to the buyer. ${amount} FARM was returned; the 1.5% escrow creation fee is non-refundable.${resolution.note ? ` Note: ${resolution.note}` : ''}`,
+          body: `The disputed escrow for ${escrow.title} was refunded to the buyer. ${amount} FARM was returned; the escrow creation fee is non-refundable.${resolution.note ? ` Note: ${resolution.note}` : ''}`,
           entityId: escrow.id,
           metadata: {
             escrow_id: escrow.id,

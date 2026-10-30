@@ -1,5 +1,12 @@
 // src/deposit/deposit.service.ts
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  Optional,
+} from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { computeFee, ruleFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
@@ -26,6 +33,7 @@ export class DepositService {
     private notificationsService: NotificationsService,
     private readonly currencyConversion: CurrencyConversionService,
     private readonly nowpayments: NowpaymentsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   async getNowpaymentsCurrencies() {
@@ -943,6 +951,7 @@ export class DepositService {
       );
     }
 
+    const merchantRule = await ruleFor(this.fees, 'merchant');
     const result = await this.prisma.$transaction(async (tx) => {
       const merchant = await tx.merchants.findUnique({
         where: { id: merchantId },
@@ -985,7 +994,7 @@ export class DepositService {
       }
 
       const amount = this.normalizeAmount(Number(deposit.amount));
-      const fee = this.normalizeAmount(amount * 0.01);
+      const fee = this.normalizeAmount(computeFee(merchantRule, amount, 8));
       const merchantNet = this.normalizeAmount(amount - fee);
       const merchantBalanceBefore = this.normalizeAmount(
         Number(merchantWallet.balance ?? 0),
@@ -996,7 +1005,7 @@ export class DepositService {
       const settledMetadata = {
         ...metadata,
         platform_fee_type: 'merchant_sale',
-        platform_fee_percent: 1,
+        platform_fee_percent: merchantRule.percent,
         platform_fee: fee,
       };
 

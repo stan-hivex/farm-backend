@@ -5,7 +5,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { creditPlatformInTx, feeFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -54,6 +57,7 @@ export class MarketplaceService {
     private readonly prisma: PrismaService,
     private readonly auth: AuthService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   sectors() {
@@ -319,6 +323,9 @@ export class MarketplaceService {
       },
     });
 
+    // Marketplace fee (default 3%) is added on top of each investment.
+    const fee = await feeFor(this.fees, 'investment', amount);
+    const totalDebit = Number((amount + fee).toFixed(2));
     const result = await this.prisma.$transaction(async (tx) => {
       // Atomic capacity claim: never oversubscribe, only while still investable.
       const claimed = await tx.$executeRaw`
@@ -335,8 +342,8 @@ export class MarketplaceService {
         );
       // Atomic debit: funds move into platform custody until the admin settles the round.
       const debited = await tx.$executeRaw`
-        UPDATE wallets SET balance = balance - ${amount}, updated_at = now()
-         WHERE id = ${wallet.id}::uuid AND balance - COALESCE(locked_balance,0) >= ${amount}`;
+        UPDATE wallets SET balance = balance - ${totalDebit}, updated_at = now()
+         WHERE id = ${wallet.id}::uuid AND balance - COALESCE(locked_balance,0) >= ${totalDebit}`;
       if (debited !== 1) throw new BadRequestException('Insufficient balance');
       const txn = await tx.transactions.create({
         data: {
@@ -345,7 +352,7 @@ export class MarketplaceService {
           transaction_type: 'investment',
           status: 'completed',
           amount,
-          fee: 0,
+          fee,
           net_amount: amount,
           description: `Investment: ${project.project_name}`,
           metadata: {
@@ -362,10 +369,21 @@ export class MarketplaceService {
           transaction_id: txn.id,
           wallet_id: wallet.id,
           entry_type: 'debit',
-          amount,
-          description: `Investment in ${project.project_name}`,
+          amount: totalDebit,
+          description:
+            fee > 0
+              ? `Investment in ${project.project_name} (incl. ${fee} FARM fee)`
+              : `Investment in ${project.project_name}`,
         },
       });
+      if (fee > 0) {
+        await creditPlatformInTx(
+          tx,
+          fee,
+          `Investment fee: ${project.project_name}`,
+          txn.id,
+        );
+      }
       const inv = await tx.user_investments.create({
         data: {
           user_id: userId,

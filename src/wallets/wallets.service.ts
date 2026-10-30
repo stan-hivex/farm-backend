@@ -4,7 +4,10 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { computeFee, creditPlatformInTx, ruleFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -26,6 +29,7 @@ export class WalletsService {
     private notificationsService: NotificationsService,
     private cache: CacheService,
     private websocket: WebsocketGateway,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   async getMyWallet(userId: string) {
@@ -69,6 +73,8 @@ export class WalletsService {
       device_fingerprint?: string;
     },
     ip: string,
+    /** Internal only (never from request bodies): merchant flows charge the receiving merchant. */
+    opts?: { merchantFee?: boolean },
   ) {
     if (dto.amount <= 0)
       throw new BadRequestException('Amount must be greater than zero');
@@ -163,17 +169,17 @@ export class WalletsService {
         throw new BadRequestException('Cannot send to yourself');
       }
 
-      const feeCfg = await tx.fee_configurations.findFirst({
-        where: { transaction_type: 'transfer', is_active: true },
-      });
-      const pctFee = feeCfg ? Number(feeCfg.percentage_fee) / 100 : 0;
-      const flatFee = feeCfg ? Number(feeCfg.flat_fee) : 0;
-      let fee = dto.amount * pctFee + flatFee;
-      if (feeCfg)
-        fee = Math.max(
-          Number(feeCfg.minimum_fee),
-          Math.min(Number(feeCfg.maximum_fee ?? 999999), fee),
-        );
+      // P2P transfer fee from the fee schedule (default 0%)
+      const fee = computeFee(
+        await ruleFor(this.fees, 'transfer'),
+        dto.amount,
+        8,
+      );
+      // Merchant fee (default 1%) is paid by the merchant: deducted from what they receive.
+      const merchantFee = opts?.merchantFee
+        ? computeFee(await ruleFor(this.fees, 'merchant'), dto.amount, 8)
+        : 0;
+      const receiverCredit = Number((dto.amount - merchantFee).toFixed(8));
       const totalOut = dto.amount + fee;
 
       const available =
@@ -212,12 +218,15 @@ export class WalletsService {
           status: 'processing',
           amount: dto.amount,
           fee,
-          net_amount: dto.amount - fee,
+          net_amount: receiverCredit,
           currency: 'FARM',
           description:
             dto.description || `Transfer to ${dto.recipient_identifier}`,
           ip_address: ip,
-          metadata: { user_id: senderId },
+          metadata: {
+            user_id: senderId,
+            ...(merchantFee > 0 ? { merchant_fee: merchantFee } : {}),
+          },
         },
       });
 
@@ -233,7 +242,7 @@ export class WalletsService {
       });
       const updatedReceiverWallet = await tx.wallets.update({
         where: { id: receiverWalletId },
-        data: { balance: { increment: dto.amount } },
+        data: { balance: { increment: receiverCredit } },
       });
       receiverUserId = receiverUserId ?? recvWallet.user_id ?? undefined;
 
@@ -252,13 +261,32 @@ export class WalletsService {
             transaction_id: transaction.id,
             wallet_id: receiverWalletId,
             entry_type: 'credit',
-            amount: dto.amount,
+            amount: receiverCredit,
             balance_before: Number(recvWallet.balance),
-            balance_after: Number(recvWallet.balance) + dto.amount,
-            description: 'Transfer received',
+            balance_after: Number(recvWallet.balance) + receiverCredit,
+            description:
+              merchantFee > 0
+                ? `Payment received (after ${merchantFee} FARM merchant fee)`
+                : 'Transfer received',
           },
         ],
       });
+
+      if (merchantFee > 0) {
+        await creditPlatformInTx(
+          tx,
+          merchantFee,
+          `Merchant fee ${reference}`,
+          transaction.id,
+        );
+      }
+      if (fee > 0)
+        await creditPlatformInTx(
+          tx,
+          fee,
+          `Transfer fee ${reference}`,
+          transaction.id,
+        );
 
       await tx.transactions.update({
         where: { id: transaction.id },
@@ -270,6 +298,7 @@ export class WalletsService {
           transaction_reference: reference,
           amount: dto.amount,
           fee,
+          merchant_fee: merchantFee,
           status: 'completed',
         },
         message: 'Transfer successful',

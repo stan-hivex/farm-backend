@@ -137,6 +137,7 @@ describe('BusinessCommerceService payments', () => {
         pin: '1234',
       }),
       '1.1.1.1',
+      { merchantFee: true },
     );
     expect(prisma.business_payments.create).toHaveBeenCalled();
     expect(res.data.status).toBe('successful');

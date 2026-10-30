@@ -14,3 +14,6 @@
 
 ## Mkulima voice input
 - New `POST /api/v1/ai/voice`, which transcribes audio with xAI STT (auth, rate limit, 2 MB/60 s limit, audio not stored). `AI_VOICE_ENABLED` flag. Chat accepts `language`; the system prompt forbids PINs in chat. See docs/MKULIMA_VOICE.md.
+
+## Fee schedule
+- DB-backed fee schedule (`fee_configurations`, additive migration `20261115090000_fee_schedule` with default rows) plus `FeesService` and public `GET /api/v1/fees` and `/fees/quote`. Hardcoded escrow, withdrawal, merchant and transfer rates were replaced. New: 3% investment fee, 5% travel commission line (FX markup default 0), 1% merchant fee on links, invoices and pay-business. Removed the dead 2% `fee_fiat` in payments. See docs/FEES.md.

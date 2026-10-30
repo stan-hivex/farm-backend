@@ -33,6 +33,15 @@ function marketMocks(over: any = {}) {
     $executeRaw: jest.fn().mockResolvedValue(1),
     transactions: { create: jest.fn().mockResolvedValue({ id: 't1' }) },
     ledger_entries: { create: jest.fn() },
+    users: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'admin', wallets: [{ id: 'pw' }] }),
+    },
+    wallets: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'pw', balance: 0 }),
+      update: jest.fn(),
+    },
     user_investments: {
       create: jest
         .fn()
@@ -198,6 +207,17 @@ describe('Phase 4 – invest gates', () => {
     expect(tx.user_investments.create.mock.calls[0][0].data).toMatchObject({
       status: 'committed',
       disclosure_acceptance_id: 'r1',
+    });
+  });
+  it('adds the 3% marketplace fee on top and credits it to the platform wallet', async () => {
+    const { svc, tx } = marketMocks();
+    await svc.invest('u1', PID, good, '1.2.3.4');
+    const t = tx.transactions.create.mock.calls[0][0].data;
+    expect(t.amount).toBe(good.amount);
+    expect(t.fee).toBeCloseTo(good.amount * 0.03, 2);
+    expect(tx.wallets.update).toHaveBeenCalledWith({
+      where: { id: 'pw' },
+      data: { balance: { increment: t.fee } },
     });
   });
 });

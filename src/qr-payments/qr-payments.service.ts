@@ -3,7 +3,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { computeFee, ruleFor } from '../fees/fee-defaults';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { CacheService } from '../common/cache/cache.service';
@@ -36,6 +39,7 @@ export class QrPaymentsService {
     private readonly notifications: NotificationsService,
     private readonly receipts: ReceiptsService,
     private readonly nowpayments: NowpaymentsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   async getPublicMerchant(merchantId: string) {
@@ -666,13 +670,14 @@ export class QrPaymentsService {
     const merchantId = qrPayment.merchant_id;
     const walletId = transaction.receiver_wallet_id;
 
+    const merchantRule = await ruleFor(this.fees, 'merchant');
     const settled = await this.prisma.$transaction(async (tx) => {
       const settledAt = new Date();
       const amount = Number(transaction.amount);
       if (!Number.isFinite(amount) || amount <= 0) {
         throw new BadRequestException('QR payment amount is invalid');
       }
-      const saleFee = Number((amount * 0.01).toFixed(8));
+      const saleFee = computeFee(merchantRule, amount, 8);
       const merchantNet = amount - saleFee;
       const claim = await tx.transactions.updateMany({
         where: { id: transaction.id, status: { in: ['pending', 'failed'] } },

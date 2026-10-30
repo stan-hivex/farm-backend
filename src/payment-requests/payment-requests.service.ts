@@ -4,7 +4,10 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { computeFee, ruleFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -22,6 +25,7 @@ export class PaymentRequestsService {
     private authService: AuthService,
     private notificationsService: NotificationsService,
     private websocket: WebsocketGateway,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   async createRequest(
@@ -311,22 +315,11 @@ export class PaymentRequestsService {
       const requesterWallet = request.wallets_requester;
       const amount = request.amount as any;
 
-      const feeCfg = await tx.fee_configurations.findFirst({
-        where: { transaction_type: 'transfer', is_active: true },
-      });
-      const pctFee = feeCfg ? Number(feeCfg.percentage_fee) / 100 : 0;
-      const flatFee = feeCfg ? Number(feeCfg.flat_fee) : 0;
-      let fee = new Prisma.Decimal(flatFee);
-      if (feeCfg) {
-        fee = amount.mul(pctFee).plus(flatFee);
-        fee = Prisma.Decimal.max(
-          new Prisma.Decimal(feeCfg.minimum_fee ?? 0),
-          Prisma.Decimal.min(
-            new Prisma.Decimal(feeCfg.maximum_fee ?? 999999),
-            fee,
-          ),
-        );
-      }
+      // P2P transfer fee from the fee schedule (default 0%)
+      const transferRule = await ruleFor(this.fees, 'transfer');
+      const fee = new Prisma.Decimal(
+        computeFee(transferRule, Number(amount), 8),
+      );
       const totalOut = amount.plus(fee);
 
       const payerBalance = payerWallet.balance ?? new Prisma.Decimal(0);

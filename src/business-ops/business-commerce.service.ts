@@ -642,6 +642,7 @@ export class BusinessCommerceService {
       payerId,
       { recipient_identifier: w.wallet_address, amount, pin, description },
       ip,
+      { merchantFee: true },
     );
     await this.prisma.business_payments.create({
       data: {
@@ -664,6 +665,7 @@ export class BusinessCommerceService {
         transaction_reference: res.data.transaction_reference,
         amount,
         fee: res.data.fee,
+        merchant_fee: res.data.merchant_fee ?? 0,
         status: 'successful',
       },
       message: 'Payment successful',

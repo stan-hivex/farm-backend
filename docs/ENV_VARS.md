@@ -9,6 +9,8 @@ Generated from a scan of `process.env` / ConfigService usage in `src/`. **Never 
 | `AGENT_REQUEST_TTL_MIN` | agent-payments | optional | 30 |  |
 | `AI_API_KEY` | ai-assistant | optional | — (secret) | secret — store in Render env only |
 | `AI_ASSISTANT_ENABLED` | ai-assistant | optional | — |  |
+| `FEE_<KEY>_PCT` | fees | optional | code default | Override a default fee percent when no DB row exists (see docs/FEES.md) |
+| `CONSOLIDATION_FUND_WALLET_ID` | fees | optional | — | Project listing consolidation fund wallet (pending mechanics) |
 | `AI_VOICE_ENABLED` | ai-assistant | optional | true (when the assistant is on) | Set to `false` to turn off `POST /api/v1/ai/voice` (xAI STT) |
 | `AI_BASE_URL` | ai-assistant | optional | AI_DEFAULT_BASE_URL |  |
 | `AI_DAILY_MESSAGE_LIMIT` | ai-assistant | optional | 50 |  |

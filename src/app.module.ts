@@ -4,6 +4,7 @@ import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
+import { FeesModule } from './fees/fees.module';
 import { PrismaModule } from './database/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { CacheModule } from './common/cache/cache.module';
@@ -103,6 +104,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     }),
     BullModule.registerQueue({ name: 'expiry-tasks' }),
     DatabaseModule,
+    FeesModule,
     PrismaModule,
     RedisModule,
     CacheModule,

@@ -4,7 +4,10 @@ import {
   BadGatewayException,
   BadRequestException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { feeFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -53,6 +56,7 @@ export class WithdrawService {
     private readonly currencyConversionService: CurrencyConversionService,
     private readonly websocket: WebsocketGateway,
     private readonly nowpayments: NowpaymentsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   /**
@@ -169,9 +173,8 @@ export class WithdrawService {
       );
     }
 
-    // Platform withdrawal fee: enforce 1.5% for all withdrawal methods
-    const feePercent = 0.015;
-    const fee = Number((amount * feePercent).toFixed(8));
+    // Platform withdrawal fee from the fee schedule (default 1.5%, all methods)
+    const fee = await feeFor(this.fees, 'withdrawal', amount, 8);
     const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
     const normalizedNetworkValue = dto.network ?? '';
@@ -359,7 +362,7 @@ export class WithdrawService {
       throw new BadRequestException('Insufficient balance for this withdrawal');
     }
 
-    const fee = Number((amount * 0.015).toFixed(8));
+    const fee = await feeFor(this.fees, 'withdrawal', amount, 8);
     const settlement = Number((amount - fee).toFixed(8));
     const rate = await this.currencyConversionService.getCurrentRate();
     const farmUsdRate = Number(rate.farm_usd_rate ?? 0);

@@ -92,6 +92,7 @@ export class HotelsService {
       price_farm: p?.total ?? null,
       fx_rate: p?.fx_rate ?? null,
       service_fee_farm: p?.fee ?? null,
+      base_price_farm: p?.base ?? null,
       bookable: !!p,
     };
   }

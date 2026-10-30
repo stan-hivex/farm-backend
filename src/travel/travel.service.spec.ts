@@ -3,6 +3,9 @@ import { TravelService } from './travel.service';
 import { DuffelProvider } from './duffel.provider';
 import { ProviderRejectedError, ProviderUnknownError } from './travel-provider';
 
+// Booking-flow tests use provider prices as-is; the commission is covered by its own test.
+process.env.FEE_TRAVEL_COMMISSION_PCT = '0';
+
 const U = 'u1';
 const OFFER = {
   id: 'off_123456',
@@ -188,6 +191,20 @@ describe('TravelService', () => {
     expect((await svc.priceFarm(100, 'USD'))!.total).toBe(13260);
     expect((await svc.priceFarm(5000, 'KES'))!.total).toBe(5000);
     expect(await svc.priceFarm(10, 'GBP')).toBeNull();
+  });
+
+  it('adds the travel commission as a separate FARM fee line (default 5%)', async () => {
+    const prev = process.env.FEE_TRAVEL_COMMISSION_PCT;
+    delete process.env.FEE_TRAVEL_COMMISSION_PCT;
+    try {
+      const { svc } = mk(mkPrisma());
+      const p = (await svc.priceFarm(5000, 'KES'))!;
+      expect(p.base).toBe(5000);
+      expect(p.fee).toBe(250);
+      expect(p.total).toBe(5250);
+    } finally {
+      process.env.FEE_TRAVEL_COMMISSION_PCT = prev;
+    }
   });
 
   it('validates search input', () => {

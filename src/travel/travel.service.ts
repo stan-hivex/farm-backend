@@ -8,6 +8,8 @@ import {
   ServiceUnavailableException,
   Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { feeFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
@@ -46,6 +48,7 @@ export class TravelService {
     private readonly rates: RateService,
     @Inject(FLIGHT_PROVIDER) private readonly flights: FlightProvider,
     @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   /** Centralized in-app notification; never blocks or fails a booking. */
@@ -84,22 +87,33 @@ export class TravelService {
       throw new ServiceUnavailableException('Travel is not available yet');
   }
 
-  /** FARM price for a provider price. KES is 1:1; USD uses the configured USDC/KES mid + markup; other currencies are unavailable. */
+  /**
+   * FARM price for a provider price. KES is 1:1; USD uses the configured USDC/KES mid (+ optional
+   * TRAVEL_FX_MARKUP_BPS, default 0). The FARM fee (travel_commission, default 5%, plus optional flat
+   * TRAVEL_SERVICE_FEE_FARM) is a separate line on top. Other currencies are unavailable.
+   */
   async priceFarm(amount: number, currency: string) {
-    const fee = Math.max(Number(this.env.TRAVEL_SERVICE_FEE_FARM ?? 0) || 0, 0);
-    if (currency === 'KES')
-      return { fx_rate: 1, fee, total: round2up(amount + fee) };
-    if (currency === 'USD') {
+    const flat = Math.max(
+      Number(this.env.TRAVEL_SERVICE_FEE_FARM ?? 0) || 0,
+      0,
+    );
+    let fx: number;
+    if (currency === 'KES') fx = 1;
+    else if (currency === 'USD') {
       const r = await this.rates.usdcKes(this.env);
       if (!r?.mid) return null;
       const markup = Math.min(
-        Math.max(Number(this.env.TRAVEL_FX_MARKUP_BPS ?? 200) || 0, 0),
+        Math.max(Number(this.env.TRAVEL_FX_MARKUP_BPS ?? 0) || 0, 0),
         1000,
       );
-      const fx = Math.ceil(r.mid * (1 + markup / 10_000) * 1e6) / 1e6;
-      return { fx_rate: fx, fee, total: round2up(amount * fx + fee) };
-    }
-    return null;
+      fx = Math.ceil(r.mid * (1 + markup / 10_000) * 1e6) / 1e6;
+    } else return null;
+    const base = round2up(amount * fx);
+    const fee =
+      Math.round(
+        ((await feeFor(this.fees, 'travel_commission', base)) + flat) * 100,
+      ) / 100;
+    return { fx_rate: fx, base, fee, total: round2up(base + fee) };
   }
 
   private async withPrice(o: FlightOffer) {
@@ -109,6 +123,7 @@ export class TravelService {
       price_farm: p?.total ?? null,
       fx_rate: p?.fx_rate ?? null,
       service_fee_farm: p?.fee ?? null,
+      base_price_farm: p?.base ?? null,
       bookable: !!p,
     };
   }

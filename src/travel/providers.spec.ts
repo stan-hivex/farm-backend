@@ -13,6 +13,9 @@ import { HotelsService } from './hotels.service';
 import { TravelService } from './travel.service';
 import { ProviderRejectedError, ProviderUnknownError } from './travel-provider';
 
+// Booking-flow tests use provider prices as-is; the commission is covered by its own test.
+process.env.FEE_TRAVEL_COMMISSION_PCT = '0';
+
 const SHOP = {
   solutions: [
     {
