@@ -4,11 +4,12 @@ import { WithdrawService } from './withdraw.service';
 import { DatabaseModule } from '../database/database.module';
 import { AuthModule } from '../auth/auth.module';
 import { PaystackModule } from '../paystack/paystack.module';
-import { IvorypayModule } from '../ivorypay/ivorypay.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SecurityModule } from '../security/security.module';
 import { CurrencyModule } from '../currency/currency.module';
 import { KycGuard } from '../common/guards/kyc.guard';
+import { WebsocketModule } from '../websocket/websocket.module';
+import { NowpaymentsModule } from '../nowpayments/nowpayments.module';
 
 @Module({
   imports: [
@@ -16,9 +17,10 @@ import { KycGuard } from '../common/guards/kyc.guard';
     AuthModule,
     forwardRef(() => PaystackModule),
     NotificationsModule,
-    IvorypayModule,
     SecurityModule,
     CurrencyModule,
+    WebsocketModule,
+    NowpaymentsModule,
   ],
   controllers: [WithdrawController],
   providers: [WithdrawService, KycGuard],
