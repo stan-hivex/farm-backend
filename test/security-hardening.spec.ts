@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';

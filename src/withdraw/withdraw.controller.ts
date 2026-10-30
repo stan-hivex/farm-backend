@@ -17,7 +17,6 @@ import { WithdrawService } from './withdraw.service';
 import { KycGuard } from '../common/guards/kyc.guard';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { TransferWithdrawDto } from './dto/transfer-withdraw.dto';

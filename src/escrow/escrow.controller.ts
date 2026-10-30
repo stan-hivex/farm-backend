@@ -7,7 +7,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import {
   IsNotEmpty,
   IsString,
@@ -27,7 +27,6 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
-import { RequireOwnership } from '../common/decorators/ownership.decorator';
 
 class EscrowAuthDto {
   @IsOptional() @IsString() @Length(4, 6) pin?: string;

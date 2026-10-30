@@ -1,7 +1,6 @@
 import {
   Injectable,
   Logger,
-  Inject,
   BadRequestException,
   Optional,
 } from '@nestjs/common';

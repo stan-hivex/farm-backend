@@ -1,13 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  UseGuards,
-  Req,
-  UnauthorizedException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import {
   IsNotEmpty,
@@ -27,7 +18,6 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Public } from '../common/decorators/public.decorator';
 // Paystack webhook endpoint removed in favor of unified webhook queue flow
 
 class DepositDto {

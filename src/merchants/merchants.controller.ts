@@ -16,7 +16,6 @@ import {
   IsString,
   IsNumber,
   IsPositive,
-  IsOptional,
 } from 'class-validator';
 import { MerchantsService } from './merchants.service';
 import { JwtGuard } from '../common/guards/jwt.guard';

@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import * as crypto from 'crypto';
 

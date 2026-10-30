@@ -2,7 +2,6 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import {
-  getBankCode,
   normalizeKenyanPhoneNumber,
   type KenyanBankEnvironment,
 } from './ke-bank-mapper';
