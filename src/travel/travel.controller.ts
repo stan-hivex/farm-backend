@@ -11,6 +11,7 @@ import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { TravelService } from './travel.service';
+import { HotelsService } from './hotels.service';
 
 class SearchDto {
   @IsString() @Length(3, 3) origin!: string;
@@ -29,6 +30,7 @@ class PassengerDto {
   @IsString() born_on!: string;
   @IsString() email!: string;
   @IsString() phone_number!: string;
+  @IsOptional() @IsString() @Length(2, 2) nationality?: string;
 }
 class BookDtoV {
   @IsString() @IsNotEmpty() offer_id!: string;
@@ -41,12 +43,55 @@ class BookDtoV {
 
 @ApiTags('Travel')
 @ApiBearerAuth('JWT')
+class HotelSearchDto {
+  @IsOptional() @IsString() @Length(1, 60) city_name?: string;
+  @IsOptional() @IsString() @Length(2, 2) country_code?: string;
+  @IsOptional() @IsString() @Length(3, 3) iata_code?: string;
+  @IsString() @Length(10, 10) checkin!: string;
+  @IsString() @Length(10, 10) checkout!: string;
+  @Type(() => Number) @IsInt() @Min(1) @Max(6) adults!: number;
+}
+class HotelPrebookDto {
+  @IsString() @Length(5, 4000) offer_id!: string;
+}
+class HotelGuestDto {
+  @IsString() @Length(1, 40) first_name!: string;
+  @IsString() @Length(1, 40) last_name!: string;
+  @IsString() @Length(5, 120) email!: string;
+  @IsString() @Length(8, 16) phone!: string;
+}
+class HotelBookDtoV {
+  @IsString() @Length(3, 200) prebook_id!: string;
+  @Type(() => Number) @IsNumber() expected_total_farm!: number;
+  @IsString() @Length(8, 80) idempotency_key!: string;
+  @IsString() @IsNotEmpty() pin!: string;
+  @ValidateNested() @Type(() => HotelGuestDto) guest!: HotelGuestDto;
+}
+
 @UseGuards(JwtGuard)
 @Controller({ path: 'travel', version: '1' })
 export class TravelController {
-  constructor(private readonly svc: TravelService) {}
+  constructor(private readonly svc: TravelService, private readonly hotels: HotelsService) {}
 
-  @Get('status') status() { return this.svc.status(); }
+  @Get('status') status() {
+    const h = this.hotels.status();
+    return { ...this.svc.status(), stays: h.enabled ? { provider: h.provider, sandbox: h.sandbox } : null, hotels: h };
+  }
+
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @Post('hotels/search') hotelSearch(@Body() dto: HotelSearchDto) { return this.hotels.search(dto).then((data) => ({ data })); }
+
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @Post('hotels/prebook') hotelPrebook(@Body() dto: HotelPrebookDto) { return this.hotels.prebook(dto.offer_id); }
+
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @UseGuards(JwtGuard, KycGuard)
+  @Post('hotels/book')
+  hotelBook(@CurrentUser() u: any, @Body() dto: HotelBookDtoV, @Req() req: Request) { return this.hotels.book(u.id, dto, req.ip || ''); }
+
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('hotels/bookings/:id/cancel')
+  hotelCancel(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) { return this.hotels.cancel(u.id, id); }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('flights/search')

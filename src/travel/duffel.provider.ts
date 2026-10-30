@@ -32,6 +32,10 @@ export class DuffelProvider implements FlightProvider {
     return this.env.TRAVEL_ALLOW_LIVE === 'true';
   }
 
+  isSandbox() {
+    return !this.token.startsWith('duffel_live_');
+  }
+
   private async call(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<J> {
     const base = (this.env.DUFFEL_BASE_URL ?? 'https://api.duffel.com').replace(/\/+$/, '');
     const ctrl = new AbortController();
@@ -121,7 +125,7 @@ export class DuffelProvider implements FlightProvider {
       {
         type: 'instant',
         selected_offers: [offer.id],
-        passengers,
+        passengers: passengers.map(({ nationality: _n, ...p }) => p),
         payments: [{ type: 'balance', currency: offer.total_currency, amount: offer.total_amount.toFixed(2) }],
         metadata: { farm_booking: idempotencyKey.slice(0, 50) },
       },

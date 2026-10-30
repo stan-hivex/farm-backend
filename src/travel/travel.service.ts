@@ -11,8 +11,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
 import { RateService } from '../chain-wallet/rate.service';
 import { generateTxReference } from '../common/utils/reference.util';
-import { DuffelProvider } from './duffel.provider';
-import { FlightOffer, FlightSearch, Passenger, ProviderRejectedError, ProviderUnknownError } from './travel-provider';
+import { Inject } from '@nestjs/common';
+import type { FlightProvider } from './travel-provider';
+import { FLIGHT_PROVIDER, FlightOffer, FlightSearch, Passenger, ProviderRejectedError, ProviderUnknownError } from './travel-provider';
 
 const IATA = /^[A-Z]{3}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -34,12 +35,12 @@ export class TravelService {
     private readonly prisma: PrismaService,
     private readonly auth: AuthService,
     private readonly rates: RateService,
-    private readonly flights: DuffelProvider,
+    @Inject(FLIGHT_PROVIDER) private readonly flights: FlightProvider,
     @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   /** Centralized in-app notification; never blocks or fails a booking. */
-  private notify(userId: string, title: string, body: string, entityId: string) {
+  notify(userId: string, title: string, body: string, entityId: string) {
     if (!this.notifications) return;
     Promise.resolve(this.notifications.createInApp(userId, { type: 'transaction', title, body, entityId, metadata: { kind: 'travel_booking' } })).catch(() => undefined);
   }
@@ -55,7 +56,7 @@ export class TravelService {
     const on = this.enabled();
     return {
       enabled: on,
-      flights: on ? { provider: this.flights.name, sandbox: !(this.env.DUFFEL_API_TOKEN ?? '').startsWith('duffel_live_') } : null,
+      flights: on ? { provider: this.flights.name, sandbox: this.flights.isSandbox() } : null,
       stays: null,
     };
   }
@@ -105,12 +106,21 @@ export class TravelService {
       if (e instanceof ProviderRejectedError) throw new BadRequestException(e.message);
       throw new ServiceUnavailableException('Flight search is unavailable right now');
     });
-    return Promise.all(offers.map((o) => this.withPrice(o)));
+    return Promise.all(offers.map(async (o) => TravelService.strip(await this.withPrice(o))));
+  }
+
+  static strip<T extends { provider_data?: unknown }>(o: T): Omit<T, 'provider_data'> {
+    const { provider_data: _pd, ...rest } = o;
+    return rest;
   }
 
   async offer(id: string) {
+    return TravelService.strip(await this.offerFull(id));
+  }
+
+  private async offerFull(id: string) {
     this.ensure();
-    if (!/^[A-Za-z0-9_]{5,80}$/.test(id)) throw new BadRequestException('Invalid offer id');
+    if (!/^[A-Za-z0-9_-]{5,1500}$/.test(id)) throw new BadRequestException('Invalid offer id');
     const o = await this.flights.getOffer(id).catch((e) => {
       if (e instanceof NotFoundException) throw e;
       if (e instanceof ProviderRejectedError) throw new BadRequestException(e.message);
@@ -132,7 +142,9 @@ export class TravelService {
       if (!/^\+[1-9]\d{6,14}$/.test(p.phone_number)) throw new BadRequestException('Phone must be in +2547... format');
       const name = (s: string) => String(s ?? '').trim().slice(0, 60);
       if (!name(p.given_name) || !name(p.family_name)) throw new BadRequestException('Passenger names are required');
-      return { id: p.id, title: p.title, gender: p.gender, born_on: p.born_on, email: p.email.trim(), phone_number: p.phone_number, given_name: name(p.given_name), family_name: name(p.family_name) };
+      const nat = String(p.nationality ?? '').toUpperCase().trim();
+      if (nat && !/^[A-Z]{2}$/.test(nat)) throw new BadRequestException('Nationality must be a 2-letter country code');
+      return { ...(nat ? { nationality: nat } : {}), id: p.id, title: p.title, gender: p.gender, born_on: p.born_on, email: p.email.trim(), phone_number: p.phone_number, given_name: name(p.given_name), family_name: name(p.family_name) };
     });
   }
 
@@ -166,7 +178,7 @@ export class TravelService {
     if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
     await this.auth.verifyPin(userId, dto.pin);
 
-    const offer = await this.offer(dto.offer_id);
+    const offer = await this.offerFull(dto.offer_id);
     if (!offer.bookable || offer.price_farm == null) throw new ServiceUnavailableException('This offer cannot be priced in FARM right now');
     if (offer.live_mode && this.env.TRAVEL_ALLOW_LIVE !== 'true') throw new ForbiddenException('Live bookings are disabled');
     if (offer.price_farm > Number(dto.expected_total_farm) + 0.001)
@@ -176,70 +188,25 @@ export class TravelService {
     if (dto.ai_action_id) await this.checkAiAction(userId, dto.ai_action_id, offer.id, total);
 
     // 1) Hold: debit the wallet into a processing escrow_lock transaction (atomic, balance re-checked in-tx).
-    let booking;
-    try {
-      booking = await this.prisma.$transaction(async (tx) => {
-        const w = await tx.wallets.findFirst({ where: { user_id: userId, is_active: true } });
-        if (!w) throw new NotFoundException('Wallet not found');
-        if (w.is_frozen) throw new ForbiddenException('Your wallet is frozen. Contact support.');
-        const available = Number(w.balance) - Number(w.locked_balance ?? 0);
-        if (available < total) throw new BadRequestException(`Insufficient balance. Available: ${available.toFixed(2)} FARM`);
-        const upd = await tx.wallets.updateMany({ where: { id: w.id, balance: { gte: total } }, data: { balance: { decrement: total } } });
-        if (upd.count !== 1) throw new BadRequestException('Insufficient balance');
-        const t = await tx.transactions.create({
-          data: {
-            transaction_reference: generateTxReference(),
-            sender_wallet_id: w.id,
-            transaction_type: 'escrow_lock',
-            status: 'processing',
-            amount: total,
-            fee: offer.service_fee_farm ?? 0,
-            net_amount: total - (offer.service_fee_farm ?? 0),
-            currency: 'FARM',
-            description: `Flight ${offer.slices.map((s) => `${s.origin}-${s.destination}`).join(', ')}`,
-            ip_address: ip,
-            metadata: { user_id: userId, kind: 'travel_flight', provider: offer.provider, offer_id: offer.id },
-          },
-        });
-        await tx.ledger_entries.create({
-          data: {
-            transaction_id: t.id,
-            wallet_id: w.id,
-            entry_type: 'debit',
-            amount: total,
-            balance_before: Number(w.balance),
-            balance_after: Number(w.balance) - total,
-            description: 'Flight booking (held)',
-          },
-        });
-        return tx.travel_bookings.create({
-          data: {
-            user_id: userId,
-            idempotency_key: key,
-            provider: offer.provider,
-            provider_offer_id: offer.id,
-            status: 'payment_held',
-            offer_currency: offer.total_currency,
-            offer_amount: offer.total_amount,
-            fx_rate: offer.fx_rate,
-            service_fee_farm: offer.service_fee_farm ?? 0,
-            total_farm: total,
-            transaction_id: t.id,
-            ai_action_id: dto.ai_action_id ?? null,
-            live_mode: offer.live_mode,
-            summary: { owner: offer.owner, slices: offer.slices } as object,
-            passengers: passengers.map((p) => ({ given_name: p.given_name, family_name: p.family_name })) as object,
-          },
-        });
-      });
-    } catch (e) {
-      // Unique (user, idempotency_key) race: return the winner.
-      if ((e as { code?: string }).code === 'P2002') {
-        const b = await this.prisma.travel_bookings.findUnique({ where: { user_id_idempotency_key: { user_id: userId, idempotency_key: key } } });
-        if (b) return this.view(b);
-      }
-      throw e;
-    }
+    const booking = await this.holdAndCreate(userId, key, ip, {
+      total,
+      fee: offer.service_fee_farm ?? 0,
+      description: `Flight ${offer.slices.map((s) => `${s.origin}-${s.destination}`).join(', ')}`,
+      ledger: 'Flight booking (held)',
+      metadata: { kind: 'travel_flight', provider: offer.provider, offer_id: offer.id },
+      booking: {
+        provider: offer.provider,
+        provider_offer_id: offer.id.slice(0, 1500),
+        offer_currency: offer.total_currency,
+        offer_amount: offer.total_amount,
+        fx_rate: offer.fx_rate,
+        ai_action_id: dto.ai_action_id ?? null,
+        live_mode: offer.live_mode,
+        summary: { owner: offer.owner, slices: offer.slices } as object,
+        passengers: passengers.map((p) => ({ given_name: p.given_name, family_name: p.family_name })) as object,
+      },
+    });
+    if ((booking as { _existing?: boolean })._existing) return this.view(booking);
 
     // 2) Book with the provider.
     try {
@@ -269,6 +236,73 @@ export class TravelService {
     }
   }
 
+  /**
+   * Debits the wallet into a processing escrow_lock transaction and creates the travel_bookings row
+   * (atomic, balance re-checked in-tx). On an idempotency race returns the existing row flagged _existing.
+   */
+  async holdAndCreate(
+    userId: string,
+    key: string,
+    ip: string,
+    p: { total: number; fee: number; description: string; ledger: string; metadata: Record<string, unknown>; booking: Record<string, any> },
+  ): Promise<any> {
+    const total = p.total;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const w = await tx.wallets.findFirst({ where: { user_id: userId, is_active: true } });
+        if (!w) throw new NotFoundException('Wallet not found');
+        if (w.is_frozen) throw new ForbiddenException('Your wallet is frozen. Contact support.');
+        const available = Number(w.balance) - Number(w.locked_balance ?? 0);
+        if (available < total) throw new BadRequestException(`Insufficient balance. Available: ${available.toFixed(2)} FARM`);
+        const upd = await tx.wallets.updateMany({ where: { id: w.id, balance: { gte: total } }, data: { balance: { decrement: total } } });
+        if (upd.count !== 1) throw new BadRequestException('Insufficient balance');
+        const t = await tx.transactions.create({
+          data: {
+            transaction_reference: generateTxReference(),
+            sender_wallet_id: w.id,
+            transaction_type: 'escrow_lock',
+            status: 'processing',
+            amount: total,
+            fee: p.fee,
+            net_amount: total - p.fee,
+            currency: 'FARM',
+            description: p.description,
+            ip_address: ip,
+            metadata: { user_id: userId, ...p.metadata } as object,
+          },
+        });
+        await tx.ledger_entries.create({
+          data: {
+            transaction_id: t.id,
+            wallet_id: w.id,
+            entry_type: 'debit',
+            amount: total,
+            balance_before: Number(w.balance),
+            balance_after: Number(w.balance) - total,
+            description: p.ledger,
+          },
+        });
+        return tx.travel_bookings.create({
+          data: {
+            ...p.booking,
+            user_id: userId,
+            idempotency_key: key,
+            status: 'payment_held',
+            service_fee_farm: p.fee,
+            total_farm: total,
+            transaction_id: t.id,
+          } as any,
+        });
+      });
+    } catch (e) {
+      if ((e as { code?: string }).code === 'P2002') {
+        const b = await this.prisma.travel_bookings.findUnique({ where: { user_id_idempotency_key: { user_id: userId, idempotency_key: key } } });
+        if (b) return { ...b, _existing: true };
+      }
+      throw e;
+    }
+  }
+
   /** Full refund to the wallet for a booking whose payment is held. Idempotent. */
   async refund(bookingId: string, reason: string) {
     const out = await this.refundTx(bookingId, reason);
@@ -276,20 +310,27 @@ export class TravelService {
     return out;
   }
 
-  private async refundTx(bookingId: string, reason: string) {
+  /**
+   * Returns FARM to the wallet. Default: full refund of a held booking (status failed_refunded).
+   * Hotel cancellations pass from=['cancelling'], status='cancelled' and the provider-confirmed amount.
+   */
+  async refundTx(bookingId: string, reason: string, opts: { from?: string[]; status?: string; amount?: number; label?: string } = {}) {
+    const from = opts.from ?? ['payment_held', 'needs_review'];
+    const label = opts.label ?? 'Flight booking refund';
     return this.prisma.$transaction(async (tx) => {
       const b = await tx.travel_bookings.findUnique({ where: { id: bookingId } });
       if (!b) throw new NotFoundException('Booking not found');
       const claim = await tx.travel_bookings.updateMany({
-        where: { id: bookingId, status: { in: ['payment_held', 'needs_review'] } },
+        where: { id: bookingId, status: { in: from } },
         data: { status: 'refunding' },
       });
       if (claim.count !== 1) return b;
+      const amt = Math.min(opts.amount ?? Number(b.total_farm), Number(b.total_farm));
+      if (!(amt > 0)) return tx.travel_bookings.update({ where: { id: b.id }, data: { status: opts.status ?? 'failed_refunded', failure_reason: reason } });
       const hold = await tx.transactions.findUnique({ where: { id: b.transaction_id! } });
       const w = await tx.wallets.findUnique({ where: { id: hold!.sender_wallet_id! } });
-      const amt = Number(b.total_farm);
       await tx.wallets.update({ where: { id: w!.id }, data: { balance: { increment: amt } } });
-      await tx.transactions.update({ where: { id: hold!.id }, data: { status: 'reversed', processed_at: new Date() } });
+      if (!opts.status) await tx.transactions.update({ where: { id: hold!.id }, data: { status: 'reversed', processed_at: new Date() } });
       const r = await tx.transactions.create({
         data: {
           transaction_reference: generateTxReference(),
@@ -300,7 +341,7 @@ export class TravelService {
           fee: 0,
           net_amount: amt,
           currency: 'FARM',
-          description: 'Flight booking refund',
+          description: label,
           processed_at: new Date(),
           metadata: { user_id: b.user_id, kind: 'travel_refund', booking_id: b.id, hold_tx: hold!.id },
         },
@@ -313,10 +354,10 @@ export class TravelService {
           amount: amt,
           balance_before: Number(w!.balance),
           balance_after: Number(w!.balance) + amt,
-          description: 'Flight booking refund',
+          description: label,
         },
       });
-      return tx.travel_bookings.update({ where: { id: b.id }, data: { status: 'failed_refunded', refund_transaction_id: r.id, failure_reason: reason } });
+      return tx.travel_bookings.update({ where: { id: b.id }, data: { status: opts.status ?? 'failed_refunded', refund_transaction_id: r.id, failure_reason: reason } });
     });
   }
 
