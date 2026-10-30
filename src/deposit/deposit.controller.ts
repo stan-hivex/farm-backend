@@ -202,6 +202,20 @@ export class NowpaymentsWalletController {
     };
   }
 
+  // From main (83bcfe6): path-param variant kept for existing clients.
+  @Permissions('payments:read')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('crypto/estimate/:currency')
+  estimateByCurrency(
+    @Param('currency') currency: string,
+    @Query('price_amount') priceAmount: string,
+  ) {
+    return this.depositService.getNowpaymentsCryptoEstimate(
+      currency,
+      priceAmount,
+    );
+  }
+
   @Permissions('payments:write')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('crypto')
