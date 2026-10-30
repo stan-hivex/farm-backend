@@ -27,6 +27,12 @@ import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service';
+import {
+  DeviceTokenDto,
+  ResendEmailVerificationDto,
+  ResendOtpDto,
+  ResolveLoginEmailDto,
+} from './dto/auth-misc.dto';
 
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -96,9 +102,9 @@ export class AuthController {
   @Get('registration-availability')
   @Throttle({
     default: {
-      limit: 20,
+      // Keyed by IP only so enumeration cannot rotate identifiers for fresh buckets.
+      limit: 10,
       ttl: 60_000,
-      generateKey: authThrottleKey,
     },
   })
   @ApiOperation({
@@ -184,10 +190,7 @@ export class AuthController {
     summary: 'Resend OTP',
   })
   async resendOtp(
-    @Body()
-    body: {
-      phone: string;
-    },
+    @Body() body: ResendOtpDto,
   ) {
     
     const user =
@@ -299,10 +302,7 @@ export class AuthController {
   })
   @ApiOperation({ summary: 'Resend email verification link' })
   resendEmailVerification(
-    @Body()
-    body: {
-      email: string;
-    },
+    @Body() body: ResendEmailVerificationDto,
   ) {
     return this.authService.resendEmailVerification(body.email);
   }
@@ -386,14 +386,14 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @Throttle({
     default: {
-      limit: 10,
+      // Keyed by IP only so enumeration cannot rotate identifiers for fresh buckets.
+      limit: 5,
       ttl: 60_000,
-      generateKey: authThrottleKey,
     },
   })
   @ApiOperation({ summary: 'Resolve a FARM phone or username to its login email' })
   resolveLoginEmail(
-    @Body() body: { identifier: string },
+    @Body() body: ResolveLoginEmailDto,
   ) {
     return this.authService.resolveLoginEmail(body.identifier);
   }
@@ -521,7 +521,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Register a device token for push notifications' })
   async registerDeviceToken(
     @CurrentUser() user: any,
-    @Body() body: { token: string; platform?: string },
+    @Body() body: DeviceTokenDto,
   ) {
     return this.authService.registerDeviceToken(user.id, body.token, body.platform);
   }
