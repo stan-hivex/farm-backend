@@ -10,7 +10,17 @@ export interface IncomingTransfer {
   round: bigint;
 }
 
-/** All algod/indexer access for Phase 6. Never logs keys. */
+export interface PreparedTransfer {
+  txId: string;
+  lastValid: bigint;
+  send: () => Promise<void>;
+}
+
+/**
+ * All algod/indexer access for Phase 6. Keys are only held in memory for the
+ * duration of a call and never logged. FARM ASA is never created here: it is
+ * created by the owner in Pera and referenced by FARM_ASA_ID.
+ */
 @Injectable()
 export class AlgorandWalletClient {
   private algod() {
@@ -27,8 +37,18 @@ export class AlgorandWalletClient {
       '',
     );
   }
-  private issuer() {
-    return algosdk.mnemonicToSecretKey(process.env.ALGORAND_ISSUER_MNEMONIC!);
+  /** Pays ALGO: min balance for new accounts and fees (fee pooling). */
+  private funder() {
+    return algosdk.mnemonicToSecretKey(process.env.ALGORAND_FUNDER_MNEMONIC!);
+  }
+  /** FARM reserve (the owner's Pera account). Only needed for server-side top-ups/sync. */
+  reserveSk(): Uint8Array {
+    const a = algosdk.mnemonicToSecretKey(process.env.FARM_RESERVE_MNEMONIC!);
+    if (a.addr.toString() !== process.env.FARM_RESERVE_ADDRESS)
+      throw new Error(
+        'FARM_RESERVE_MNEMONIC does not match FARM_RESERVE_ADDRESS',
+      );
+    return a.sk;
   }
 
   newAccount(): { address: string; sk: Uint8Array } {
@@ -36,7 +56,7 @@ export class AlgorandWalletClient {
     return { address: a.addr.toString(), sk: a.sk };
   }
 
-  private async send(txn: algosdk.Transaction, sk: Uint8Array) {
+  private async sendOne(txn: algosdk.Transaction, sk: Uint8Array) {
     const algod = this.algod();
     const id = txn.txID();
     await algod.sendRawTransaction(txn.signTxn(sk)).do();
@@ -44,17 +64,16 @@ export class AlgorandWalletClient {
     return id;
   }
 
-  /** Issuer pays the min-balance; then the account opts in to an ASA. */
   async fund(address: string, microAlgos: bigint) {
-    const iss = this.issuer();
+    const f = this.funder();
     const sp = await this.algod().getTransactionParams().do();
     const t = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-      sender: iss.addr,
+      sender: f.addr,
       receiver: address,
       amount: microAlgos,
       suggestedParams: sp,
     });
-    return this.send(t, iss.sk);
+    return this.sendOne(t, f.sk);
   }
 
   async optIn(address: string, sk: Uint8Array, assetId: bigint) {
@@ -66,21 +85,66 @@ export class AlgorandWalletClient {
       assetIndex: assetId,
       suggestedParams: sp,
     });
-    return this.send(t, sk);
+    return this.sendOne(t, sk);
   }
 
-  /** Move FARM from the issuer reserve to a custodial address. */
-  async sendFromIssuer(receiver: string, assetId: bigint, amount: bigint) {
-    const iss = this.issuer();
+  /**
+   * Build a FARM transfer whose fee is paid by the funder (atomic group), so
+   * custodial accounts never need ALGO top-ups. The txId and lastValid are
+   * known BEFORE sending, so the caller can persist them first (outbox).
+   */
+  async prepareFarmTransfer(p: {
+    from: string;
+    fromSk: Uint8Array;
+    to: string;
+    assetId: bigint;
+    amount: bigint;
+    note: string;
+  }): Promise<PreparedTransfer> {
+    const f = this.funder();
     const sp = await this.algod().getTransactionParams().do();
-    const t = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: iss.addr,
-      receiver,
-      amount,
-      assetIndex: assetId,
-      suggestedParams: sp,
+    const axfer = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+      sender: p.from,
+      receiver: p.to,
+      amount: p.amount,
+      assetIndex: p.assetId,
+      note: new TextEncoder().encode(p.note),
+      suggestedParams: { ...sp, fee: 0n, flatFee: true },
     });
-    return this.send(t, iss.sk);
+    const feePay = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+      sender: f.addr,
+      receiver: f.addr,
+      amount: 0,
+      suggestedParams: { ...sp, fee: BigInt(sp.minFee) * 2n, flatFee: true },
+    });
+    algosdk.assignGroupID([feePay, axfer]);
+    const signed = [feePay.signTxn(f.sk), axfer.signTxn(p.fromSk)];
+    const txId = axfer.txID();
+    const algod = this.algod();
+    return {
+      txId,
+      lastValid: BigInt(axfer.lastValid),
+      send: async () => {
+        await algod.sendRawTransaction(signed).do();
+        await algosdk.waitForConfirmation(algod, txId, 8);
+      },
+    };
+  }
+
+  /** 'confirmed' | 'pending' | 'unknown' for a txId we may have sent before. */
+  async txStatus(txId: string): Promise<'confirmed' | 'pending' | 'unknown'> {
+    try {
+      const p = await this.algod().pendingTransactionInformation(txId).do();
+      return p.confirmedRound && p.confirmedRound > 0 ? 'confirmed' : 'pending';
+    } catch {
+      /* not in the node's pool any more - ask the indexer */
+    }
+    try {
+      const r = await this.indexer().lookupTransactionByID(txId).do();
+      return r.transaction?.confirmedRound ? 'confirmed' : 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 
   async assetBalance(address: string, assetId: bigint): Promise<bigint> {
@@ -99,7 +163,6 @@ export class AlgorandWalletClient {
     return BigInt(s.lastRound);
   }
 
-  /** Confirmed asset transfers of `assetId` from `minRound` (inclusive). */
   async transfersSince(
     assetId: bigint,
     minRound: bigint,

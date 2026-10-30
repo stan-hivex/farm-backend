@@ -34,6 +34,11 @@ export class ChainWalletService {
         deposits: c.deposits,
         conversion: c.conversion,
         mirror: c.mirror,
+        sync: c.sync,
+        reserve_address: c.wallets.enabled
+          ? process.env.FARM_RESERVE_ADDRESS
+          : null,
+        receive_only: true,
         usdc_asa_id: c.wallets.enabled ? process.env.USDC_ASA_ID : null,
         farm_asa_id: c.wallets.enabled ? process.env.FARM_ASA_ID : null,
         peg: '1 FARM = 1 KSh',
@@ -162,7 +167,7 @@ export class ChainWalletService {
     if (!chainConfig().deposits.enabled || this.polling) return;
     this.polling = true;
     try {
-      await this.pollUsdc();
+      await this.pollDeposits();
       await this.creditPending();
     } catch (e: any) {
       this.log.warn(`Deposit poll failed: ${e?.message ?? e}`);
@@ -171,77 +176,116 @@ export class ChainWalletService {
     }
   }
 
-  /** Records new USDC transfers into custodial addresses. Idempotent. */
+  /** Back-compat name used by the admin sync endpoint. */
   async pollUsdc() {
+    return this.pollDeposits();
+  }
+
+  /**
+   * Records new USDC and FARM transfers into custodial addresses. Idempotent
+   * (unique network+tx+asset). FARM moved by FARM itself (reserve or another
+   * custodial account, i.e. the on-chain sync) is NOT a deposit.
+   */
+  async pollDeposits() {
     const c = chainConfig();
     if (!c.deposits.enabled)
       throw new ServiceUnavailableException('Deposits are disabled');
-    const asset = BigInt(process.env.USDC_ASA_ID!);
-    const key = `${c.network}:usdc:${asset}`;
-    let cur = await this.prisma.chain_sync_state.findUnique({ where: { key } });
-    if (!cur) {
-      // start from "now": nothing before go-live is backfilled
-      const r = await this.chain.currentRound();
-      cur = await this.prisma.chain_sync_state.create({
-        data: { key, last_round: r },
-      });
-    }
-    const txs = await this.chain.transfersSince(asset, cur.last_round);
-    const addrs = [...new Set(txs.map((t) => t.receiver))];
-    const owners = addrs.length
-      ? await this.prisma.user_chain_wallets.findMany({
-          where: { address: { in: addrs }, network: c.network },
-          select: { address: true, user_id: true },
-        })
-      : [];
-    const byAddr = new Map(owners.map((o) => [o.address, o.user_id]));
-    const rows = txs
-      .filter(
-        (t) =>
-          byAddr.has(t.receiver) && t.amount > 0n && t.sender !== t.receiver,
-      )
-      .map((t) => ({
-        network: c.network,
-        tx_id: t.txId,
-        asset_id: t.assetId,
-        asset_symbol: 'USDC',
-        user_id: byAddr.get(t.receiver)!,
-        address: t.receiver,
-        sender: t.sender,
-        amount_units: t.amount,
+    const reserve = process.env.FARM_RESERVE_ADDRESS!;
+    const assets = [
+      {
+        id: BigInt(process.env.USDC_ASA_ID!),
+        symbol: 'USDC',
         decimals: USDC_DECIMALS,
-        confirmed_round: t.round,
-      }));
-    const ins = rows.length
-      ? await this.prisma.chain_deposits.createMany({
-          data: rows,
-          skipDuplicates: true,
-        })
-      : { count: 0 };
-    const maxRound = txs.reduce(
-      (m, t) => (t.round > m ? t.round : m),
-      cur.last_round,
-    );
-    if (maxRound > cur.last_round)
-      await this.prisma.chain_sync_state.update({
+      },
+      {
+        id: BigInt(process.env.FARM_ASA_ID!),
+        symbol: 'FARM',
+        decimals: FARM_DECIMALS,
+      },
+    ];
+    let recorded = 0;
+    let seen = 0;
+    for (const a of assets) {
+      const key = `${c.network}:${a.symbol.toLowerCase()}:${a.id}`;
+      let cur = await this.prisma.chain_sync_state.findUnique({
         where: { key },
-        data: { last_round: maxRound },
       });
-    return {
-      seen: txs.length,
-      recorded: ins.count,
-      cursor: maxRound.toString(),
-    };
+      if (!cur) {
+        // start from "now": nothing before go-live is backfilled
+        const r = await this.chain.currentRound();
+        cur = await this.prisma.chain_sync_state.create({
+          data: { key, last_round: r },
+        });
+      }
+      const txs = await this.chain.transfersSince(a.id, cur.last_round);
+      seen += txs.length;
+      const addrs = [...new Set(txs.flatMap((t) => [t.receiver, t.sender]))];
+      const owners = addrs.length
+        ? await this.prisma.user_chain_wallets.findMany({
+            where: { address: { in: addrs }, network: c.network },
+            select: { address: true, user_id: true },
+          })
+        : [];
+      const byAddr = new Map(owners.map((o) => [o.address, o.user_id]));
+      const internal = (addr: string) => addr === reserve || byAddr.has(addr);
+      const rows = txs
+        .filter(
+          (t) =>
+            byAddr.has(t.receiver) &&
+            t.amount > 0n &&
+            t.sender !== t.receiver &&
+            !(a.symbol === 'FARM' && internal(t.sender)),
+        )
+        .map((t) => ({
+          network: c.network,
+          tx_id: t.txId,
+          asset_id: t.assetId,
+          asset_symbol: a.symbol,
+          user_id: byAddr.get(t.receiver)!,
+          address: t.receiver,
+          sender: t.sender,
+          amount_units: t.amount,
+          decimals: a.decimals,
+          confirmed_round: t.round,
+        }));
+      if (rows.length)
+        recorded += (
+          await this.prisma.chain_deposits.createMany({
+            data: rows,
+            skipDuplicates: true,
+          })
+        ).count;
+      const maxRound = txs.reduce(
+        (m, t) => (t.round > m ? t.round : m),
+        cur.last_round,
+      );
+      if (maxRound > cur.last_round)
+        await this.prisma.chain_sync_state.update({
+          where: { key },
+          data: { last_round: maxRound },
+        });
+    }
+    return { seen, recorded };
   }
 
-  /** Converts recorded USDC deposits to FARM at the live configured rate. */
   async creditPending() {
-    const pending = await this.prisma.chain_deposits.findMany({
+    let pending = await this.prisma.chain_deposits.findMany({
       where: { status: { in: ['detected', 'pending_rate'] } },
       orderBy: { created_at: 'asc' },
       take: 100,
     });
     if (!pending.length) return { credited: 0, waiting: 0 };
+    let credited = 0;
+    const PEG = { rate: 1, source: 'peg:1 FARM = 1 KSh', at: new Date() };
+    for (const d of pending.filter((x) => x.asset_symbol === 'FARM')) {
+      try {
+        if (await this.credit(d, PEG)) credited++;
+      } catch (e: any) {
+        this.log.warn(`Credit of deposit ${d.id} failed: ${e?.message ?? e}`);
+      }
+    }
+    pending = pending.filter((x) => x.asset_symbol !== 'FARM');
+    if (!pending.length) return { credited, waiting: 0 };
     const rate = chainConfig().conversion.enabled
       ? await this.rates.usdcKes()
       : null;
@@ -250,9 +294,8 @@ export class ChainWalletService {
         where: { id: { in: pending.map((d) => d.id) }, status: 'detected' },
         data: { status: 'pending_rate' },
       });
-      return { credited: 0, waiting: pending.length };
+      return { credited, waiting: pending.length };
     }
-    let credited = 0;
     for (const d of pending) {
       try {
         if (await this.credit(d, rate)) credited++;
@@ -267,7 +310,8 @@ export class ChainWalletService {
     d: any,
     rate: { rate: number; source: string; at: Date },
   ) {
-    const usdc = Number(d.amount_units) / 10 ** d.decimals;
+    const usdc = Number(d.amount_units) / 10 ** d.decimals; // asset amount (USDC or FARM)
+    const isFarm = d.asset_symbol === 'FARM';
     const farm =
       Math.floor(usdc * rate.rate * 10 ** FARM_DECIMALS) / 10 ** FARM_DECIMALS;
     if (!(farm > 0)) return false;
@@ -297,15 +341,20 @@ export class ChainWalletService {
           transaction_reference: generateTxReference(),
           receiver_wallet_id: w.id,
           transaction_type: 'deposit',
+          // FARM deposits are already on chain in the user's address: the
+          // on-chain sync must not move FARM again for this ledger entry.
           status: 'completed',
           amount: farm,
           fee: 0,
           net_amount: farm,
-          description: `USDC deposit ${usdc} @ ${rate.rate} KSh`,
+          description: isFarm
+            ? `FARM deposit ${usdc}`
+            : `USDC deposit ${usdc} @ ${rate.rate} KSh`,
           metadata: {
             chain_deposit_id: d.id,
             tx_id: d.tx_id,
-            asset: 'USDC',
+            asset: d.asset_symbol,
+            chain_settled: isFarm,
             rate: rate.rate,
             rate_source: rate.source,
           },
@@ -318,7 +367,7 @@ export class ChainWalletService {
           wallet_id: w.id,
           entry_type: 'credit',
           amount: farm,
-          description: 'USDC deposit',
+          description: `${d.asset_symbol} deposit`,
         },
       });
       await tx.blockchain_transactions.create({
@@ -363,6 +412,15 @@ export class ChainWalletService {
         missing: c.mirror.missing,
       });
     const farmAsa = BigInt(process.env.FARM_ASA_ID!);
+    if (mode === 'execute') {
+      const busy = await this.prisma.chain_outbox.count({
+        where: { status: { notIn: ['sent', 'skipped'] } },
+      });
+      if (busy)
+        throw new BadRequestException(
+          `${busy} on-chain transfers are still in flight; run again when the outbox is drained`,
+        );
+    }
     const ws = await this.prisma.user_chain_wallets.findMany({
       where: { status: 'ready', network: c.network },
       take: Math.min(Math.max(limit, 1), 500),
@@ -393,7 +451,21 @@ export class ChainWalletService {
               : 'chain_above_ledger';
         let txId: string | null = null;
         if (mode === 'execute' && delta > 0n) {
-          txId = await this.chain.sendFromIssuer(w.address, farmAsa, delta);
+          const sk = this.chain.reserveSk();
+          try {
+            const prep = await this.chain.prepareFarmTransfer({
+              from: process.env.FARM_RESERVE_ADDRESS!,
+              fromSk: sk,
+              to: w.address,
+              assetId: farmAsa,
+              amount: delta,
+              note: `farm:mirror:${run.id}:${w.user_id}`,
+            });
+            txId = prep.txId;
+            await prep.send();
+          } finally {
+            sk.fill(0);
+          }
           status = 'sent';
         }
         await this.prisma.farm_mirror_entries.create({

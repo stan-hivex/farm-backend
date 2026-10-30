@@ -6,6 +6,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ChainWalletService } from './chain-wallet.service';
+import { ChainSyncService } from './chain-sync.service';
 
 @ApiTags('Wallet - Algorand')
 @ApiBearerAuth('JWT')
@@ -30,11 +31,24 @@ export class ChainWalletController {
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 @Controller({ path: 'admin/chain', version: '1' })
 export class AdminChainController {
-  constructor(private readonly svc: ChainWalletService) {}
+  constructor(
+    private readonly svc: ChainWalletService,
+    private readonly sync: ChainSyncService,
+  ) {}
+  @Get('outbox') outbox() {
+    return this.sync.summary();
+  }
+  @Post('outbox/process') async processOutbox() {
+    const e = await this.sync.enqueue();
+    return { data: { ...e, ...(await this.sync.process()) } };
+  }
+  @Post('outbox/retry') retryOutbox() {
+    return this.sync.retryNow();
+  }
   @Get('status') status() {
     return this.svc.status();
   }
-  @Post('deposits/sync') async sync() {
+  @Post('deposits/sync') async syncDeposits() {
     const polled = await this.svc.pollUsdc();
     return { data: { ...polled, ...(await this.svc.creditPending()) } };
   }

@@ -1693,3 +1693,31 @@ model farm_mirror_entries {
 
   @@unique([run_id, user_id])
 }
+
+/// Phase 6b: every completed ledger transaction is mirrored on chain through
+/// this outbox (unique per ledger transaction). DB commits first; the worker
+/// sends with retries and never re-sends a tx that may still confirm.
+model chain_outbox {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transaction_id  String    @db.Uuid
+  /// main = sender->receiver (net amount); fee = sender->reserve
+  leg             String    @default("main") @db.VarChar(10)
+  network         String    @db.VarChar(20)
+  from_user_id    String?   @db.Uuid
+  to_user_id      String?   @db.Uuid
+  from_address    String    @db.VarChar(64)
+  to_address      String    @db.VarChar(64)
+  amount_units    BigInt
+  status          String    @default("pending") @db.VarChar(20)
+  tx_id           String?   @unique @db.VarChar(64)
+  last_valid      BigInt?
+  attempts        Int       @default(0)
+  last_error      String?
+  next_attempt_at DateTime  @default(now()) @db.Timestamptz(6)
+  sent_at         DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([transaction_id, leg])
+  @@index([status, next_attempt_at])
+}

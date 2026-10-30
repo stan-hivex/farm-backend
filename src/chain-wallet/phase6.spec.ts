@@ -11,7 +11,8 @@ const ENV: Record<string, string> = {
   ALGORAND_NETWORK: 'testnet',
   ALGORAND_NODE_URL: 'https://node.example',
   ALGORAND_INDEXER_URL: 'https://idx.example',
-  ALGORAND_ISSUER_MNEMONIC: 'x',
+  ALGORAND_FUNDER_MNEMONIC: 'x',
+  FARM_RESERVE_ADDRESS: 'R'.repeat(58),
   WALLET_KEY_ENCRYPTION_KEY: KEY,
   USDC_ASA_ID: '10458941',
   FARM_ASA_ID: '42',
@@ -88,7 +89,8 @@ function mocks(over: any = {}) {
   };
   const chain: any = {
     newAccount: jest.fn(() => ({ address: 'NEWADDR', sk: new Uint8Array(64).fill(7) })),
-    transfersSince: jest.fn().mockResolvedValue(over.transfers ?? []),
+    transfersSince: jest.fn((asset: bigint) => Promise.resolve(asset === 42n ? (over.farmTransfers ?? []) : (over.transfers ?? []))),
+    currentRound: jest.fn().mockResolvedValue(100n),
   };
   const rates: any = { usdcKes: jest.fn().mockResolvedValue(over.rate ?? null) };
   return { svc: new ChainWalletService(prisma, chain, rates), prisma, chain, tx, rates };
@@ -127,7 +129,8 @@ describe('Phase 6 – custodial wallet + deposits', () => {
     const call = prisma.chain_deposits.createMany.mock.calls[0][0];
     expect(call.skipDuplicates).toBe(true);
     expect(call.data.map((d: any) => d.tx_id)).toEqual(['A']);
-    expect(r.cursor).toBe('122');
+    expect(r.recorded).toBe(1);
+    expect(prisma.chain_sync_state.update.mock.calls[0][0].data.last_round).toBe(122n);
   });
   it('without a rate, deposits wait (pending_rate) and nothing is credited', async () => {
     const { svc, prisma, tx } = mocks({ pending: [{ id: 'd1', status: 'detected', amount_units: 5_000_000n, decimals: 6 }] });
@@ -137,7 +140,7 @@ describe('Phase 6 – custodial wallet + deposits', () => {
   });
   it('credits FARM = USDC x KSh rate once, with ledger + chain record', async () => {
     Object.assign(process.env, { USDC_KES_RATE_URL: 'https://r', USDC_KES_RATE_JSON_PATH: 'a' });
-    const d = { id: 'd1', status: 'pending_rate', amount_units: 5_000_000n, decimals: 6, tx_id: 'A', asset_id: 1n, confirmed_round: 1n, network: 'testnet', user_id: 'u1' };
+    const d = { id: 'd1', asset_symbol: 'USDC', status: 'pending_rate', amount_units: 5_000_000n, decimals: 6, tx_id: 'A', asset_id: 1n, confirmed_round: 1n, network: 'testnet', user_id: 'u1' };
     const { svc, tx } = mocks({ pending: [d], rate: { rate: 129.37, source: 'r', at: new Date() } });
     expect((await svc.creditPending()).credited).toBe(1);
     expect(tx.wallets.update.mock.calls[0][0].data.balance.increment).toBe(646.85);

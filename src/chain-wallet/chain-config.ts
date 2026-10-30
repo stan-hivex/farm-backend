@@ -11,6 +11,7 @@ export interface ChainConfig {
   deposits: { enabled: boolean; missing: string[] };
   conversion: { enabled: boolean; missing: string[] };
   mirror: { enabled: boolean; missing: string[] };
+  sync: { enabled: boolean; missing: string[] };
 }
 
 export function chainConfig(env: Env = process.env): ChainConfig {
@@ -37,11 +38,17 @@ export function chainConfig(env: Env = process.env): ChainConfig {
     'ALGORAND_NETWORK',
     'ALGORAND_NODE_URL',
     'ALGORAND_INDEXER_URL',
-    'ALGORAND_ISSUER_MNEMONIC',
+    'ALGORAND_FUNDER_MNEMONIC',
     'WALLET_KEY_ENCRYPTION_KEY',
     'USDC_ASA_ID',
     'FARM_ASA_ID',
+    'FARM_RESERVE_ADDRESS',
   ].filter((k) => !has(env, k));
+  if (
+    has(env, 'FARM_RESERVE_ADDRESS') &&
+    !/^[A-Z2-7]{58}$/.test(env.FARM_RESERVE_ADDRESS!)
+  )
+    problems.push('FARM_RESERVE_ADDRESS must be an Algorand address');
   const walletsOn = !wMissing.length && !problems.length;
   const dMissing =
     env.CHAIN_DEPOSITS_ENABLED === 'true' ? [] : ['CHAIN_DEPOSITS_ENABLED'];
@@ -53,16 +60,28 @@ export function chainConfig(env: Env = process.env): ChainConfig {
     !/^https:\/\//.test(env.USDC_KES_RATE_URL!)
   )
     cMissing.push('USDC_KES_RATE_URL (must be https)');
-  const mMissing =
-    env.FARM_ONCHAIN_MIRROR_ENABLED === 'true'
+  const reserveKey = has(env, 'FARM_RESERVE_MNEMONIC')
+    ? []
+    : ['FARM_RESERVE_MNEMONIC'];
+  const mMissing = [
+    ...(env.FARM_ONCHAIN_MIRROR_ENABLED === 'true'
       ? []
-      : ['FARM_ONCHAIN_MIRROR_ENABLED'];
+      : ['FARM_ONCHAIN_MIRROR_ENABLED']),
+    ...reserveKey,
+  ];
+  const sMissing = [
+    ...(env.FARM_ONCHAIN_SYNC_ENABLED === 'true'
+      ? []
+      : ['FARM_ONCHAIN_SYNC_ENABLED']),
+    ...reserveKey,
+  ];
   return {
     network,
     wallets: { enabled: walletsOn, missing: wMissing, problems },
     deposits: { enabled: walletsOn && !dMissing.length, missing: dMissing },
     conversion: { enabled: walletsOn && !cMissing.length, missing: cMissing },
     mirror: { enabled: walletsOn && !mMissing.length, missing: mMissing },
+    sync: { enabled: walletsOn && !sMissing.length, missing: sMissing },
   };
 }
 
