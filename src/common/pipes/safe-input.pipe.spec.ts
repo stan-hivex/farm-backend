@@ -42,3 +42,23 @@ describe('SafeInputValidationPipe', () => {
     ).toThrow(BadRequestException);
   });
 });
+
+describe('SafeInputValidationPipe prose fields', () => {
+  const pipe = new SafeInputValidationPipe();
+  const meta = { type: 'body' } as any;
+  it('accepts normal prose with ; newlines and SQL-ish words', () => {
+    const v = {
+      description: 'Phase 1: create beds; update irrigation.\nPhase 2 -- harvest',
+      notes: 'Select seeds; drop off Monday',
+    };
+    expect(pipe.transform({ ...v }, meta)).toEqual(v);
+  });
+  it('still rejects NUL/control characters in prose', () => {
+    expect(() => pipe.transform({ description: 'a\u0000b' }, meta)).toThrow();
+  });
+  it('still screens non-prose identifiers', () => {
+    expect(() =>
+      pipe.transform({ recipient_identifier: "x'; drop table users" }, meta),
+    ).toThrow();
+  });
+});

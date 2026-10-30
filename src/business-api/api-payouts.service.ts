@@ -210,6 +210,14 @@ export class ApiPayoutsService {
         data: {
           status: 'failed',
           error: String(e?.message ?? e).slice(0, 500),
+          // keep what was asked for so the payouts list can show it
+          response: {
+            data: {
+              amount: dto.amount,
+              method: dto.method,
+              status: 'FAILED',
+            },
+          },
         },
       });
       throw e;

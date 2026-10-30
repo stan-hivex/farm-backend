@@ -1,3 +1,4 @@
+import { PrismaClientExceptionFilter } from './common/filters/prisma-client-exception.filter';
 import cluster from 'cluster';
 import { cpus } from 'os';
 import * as express from 'express';
@@ -65,6 +66,7 @@ async function bootstrap() {
     }),
   );
   app.use(express.json({ limit: DEFAULT_BODY_LIMIT, verify: rawBodySaver }));
+  app.useGlobalFilters(new PrismaClientExceptionFilter());
   app.use(
     express.urlencoded({
       extended: true,

@@ -37,6 +37,28 @@ export class SafeInputValidationPipe implements PipeTransform {
     'prebook_id',
   ]);
 
+  // Human-written free text (descriptions, notes, chat messages...). These
+  // legitimately contain ";", newlines and words like "create"/"update".
+  // All DB access is parameterised (Prisma), so only reject control
+  // characters other than tab/newline here.
+  private readonly proseFields = new Set([
+    'description',
+    'summary',
+    'notes',
+    'message',
+    'body',
+    'use_of_funds',
+    'risk_factors',
+    'team',
+    'evidence',
+    'reason',
+    'review_notes',
+    'rejection_reason',
+    'content',
+    'title',
+  ]);
+  private readonly proseForbidden = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+
   transform(value: unknown, metadata: { type?: string; data?: string }) {
     if (value === null || value === undefined) {
       return value;
@@ -67,6 +89,14 @@ export class SafeInputValidationPipe implements PipeTransform {
           this.allowRawStringFields.has(key)
         ) {
           result[key] = entryValue;
+          continue;
+        }
+
+        if (typeof entryValue === 'string' && this.proseFields.has(key)) {
+          if (this.proseForbidden.test(entryValue))
+            throw new BadRequestException(
+              `Rejected suspicious input in ${metadata.type ?? 'request'} for ${key}`,
+            );
           continue;
         }
 

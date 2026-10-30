@@ -11,6 +11,46 @@ import { Request, Response } from 'express';
 import { createHash } from 'crypto';
 import { CacheService } from '../cache/cache.service';
 
+/**
+ * Paths whose GET responses reflect state the user just changed (balances,
+ * onboarding/review status, pending requests, invoices, links...). Caching
+ * them for CACHE_TTL_SECONDS showed stale data right after a write.
+ */
+const UNCACHEABLE_SEGMENTS = [
+  '/wallet',
+  '/ai/',
+  '/travel/',
+  '/agent-payments/',
+  '/payment-intents',
+  '/agent-authorizations',
+  '/agent-payment-requests',
+  '/x402/',
+  '/merchant',
+  '/qr-payments/verify/',
+  '/payments/deposits',
+  '/deposit/',
+  '/withdraw/',
+  '/crypto/status/',
+  '/business',
+  '/admin/',
+  '/payment-requests',
+  '/transfer-requests',
+  '/transactions',
+  '/notifications',
+  '/investments',
+  '/kyc',
+  '/kyb',
+  '/auth/',
+  '/users/me',
+  '/pay/links',
+  '/farm/',
+];
+
+export function isUncacheablePath(url: string): boolean {
+  const path = url.split('?')[0].toLowerCase();
+  return UNCACHEABLE_SEGMENTS.some((seg) => path.includes(seg));
+}
+
 @Injectable()
 export class CacheInterceptor implements NestInterceptor {
   private readonly logger = new Logger(CacheInterceptor.name);
@@ -33,24 +73,7 @@ export class CacheInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const path = req.originalUrl.split('?')[0].toLowerCase();
-    if (
-      path.includes('/wallet') ||
-      path.includes('/ai/') ||
-      path.includes('/travel/') ||
-      path.includes('/agent-payments/') ||
-      path.includes('/payment-intents') ||
-      path.includes('/agent-authorizations') ||
-      path.includes('/agent-payment-requests') ||
-      path.includes('/x402/') ||
-      path.includes('/merchant/dashboard') ||
-      path.includes('/merchant/transactions') ||
-      path.includes('/qr-payments/verify/') ||
-      path.includes('/payments/deposits') ||
-      path.includes('/deposit/history') ||
-      path.includes('/deposit/status/') ||
-      path.includes('/crypto/status/')
-    ) {
+    if (isUncacheablePath(req.originalUrl)) {
       return next.handle();
     }
 
