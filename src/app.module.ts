@@ -33,6 +33,7 @@ import { SettingsModule } from './settings/settings.module';
 import { StkPushModule } from './stk/stk.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
+import { TokenizationModule } from './tokenization/tokenization.module';
 import { QrModule } from './qr/qr.module';
 import { QrPaymentsModule } from './qr-payments/qr-payments.module';
 import { WebsocketModule } from './websocket/websocket.module';
@@ -125,6 +126,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     StkPushModule,
     TransactionsModule,
     BlockchainModule,
+    TokenizationModule,
     QrModule,
     QrPaymentsModule,
     WebsocketModule,
