@@ -204,3 +204,54 @@ describe('API live payouts: automatic, idempotent', () => {
     await expect(svc.create(ctx, dto, 'idem-key-0001')).rejects.toThrow(/approved/);
   });
 });
+
+describe('Dashboard payouts: automatic (Owner/Finance + PIN, no admin step)', () => {
+  const dto: any = { amount: 5000, method: 'MOBILE_MONEY', phone_number: '0712345678', account_name: 'A', pin: '1234' };
+  function make(role = 'finance') {
+    const prisma: any = {
+      businesses: { findUnique: jest.fn().mockResolvedValue({ status: 'approved', merchant: { status: 'approved' } }) },
+      business_api_payouts: {
+        create: jest.fn().mockResolvedValue({ id: 'p1' }),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+      },
+      audit_logs: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const withdraw: any = { createWithdrawal: jest.fn().mockResolvedValue({ reference: 'W2', withdrawal: { amount: 5000 } }) };
+    const svc = new ApiPayoutsService(prisma, withdraw, { emit: jest.fn() } as any);
+    const { can } = jest.requireActual('./permissions');
+    const access = {
+      resolve: jest.fn(async (_u: string, p: any) => {
+        if (!can(role, p)) throw new Error('Your business role does not allow this action');
+        return { role, business: { id: 'biz', owner_user_id: 'owner' } };
+      }),
+    };
+    const verifyPin = jest.fn().mockResolvedValue(true);
+    return { svc, prisma, withdraw, access, verifyPin };
+  }
+  it('finance member with PIN triggers an automatic withdrawal from the owner wallet', async () => {
+    const m = make('finance');
+    const r: any = await m.svc.createFromDashboard(m.access, m.verifyPin, 'fin', dto, 'dash_12345678');
+    expect(m.verifyPin).toHaveBeenCalledWith('fin', '1234');
+    const [owner, body, opts] = m.withdraw.createWithdrawal.mock.calls[0];
+    expect(owner).toBe('owner');
+    expect(body).not.toHaveProperty('pin');
+    expect(opts.preAuthorized).toBe('business_member_pin:fin');
+    expect(m.prisma.business_api_payouts.create.mock.calls[0][0].data).toMatchObject({ source: 'dashboard', api_key_id: null });
+    expect(r.data.reference).toBe('W2');
+  });
+  it('admin/operations roles cannot pay out', async () => {
+    for (const role of ['admin', 'operations', 'accountant', 'developer']) {
+      const m = make(role);
+      await expect(m.svc.createFromDashboard(m.access, m.verifyPin, 'x', dto, 'dash_12345678')).rejects.toThrow('role');
+      expect(m.withdraw.createWithdrawal).not.toHaveBeenCalled();
+    }
+  });
+  it('wrong PIN stops before any money moves', async () => {
+    const m = make('owner');
+    m.verifyPin.mockRejectedValue(new Error('Invalid PIN'));
+    await expect(m.svc.createFromDashboard(m.access, m.verifyPin, 'o', dto, 'dash_12345678')).rejects.toThrow('PIN');
+    expect(m.prisma.business_api_payouts.create).not.toHaveBeenCalled();
+  });
+});

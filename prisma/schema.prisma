@@ -1420,7 +1420,10 @@ model business_payment_exceptions {
 model business_api_payouts {
   id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   business_id          String   @db.Uuid
-  api_key_id           String   @db.Uuid
+  api_key_id           String?  @db.Uuid
+  /// 'api' (live API key) or 'dashboard' (team member with PIN)
+  source               String   @default("api") @db.VarChar(20)
+  actor_user_id        String?  @db.Uuid
   idempotency_key      String   @db.VarChar(255)
   request_hash         String   @db.VarChar(64)
   status               String   @default("processing") @db.VarChar(20)

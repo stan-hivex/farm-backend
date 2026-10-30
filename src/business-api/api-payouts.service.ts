@@ -34,11 +34,43 @@ export class ApiPayoutsService {
       .digest('hex');
   }
 
+  /**
+   * Dashboard payouts: same automatic pipeline, no admin step. Only roles
+   * with payouts:create (Owner, Finance) and the actor's own PIN.
+   */
+  async createFromDashboard(
+    access: { resolve: (u: string, p: 'payouts:create') => Promise<any> },
+    verifyPin: (u: string, pin: string) => Promise<unknown>,
+    userId: string,
+    dto: ApiPayoutDto & { pin: string },
+    idempotencyKey?: string,
+  ) {
+    const a = await access.resolve(userId, 'payouts:create');
+    await verifyPin(userId, dto.pin);
+    const { pin: _pin, ...rest } = dto;
+    return this.create(
+      {
+        businessId: a.business.id,
+        ownerUserId: a.business.owner_user_id,
+        actorUserId: userId,
+      },
+      rest as ApiPayoutDto,
+      idempotencyKey,
+    );
+  }
+
   async create(
-    ctx: { businessId: string; ownerUserId: string; keyId: string },
+    ctx: {
+      businessId: string;
+      ownerUserId: string;
+      keyId?: string;
+      actorUserId?: string;
+    },
     dto: ApiPayoutDto,
     idempotencyKey?: string,
   ) {
+    if (!ctx.keyId && !ctx.actorUserId)
+      throw new ForbiddenException('Payout is not authorised');
     if (!idempotencyKey || !IDEMPOTENCY_KEY_RE.test(idempotencyKey))
       throw new BadRequestException(
         'An Idempotency-Key header (8-255 letters, digits, - _ : .) is required for live payouts',
@@ -69,7 +101,9 @@ export class ApiPayoutsService {
       record = await this.prisma.business_api_payouts.create({
         data: {
           business_id: ctx.businessId,
-          api_key_id: ctx.keyId,
+          api_key_id: ctx.keyId ?? null,
+          source: ctx.keyId ? 'api' : 'dashboard',
+          actor_user_id: ctx.actorUserId ?? null,
           idempotency_key: idempotencyKey,
           request_hash: requestHash,
         },
@@ -117,7 +151,11 @@ export class ApiPayoutsService {
           network: dto.network,
           extra_id: dto.extra_id,
         },
-        { preAuthorized: `business_api_key:${ctx.keyId}` },
+        {
+          preAuthorized: ctx.keyId
+            ? `business_api_key:${ctx.keyId}`
+            : `business_member_pin:${ctx.actorUserId}`,
+        },
       );
       const w = res?.withdrawal ?? {};
       const response = {
@@ -143,14 +181,16 @@ export class ApiPayoutsService {
       await this.prisma.audit_logs
         .create({
           data: {
-            user_id: ctx.ownerUserId,
-            action: 'business.api_payout',
+            user_id: ctx.actorUserId ?? ctx.ownerUserId,
+            action: ctx.keyId ? 'business.api_payout' : 'business.dashboard_payout',
             entity_type: 'business',
             entity_id: ctx.businessId,
             new_values: {
               reference: res?.reference,
               amount: dto.amount,
-              api_key_id: ctx.keyId,
+              api_key_id: ctx.keyId ?? null,
+          source: ctx.keyId ? 'api' : 'dashboard',
+          actor_user_id: ctx.actorUserId ?? null,
             },
           } as any,
         })

@@ -10,7 +10,6 @@ import { AuthService } from '../auth/auth.service';
 import { paginate, paginationParams } from '../common/utils/pagination.util';
 import { BusinessAccessService } from './business-access.service';
 import { BusinessWebhooksService } from './business-webhooks.service';
-import { PayoutDto } from './business-ops.dto';
 
 /** UI status -> stored transaction_status. */
 export const TX_STATUS_MAP: Record<string, string> = {
@@ -266,7 +265,28 @@ export class BusinessFinanceService {
 
   async payouts(userId: string, q: any) {
     const a = await this.access.resolve(userId, 'payouts:read');
-    if (!a.business.merchant_id) return { data: [], meta: paginate(0, 1, 20) };
+    // Automatic payouts (dashboard + API) run through the withdrawal pipeline.
+    const automatic = await this.prisma.business_api_payouts.findMany({
+      where: { business_id: a.business.id },
+      orderBy: { created_at: 'desc' },
+      take: 100,
+    });
+    const auto = automatic.map((p) => {
+      const r: any = (p.response as any)?.data ?? {};
+      return {
+        id: p.id,
+        source: p.source,
+        reference: p.withdrawal_reference,
+        amount: Number(r.amount ?? 0),
+        method: r.method ?? null,
+        status:
+          p.status === 'submitted' ? String(r.status ?? 'PROCESSING') : p.status === 'failed' ? 'FAILED' : 'PROCESSING',
+        error: p.status === 'failed' ? p.error : null,
+        created_at: p.created_at,
+        automatic: true,
+      };
+    });
+    if (!a.business.merchant_id) return { data: auto, meta: paginate(auto.length, 1, 100) };
     const { skip, take, page, limit } = paginationParams(q.page, q.limit);
     const where = { merchant_id: a.business.merchant_id };
     const [items, total] = await Promise.all([
@@ -279,83 +299,16 @@ export class BusinessFinanceService {
       this.prisma.merchant_payouts.count({ where }),
     ]);
     return {
-      data: items.map((p) => ({
-        ...p,
-        amount: Number(p.amount),
-        status: txStatusLabel(p.status),
-      })),
+      data: [
+        ...(page === 1 ? auto : []),
+        ...items.map((p) => ({
+          ...p,
+          amount: Number(p.amount),
+          status: txStatusLabel(p.status),
+          automatic: false,
+        })),
+      ],
       meta: paginate(total, page, limit),
-    };
-  }
-
-  /** Reuses merchant_payouts (admin processes it as today). Requires the actor's PIN. */
-  async requestPayout(
-    userId: string,
-    dto: Omit<PayoutDto, 'pin'> & { pin?: string },
-    opts: { viaApiKeyId?: string } = {},
-  ) {
-    const a = await this.access.resolve(userId, 'payouts:create');
-    if (!a.business.merchant_id)
-      throw new ForbiddenException('Business has no linked merchant account');
-    const merchant = await this.prisma.merchants.findUnique({
-      where: { id: a.business.merchant_id },
-    });
-    if (merchant?.status !== 'approved')
-      throw new ForbiddenException('Merchant not approved');
-    // Dashboard requests need the actor's PIN; API requests are authorised by a
-    // live key that carries the payouts:write scope.
-    if (!opts.viaApiKeyId) await this.auth.verifyPin(userId, dto.pin ?? '');
-    const w = await this.walletFor(a.business.owner_user_id);
-    if (w.is_frozen)
-      throw new ForbiddenException(
-        'Business wallet is frozen. Contact support.',
-      );
-    const pending = await this.prisma.merchant_payouts.aggregate({
-      where: {
-        merchant_id: merchant.id,
-        status: { in: ['pending', 'processing'] },
-      },
-      _sum: { amount: true },
-    });
-    const available =
-      Number(w.balance) -
-      Number(w.locked_balance) -
-      Number(pending._sum.amount ?? 0);
-    if (available < dto.amount)
-      throw new BadRequestException('Insufficient available balance');
-    const payout = await this.prisma.merchant_payouts.create({
-      data: {
-        merchant_id: merchant.id,
-        amount: dto.amount,
-        payout_method: dto.payout_method,
-        account_name: dto.account_name,
-        account_number: dto.account_number,
-        status: 'pending',
-      },
-    });
-    await this.prisma.audit_logs
-      .create({
-        data: {
-          user_id: userId,
-          action: 'business.payout_requested',
-          entity_type: 'business',
-          entity_id: a.business.id,
-          new_values: {
-            payout_id: payout.id,
-            amount: dto.amount,
-            via_api_key: opts.viaApiKeyId ?? null,
-          },
-        } as any,
-      })
-      .catch(() => undefined);
-    this.webhooks.emit(a.business.id, 'live', 'payout.requested', {
-      id: payout.id,
-      amount: Number(payout.amount),
-      status: 'pending',
-    });
-    return {
-      data: { ...payout, amount: Number(payout.amount), status: 'pending' },
-      message: 'Payout request submitted',
     };
   }
 

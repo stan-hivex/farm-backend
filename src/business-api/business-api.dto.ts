@@ -78,3 +78,8 @@ export class ApiPayoutDto {
   @IsOptional() @IsString() @MaxLength(40) network?: string;
   @IsOptional() @IsString() @MaxLength(128) extra_id?: string;
 }
+
+/** Dashboard payout: the API payout fields plus the actor's PIN. */
+export class DashboardPayoutDto extends ApiPayoutDto {
+  @IsString() @Matches(/^\d{4,6}$/, { message: 'pin must be 4-6 digits' }) pin!: string;
+}
