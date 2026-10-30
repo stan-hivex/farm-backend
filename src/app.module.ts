@@ -41,6 +41,7 @@ import { PaymentRequestsModule } from './payment-requests/payment-requests.modul
 import { SupportModule } from './support/support.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { DiditModule } from './didit/didit.module';
+import { BusinessModule } from './business/business.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 @Module({
@@ -113,6 +114,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     AnalyticsModule,
     AdminModule,
     MerchantsModule,
+    BusinessModule,
     SettingsModule,
     StkPushModule,
     TransactionsModule,
