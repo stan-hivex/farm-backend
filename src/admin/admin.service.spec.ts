@@ -24,6 +24,7 @@ describe('AdminService', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       cache as any,
     );
 
@@ -58,6 +59,7 @@ describe('AdminService', () => {
       prisma as any,
       {} as any,
       notifications as any,
+      {} as any,
       {} as any,
       createCacheStub() as any,
     );
@@ -105,6 +107,7 @@ describe('AdminService', () => {
       prisma as any,
       {} as any,
       notifications as any,
+      {} as any,
       {} as any,
       createCacheStub() as any,
     );
