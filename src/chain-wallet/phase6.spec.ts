@@ -88,7 +88,7 @@ function mocks(over: any = {}) {
     $transaction: jest.fn((fn: any) => fn(tx)),
   };
   const chain: any = {
-    newAccount: jest.fn(() => ({ address: 'NEWADDR', sk: new Uint8Array(64).fill(7) })),
+    newAccount: jest.fn(() => ({ address: 'NEWADDR', seed: new Uint8Array(32).fill(7), scheme: 'falcon1024' })),
     transfersSince: jest.fn((asset: bigint) => Promise.resolve(asset === 42n ? (over.farmTransfers ?? []) : (over.transfers ?? []))),
     currentRound: jest.fn().mockResolvedValue(100n),
   };
@@ -112,7 +112,8 @@ describe('Phase 6 – custodial wallet + deposits', () => {
     const r: any = await svc.mine('u1');
     const stored = prisma.user_chain_wallets.create.mock.calls[0][0].data;
     expect(stored.enc_secret).toBeDefined();
-    expect(Buffer.from(stored.enc_secret, 'base64')).not.toEqual(Buffer.alloc(64, 7));
+    expect(Buffer.from(stored.enc_secret, 'base64')).not.toEqual(Buffer.alloc(32, 7));
+    expect(stored.key_scheme).toBe('falcon1024');
     expect(r.data.address).toBe('NEWADDR');
     expect(JSON.stringify(r)).not.toMatch(/enc_|secret/);
   });

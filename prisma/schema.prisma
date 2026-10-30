@@ -1616,6 +1616,7 @@ model user_chain_wallets {
   enc_iv         String   @db.VarChar(32)
   enc_tag        String   @db.VarChar(32)
   key_version    Int      @default(1)
+  key_scheme     String   @default("ed25519") @db.VarChar(16)
   funded_tx_id   String?  @db.VarChar(64)
   usdc_opt_in_tx String?  @db.VarChar(64)
   farm_opt_in_tx String?  @db.VarChar(64)

@@ -1,5 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import algosdk from 'algosdk';
+import { randomBytes } from 'crypto';
+import {
+  AlgoSigner,
+  FEE_MULTIPLIER,
+  KeyScheme,
+  keyScheme,
+  roleScheme,
+  signerFromMnemonic,
+  signerFromSeed,
+} from './signer';
 
 export interface IncomingTransfer {
   txId: string;
@@ -19,7 +29,8 @@ export interface PreparedTransfer {
 /**
  * All algod/indexer access for Phase 6. Keys are only held in memory for the
  * duration of a call and never logged. FARM ASA is never created here: it is
- * created by the owner in Pera and referenced by FARM_ASA_ID.
+ * created once by the owner's reserve account (MainNet asset 3759199569) and
+ * referenced by FARM_ASA_ID. Keys may be ed25519 or Falcon-1024 (see signer.ts).
  */
 @Injectable()
 export class AlgorandWalletClient {
@@ -38,54 +49,109 @@ export class AlgorandWalletClient {
     );
   }
   /** Pays ALGO: min balance for new accounts and fees (fee pooling). */
-  private funder() {
-    return algosdk.mnemonicToSecretKey(process.env.ALGORAND_FUNDER_MNEMONIC!);
+  funder(): AlgoSigner {
+    return signerFromMnemonic(
+      process.env.ALGORAND_FUNDER_MNEMONIC!,
+      roleScheme('ALGORAND_FUNDER'),
+    );
   }
-  /** FARM reserve (the owner's Pera account). Only needed for server-side top-ups/sync. */
-  reserveSk(): Uint8Array {
-    const a = algosdk.mnemonicToSecretKey(process.env.FARM_RESERVE_MNEMONIC!);
-    if (a.addr.toString() !== process.env.FARM_RESERVE_ADDRESS)
+  /** FARM reserve (Falcon-1024 by default). Only for server-side top-ups/sync. */
+  reserveSigner(): AlgoSigner {
+    const s = signerFromMnemonic(
+      process.env.FARM_RESERVE_MNEMONIC!,
+      roleScheme('FARM_RESERVE'),
+    );
+    if (s.address !== process.env.FARM_RESERVE_ADDRESS) {
+      s.wipe();
       throw new Error(
-        'FARM_RESERVE_MNEMONIC does not match FARM_RESERVE_ADDRESS',
+        'FARM_RESERVE_MNEMONIC does not match FARM_RESERVE_ADDRESS (check FARM_RESERVE_KEY_SCHEME)',
       );
-    return a.sk;
+    }
+    return s;
   }
 
-  newAccount(): { address: string; sk: Uint8Array } {
-    const a = algosdk.generateAccount();
-    return { address: a.addr.toString(), sk: a.sk };
+  /** New custodial account. Only the 32-byte seed is kept (encrypted by the caller). */
+  newAccount(scheme: KeyScheme = keyScheme()): {
+    address: string;
+    seed: Uint8Array;
+    scheme: KeyScheme;
+  } {
+    const seed = new Uint8Array(randomBytes(32));
+    const s = signerFromSeed(seed, scheme);
+    const address = s.address;
+    s.wipe();
+    return { address, seed, scheme };
   }
 
-  private async sendOne(txn: algosdk.Transaction, sk: Uint8Array) {
+  /** Fee for one txn signed by `scheme` (Falcon signatures cost 3x). */
+  static fee(minFee: bigint | number, scheme: KeyScheme): bigint {
+    return BigInt(minFee) * FEE_MULTIPLIER[scheme];
+  }
+
+  private async sendSigned(signed: Uint8Array[], txId: string) {
     const algod = this.algod();
-    const id = txn.txID();
-    await algod.sendRawTransaction(txn.signTxn(sk)).do();
-    await algosdk.waitForConfirmation(algod, id, 8);
-    return id;
+    await algod.sendRawTransaction(signed).do();
+    await algosdk.waitForConfirmation(algod, txId, 8);
+    return txId;
   }
 
   async fund(address: string, microAlgos: bigint) {
     const f = this.funder();
-    const sp = await this.algod().getTransactionParams().do();
-    const t = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-      sender: f.addr,
-      receiver: address,
-      amount: microAlgos,
-      suggestedParams: sp,
-    });
-    return this.sendOne(t, f.sk);
+    try {
+      const sp = await this.algod().getTransactionParams().do();
+      const t = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+        sender: f.address,
+        receiver: address,
+        amount: microAlgos,
+        suggestedParams: {
+          ...sp,
+          flatFee: true,
+          fee: AlgorandWalletClient.fee(sp.minFee, f.scheme),
+        },
+      });
+      return await this.sendSigned(await f.sign([t]), t.txID());
+    } finally {
+      f.wipe();
+    }
   }
 
-  async optIn(address: string, sk: Uint8Array, assetId: bigint) {
-    const sp = await this.algod().getTransactionParams().do();
-    const t = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: address,
-      receiver: address,
+  /** Opt-in signed by the account; its fee is paid by the funder (pooled). */
+  async optIn(address: string, signer: AlgoSigner, assetId: bigint) {
+    const f = this.funder();
+    try {
+      const sp = await this.algod().getTransactionParams().do();
+      const t = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+        sender: address,
+        receiver: address,
+        amount: 0,
+        assetIndex: assetId,
+        suggestedParams: { ...sp, flatFee: true, fee: 0n },
+      });
+      const feePay = this.feePayment(f, sp, [signer.scheme]);
+      algosdk.assignGroupID([feePay, t]);
+      const signed = [...(await f.sign([feePay])), ...(await signer.sign([t]))];
+      return await this.sendSigned(signed, t.txID());
+    } finally {
+      f.wipe();
+    }
+  }
+
+  /** 0-ALGO self payment from the funder paying for itself + the others. */
+  private feePayment(
+    f: AlgoSigner,
+    sp: algosdk.SuggestedParams,
+    others: KeyScheme[],
+  ) {
+    const fee = [f.scheme, ...others].reduce(
+      (a, s) => a + AlgorandWalletClient.fee(sp.minFee, s),
+      0n,
+    );
+    return algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+      sender: f.address,
+      receiver: f.address,
       amount: 0,
-      assetIndex: assetId,
-      suggestedParams: sp,
+      suggestedParams: { ...sp, fee, flatFee: true },
     });
-    return this.sendOne(t, sk);
   }
 
   /**
@@ -95,40 +161,40 @@ export class AlgorandWalletClient {
    */
   async prepareFarmTransfer(p: {
     from: string;
-    fromSk: Uint8Array;
+    signer: AlgoSigner;
     to: string;
     assetId: bigint;
     amount: bigint;
     note: string;
   }): Promise<PreparedTransfer> {
     const f = this.funder();
-    const sp = await this.algod().getTransactionParams().do();
-    const axfer = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-      sender: p.from,
-      receiver: p.to,
-      amount: p.amount,
-      assetIndex: p.assetId,
-      note: new TextEncoder().encode(p.note),
-      suggestedParams: { ...sp, fee: 0n, flatFee: true },
-    });
-    const feePay = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-      sender: f.addr,
-      receiver: f.addr,
-      amount: 0,
-      suggestedParams: { ...sp, fee: BigInt(sp.minFee) * 2n, flatFee: true },
-    });
-    algosdk.assignGroupID([feePay, axfer]);
-    const signed = [feePay.signTxn(f.sk), axfer.signTxn(p.fromSk)];
-    const txId = axfer.txID();
-    const algod = this.algod();
-    return {
-      txId,
-      lastValid: BigInt(axfer.lastValid),
-      send: async () => {
-        await algod.sendRawTransaction(signed).do();
-        await algosdk.waitForConfirmation(algod, txId, 8);
-      },
-    };
+    try {
+      const sp = await this.algod().getTransactionParams().do();
+      const axfer = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+        sender: p.from,
+        receiver: p.to,
+        amount: p.amount,
+        assetIndex: p.assetId,
+        note: new TextEncoder().encode(p.note),
+        suggestedParams: { ...sp, fee: 0n, flatFee: true },
+      });
+      const feePay = this.feePayment(f, sp, [p.signer.scheme]);
+      algosdk.assignGroupID([feePay, axfer]);
+      const signed = [
+        ...(await f.sign([feePay])),
+        ...(await p.signer.sign([axfer])),
+      ];
+      const txId = axfer.txID();
+      return {
+        txId,
+        lastValid: BigInt(axfer.lastValid),
+        send: async () => {
+          await this.sendSigned(signed, txId);
+        },
+      };
+    } finally {
+      f.wipe();
+    }
   }
 
   /** 'confirmed' | 'pending' | 'unknown' for a txId we may have sent before. */

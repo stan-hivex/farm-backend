@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { AlgoSigner, KeyScheme, signerFromSeed } from './signer';
 
 /** AES-256-GCM envelope for custodial secret keys. Master key only from env. */
 function masterKey(env = process.env): Buffer {
@@ -36,4 +37,36 @@ export function openSecret(
   return new Uint8Array(
     Buffer.concat([d.update(Buffer.from(row.enc_secret, 'base64')), d.final()]),
   );
+}
+
+/**
+ * Opens a custodial wallet row as a signer. Rows created before Falcon support
+ * (key_scheme 'ed25519') hold the 64-byte ed25519 secret key (seed||pk); new
+ * rows hold only the 32-byte seed. The derived address must match the row.
+ */
+export function walletSigner(
+  row: {
+    address: string;
+    enc_secret: string;
+    enc_iv: string;
+    enc_tag: string;
+    key_scheme?: string | null;
+  },
+  env = process.env,
+): AlgoSigner {
+  const raw = openSecret(row, row.address, env);
+  const scheme: KeyScheme =
+    row.key_scheme === 'falcon1024' ? 'falcon1024' : 'ed25519';
+  const seed = raw.length === 64 ? raw.slice(0, 32) : raw;
+  try {
+    const s = signerFromSeed(seed, scheme);
+    if (s.address !== row.address) {
+      s.wipe();
+      throw new Error('Custodial key does not match its address');
+    }
+    return s;
+  } finally {
+    raw.fill(0);
+    seed.fill(0);
+  }
 }

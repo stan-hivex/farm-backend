@@ -5,6 +5,11 @@ import { RateService } from './rate.service';
 import { sealSecret } from './key-vault';
 import { randomBytes } from 'crypto';
 
+jest.mock('./key-vault', () => ({
+  ...jest.requireActual('./key-vault'),
+  walletSigner: jest.fn((row: any) => ({ scheme: 'falcon1024', address: row.address, sign: jest.fn(), wipe: jest.fn() })),
+}));
+
 const RES = 'R'.repeat(58);
 const KEY = randomBytes(32).toString('base64');
 const ENV: Record<string, string> = {
@@ -131,7 +136,7 @@ describe('Phase 6b – on-chain outbox', () => {
       assetBalance: jest.fn().mockResolvedValue(over.balance ?? 1_000_000n),
       txStatus: jest.fn().mockResolvedValue(over.status ?? 'unknown'),
       currentRound: jest.fn().mockResolvedValue(over.round ?? 500n),
-      reserveSk: jest.fn(() => new Uint8Array(64).fill(9)),
+      reserveSigner: jest.fn(() => ({ scheme: 'falcon1024', address: RES, sign: jest.fn(), wipe: jest.fn() })),
       prepareFarmTransfer: jest.fn().mockResolvedValue({ txId: 'NEWTX', lastValid: 1500n, send }),
     };
     return { s: new ChainSyncService(prisma, chain), prisma, chain, send };
@@ -207,7 +212,8 @@ describe('Phase 6b – on-chain outbox', () => {
   it('reserve legs sign with the reserve key', async () => {
     const { s, chain } = sync();
     await s.processOne(row({ from_address: RES, to_address: 'U1' }));
-    expect(chain.reserveSk).toHaveBeenCalled();
+    expect(chain.reserveSigner).toHaveBeenCalled();
+    expect(chain.prepareFarmTransfer.mock.calls[0][0].signer.address).toBe(RES);
     expect(chain.prepareFarmTransfer.mock.calls[0][0].from).toBe(RES);
   });
 });

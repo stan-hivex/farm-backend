@@ -10,7 +10,8 @@ import { generateTxReference } from '../common/utils/reference.util';
 import { AlgorandWalletClient } from './algorand-wallet.client';
 import { RateService } from './rate.service';
 import { chainConfig, FARM_DECIMALS, USDC_DECIMALS } from './chain-config';
-import { openSecret, sealSecret } from './key-vault';
+import { sealSecret, walletSigner } from './key-vault';
+import { AlgoSigner } from './signer';
 
 const explorer = (net: string) =>
   `https://${net === 'testnet' ? 'testnet.' : ''}explorer.perawallet.app`;
@@ -73,7 +74,8 @@ export class ChainWalletService {
             user_id: userId,
             network: c.network,
             address: acct.address,
-            ...sealSecret(acct.sk, acct.address),
+            key_scheme: acct.scheme,
+            ...sealSecret(acct.seed, acct.address),
           },
         });
       } catch {
@@ -82,7 +84,7 @@ export class ChainWalletService {
           where: { user_id: userId },
         });
       } finally {
-        acct.sk.fill(0);
+        acct.seed.fill(0);
       }
       if (!w) throw new ServiceUnavailableException('Could not create wallet');
     }
@@ -101,7 +103,7 @@ export class ChainWalletService {
     const w = (await this.prisma.user_chain_wallets.findUnique({
       where: { id },
     }))!;
-    let sk: Uint8Array | null = null;
+    let sk: AlgoSigner | null = null;
     try {
       const data: Record<string, string> = {};
       if (!w.funded_tx_id)
@@ -109,7 +111,7 @@ export class ChainWalletService {
           w.address,
           BigInt(process.env.CHAIN_WALLET_FUND_MICROALGOS ?? '310000'),
         );
-      sk = openSecret(w, w.address);
+      sk = walletSigner(w);
       if (!w.usdc_opt_in_tx)
         data.usdc_opt_in_tx = await this.chain.optIn(
           w.address,
@@ -134,7 +136,7 @@ export class ChainWalletService {
         data: { status: 'failed', error: msg },
       });
     } finally {
-      sk?.fill(0);
+      sk?.wipe();
     }
   }
 
@@ -451,11 +453,11 @@ export class ChainWalletService {
               : 'chain_above_ledger';
         let txId: string | null = null;
         if (mode === 'execute' && delta > 0n) {
-          const sk = this.chain.reserveSk();
+          const sk = this.chain.reserveSigner();
           try {
             const prep = await this.chain.prepareFarmTransfer({
               from: process.env.FARM_RESERVE_ADDRESS!,
-              fromSk: sk,
+              signer: sk,
               to: w.address,
               assetId: farmAsa,
               amount: delta,
@@ -464,7 +466,7 @@ export class ChainWalletService {
             txId = prep.txId;
             await prep.send();
           } finally {
-            sk.fill(0);
+            sk.wipe();
           }
           status = 'sent';
         }

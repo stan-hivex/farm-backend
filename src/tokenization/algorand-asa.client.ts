@@ -1,6 +1,12 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import algosdk from 'algosdk';
 import { algorandConfig } from './algorand-config';
+import {
+  AlgoSigner,
+  FEE_MULTIPLIER,
+  roleScheme,
+  signerFromMnemonic,
+} from '../chain-wallet/signer';
 
 export interface AsaCreated {
   assetId: bigint;
@@ -27,13 +33,17 @@ export class AlgorandAsaClient {
       process.env.ALGORAND_NODE_URL!,
       '',
     );
-    let acct: algosdk.Account;
+    let acct: AlgoSigner;
     try {
-      acct = algosdk.mnemonicToSecretKey(process.env.ALGORAND_ISSUER_MNEMONIC!);
+      // ed25519 or Falcon-1024 (ALGORAND_ISSUER_KEY_SCHEME / ALGORAND_KEY_SCHEME)
+      acct = signerFromMnemonic(
+        process.env.ALGORAND_ISSUER_MNEMONIC!,
+        roleScheme('ALGORAND_ISSUER'),
+      );
     } catch {
       throw new ServiceUnavailableException('Issuer account is misconfigured');
     }
-    const issuer = acct.addr.toString();
+    const issuer = acct.address;
     const sp = await algod.getTransactionParams().do();
     const txn = algosdk.makeAssetCreateTxnWithSuggestedParamsFromObject({
       sender: issuer,
@@ -48,9 +58,13 @@ export class AlgorandAsaClient {
       freeze: issuer,
       clawback: issuer,
       note: p.note ? new TextEncoder().encode(p.note) : undefined,
-      suggestedParams: sp,
+      suggestedParams: {
+        ...sp,
+        flatFee: true,
+        fee: BigInt(sp.minFee) * FEE_MULTIPLIER[acct.scheme],
+      },
     });
-    const signed = txn.signTxn(acct.sk);
+    const signed = await acct.sign([txn]).finally(() => acct.wipe());
     const txId = txn.txID();
     await algod.sendRawTransaction(signed).do();
     const res = await algosdk.waitForConfirmation(algod, txId, 8);

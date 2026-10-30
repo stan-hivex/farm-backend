@@ -3,7 +3,8 @@ import { Interval } from '@nestjs/schedule';
 import { PrismaService } from '../database/prisma.service';
 import { AlgorandWalletClient } from './algorand-wallet.client';
 import { chainConfig, FARM_DECIMALS } from './chain-config';
-import { openSecret } from './key-vault';
+import { walletSigner } from './key-vault';
+import { AlgoSigner } from './signer';
 
 const toUnits = (v: unknown) =>
   BigInt(Math.floor(Number(v ?? 0) * 10 ** FARM_DECIMALS));
@@ -206,7 +207,7 @@ export class ChainSyncService {
           next_attempt_at: backoff(r.attempts),
         },
       });
-    let sk: Uint8Array | null = null;
+    let sk: AlgoSigner | null = null;
     try {
       // A previous attempt may have reached the chain: never resend blindly.
       if (r.tx_id) {
@@ -240,18 +241,18 @@ export class ChainSyncService {
         return false;
       }
       if (r.from_address === process.env.FARM_RESERVE_ADDRESS)
-        sk = this.chain.reserveSk();
+        sk = this.chain.reserveSigner();
       else {
         const w = await this.prisma.user_chain_wallets.findUnique({
           where: { address: r.from_address },
         });
         if (!w || w.status !== 'ready')
           throw new Error('Sender wallet not ready');
-        sk = openSecret(w, w.address);
+        sk = walletSigner(w);
       }
       const prep = await this.chain.prepareFarmTransfer({
         from: r.from_address,
-        fromSk: sk,
+        signer: sk,
         to: r.to_address,
         assetId: asset,
         amount: BigInt(r.amount_units),
@@ -271,7 +272,7 @@ export class ChainSyncService {
       await fail('failed', String(e?.message ?? e));
       return false;
     } finally {
-      sk?.fill(0);
+      sk?.wipe();
     }
   }
 

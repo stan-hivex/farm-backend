@@ -8,6 +8,32 @@ and custodial addresses).
 Everything is **off** until its env vars are set. TestNet is the default; MainNet is refused unless
 `ALGORAND_ALLOW_MAINNET=true`.
 
+## Live MainNet values
+
+- `FARM_ASA_ID=3759199569` (FARM, unit FARM, 2 decimals, 1,000,000,000.00 supply): https://allo.info/asset/3759199569
+- `FARM_RESERVE_ADDRESS=A4P7SNWVO47VRYUVOHCWZ5OIF6A2XTPSGHMXGWBXN5XCDHJ4E4N5TXDTCI` (Falcon-1024 quantum account, manager + reserve, holds the full supply)
+- Creation tx: https://allo.info/tx/AVKTWQY7QQ4JTAOXXIRGILSQGICDDUD67IXAG774WA6USWG6XCCA
+- MainNet also needs `ALGORAND_NETWORK=mainnet`, `ALGORAND_ALLOW_MAINNET=true`, `USDC_ASA_ID=31566704`.
+
+## Quantum (Falcon-1024) signing
+
+Native Falcon-1024 accounts are live on MainNet since go-algorand v5.0.0 (Aug 2026). The backend signs with
+`algosdk` 3.9 + `@algorandfoundation/falcon-wasm` through one signer abstraction (`src/chain-wallet/signer.ts`):
+
+- `ALGORAND_KEY_SCHEME` = `falcon1024` (default) or `ed25519`. Per-role overrides:
+  `FARM_RESERVE_KEY_SCHEME`, `ALGORAND_FUNDER_KEY_SCHEME`, `ALGORAND_ISSUER_KEY_SCHEME`.
+- Keys are still 25-word mnemonics. For Falcon the key is derived with `pq25WordMnemonicToSeed`
+  (the same as algosdk/Pera quantum accounts), so the same words resolve to the same Falcon address.
+  The reserve signer refuses to start if the derived address is not `FARM_RESERVE_ADDRESS`.
+- New customer custodial wallets are Falcon accounts (`key_scheme='falcon1024'`). Only the 32-byte
+  seed is stored, AES-256-GCM encrypted (address as AAD). Older rows (`key_scheme='ed25519'`, 64-byte key)
+  keep working. Migration `20261031180000_v2_phase6_key_scheme` is additive.
+- Fees: a Falcon-signed txn costs 3x the min fee (0.003 ALGO), which was confirmed with algod simulate. The funder
+  pays every fee in a pooled group: funder share plus the custodial/reserve share. Custodial accounts never need
+  ALGO beyond their min balance: 0.1 base + 0.1 USDC + 0.1 FARM = 0.3, and 0.31 ALGO is funded.
+- Phase 5 project ASAs are signed by the issuer through the same abstraction.
+- `src/blockchain/algorand.service.ts` (legacy, pre-Phase 5 helper) is unchanged and stays ed25519.
+
 ## Accounts
 
 | Account | Who creates it | Purpose | Key on server? |
@@ -19,7 +45,7 @@ Everything is **off** until its env vars are set. TestNet is the default; MainNe
 
 The funder can be the same account as the Phase 5 issuer if you prefer; the app never creates the FARM ASA.
 
-## Create FARM in Pera (exact steps)
+## Create FARM in Pera (reference only; MainNet FARM already exists as 3759199569, created by the Falcon reserve)
 
 1. Pera Wallet → create (or pick) an account to be the **FARM reserve**. Back up its 25-word passphrase offline.
    Use TestNet first: Settings → Developer Settings → Node Settings → TestNet; fund it from the
@@ -97,7 +123,8 @@ fewer FARM per USDC. Values outside `USDC_KES_RATE_MIN`/`MAX` are rejected; depo
 | `CHAIN_WALLETS_ENABLED=true`, `ALGORAND_NETWORK` (testnet), `ALGORAND_NODE_URL`, `ALGORAND_INDEXER_URL`, `ALGORAND_TOKEN`/`ALGORAND_INDEXER_TOKEN` (opt), `ALGORAND_ALLOW_MAINNET` (opt) | wallets |
 | `WALLET_KEY_ENCRYPTION_KEY` (32 bytes base64: `openssl rand -base64 32`) | wallets |
 | `ALGORAND_FUNDER_MNEMONIC` | wallets (0.31 ALGO each) + fees |
-| `FARM_ASA_ID`, `FARM_RESERVE_ADDRESS`, `USDC_ASA_ID` (TestNet 10458941, MainNet 31566704) | wallets |
+| `ALGORAND_KEY_SCHEME` (default `falcon1024`), `FARM_RESERVE_KEY_SCHEME`, `ALGORAND_FUNDER_KEY_SCHEME`, `ALGORAND_ISSUER_KEY_SCHEME` (opt) | signing scheme |
+| `FARM_ASA_ID` (MainNet 3759199569), `FARM_RESERVE_ADDRESS` (MainNet A4P7…TXDTCI), `USDC_ASA_ID` (TestNet 10458941, MainNet 31566704) | wallets |
 | `CHAIN_DEPOSITS_ENABLED=true` | deposit polling |
 | `USDC_KES_RATE_URL`, `USDC_KES_RATE_JSON_PATH`, `USDC_KES_RATE_HEADER` + `USDC_KES_RATE_API_KEY` (opt), `USDC_KES_RATE_FALLBACK_URL`, `USDC_KES_RATE_FALLBACK_JSON_PATH`, `USDC_KES_SPREAD_BPS`, `USDC_KES_RATE_MIN`, `USDC_KES_RATE_MAX`, `USDC_KES_RATE_MAX_AGE_SECONDS` | USDC conversion |
 | `FARM_RESERVE_MNEMONIC` | sync + mirror (option A) |
