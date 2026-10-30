@@ -1,4 +1,5 @@
 import { ProjectMarketplaceModule } from '../project-marketplace/project-marketplace.module';
+import { BusinessPayoutsController } from './business-payouts.controller';
 import { WithdrawModule } from '../withdraw/withdraw.module';
 import { ApiPayoutsService } from './api-payouts.service';
 import { Module } from '@nestjs/common';
@@ -13,7 +14,7 @@ import { PublicApiController } from './public-api.controller';
 
 @Module({
   imports: [AuthModule, BusinessOpsModule, WithdrawModule, ProjectMarketplaceModule],
-  controllers: [DeveloperController, PublicApiController],
+  controllers: [DeveloperController, PublicApiController, BusinessPayoutsController],
   providers: [
     ApiKeysService,
     DeveloperService,

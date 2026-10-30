@@ -27,7 +27,6 @@ import {
   CustomerDto,
   InvoiceDto,
   PaymentLinkDto,
-  PayoutDto,
   PinDto,
   ProfileDto,
   ToggleLinkDto,
@@ -81,11 +80,7 @@ export class BusinessOpsController {
   @Get('payouts') payouts(@CurrentUser() u: any, @Query() q: any) {
     return this.finance.payouts(u.id, q);
   }
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('payouts')
-  requestPayout(@CurrentUser() u: any, @Body() dto: PayoutDto) {
-    return this.finance.requestPayout(u.id, dto);
-  }
+  // POST business/payouts moved to BusinessPayoutsController (automatic payouts).
 
   @Get('team') team_(@CurrentUser() u: any) {
     return this.team.list(u.id);

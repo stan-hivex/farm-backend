@@ -121,9 +121,6 @@ describe('BusinessFinanceService', () => {
     const auth: any = { verifyPin: jest.fn() };
     const svc = new BusinessFinanceService(prisma, access, auth, { emit: jest.fn() } as any);
     await expect(svc.analytics('u', '2w')).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.requestPayout('u', { amount: 50, pin: '1', payout_method: 'bank', account_name: 'a', account_number: '1' })).rejects.toThrow('Insufficient available balance');
-    expect(auth.verifyPin).toHaveBeenCalledWith('u', '1');
-    expect(prisma.merchant_payouts.create).not.toHaveBeenCalled();
   });
 });
 
