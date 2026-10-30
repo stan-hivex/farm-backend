@@ -6,10 +6,11 @@ import { AiAssistantController } from './ai-assistant.controller';
 import { AiAssistantService } from './ai-assistant.service';
 import { AiProvider } from './ai-provider';
 import { AiToolsService } from './ai-tools.service';
+import { VoiceService } from './voice.service';
 
 @Module({
   imports: [WalletsModule, TravelModule, AgentPaymentsModule],
   controllers: [AiAssistantController],
-  providers: [AiAssistantService, AiProvider, AiToolsService],
+  providers: [AiAssistantService, AiProvider, AiToolsService, VoiceService],
 })
 export class AiAssistantModule {}

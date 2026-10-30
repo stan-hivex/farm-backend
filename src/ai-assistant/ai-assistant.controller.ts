@@ -9,8 +9,12 @@ import {
   Put,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import type { Request } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
@@ -30,10 +34,16 @@ import { Throttle } from '@nestjs/throttler';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AiAssistantService } from './ai-assistant.service';
+import { VOICE_MAX_BYTES, VoiceService } from './voice.service';
 
 class ChatDto {
   @IsNotEmpty() @IsString() @MaxLength(2000) message!: string;
   @IsOptional() @IsUUID() conversation_id?: string;
+  /** BCP-47 code from voice transcription, so Mkulima replies in the same language. */
+  @IsOptional() @IsString() @MaxLength(12) language?: string;
+}
+class VoiceDto {
+  @IsOptional() @IsString() @MaxLength(8) language?: string;
 }
 class PermissionsDto {
   @IsBoolean() enabled!: boolean;
@@ -58,7 +68,10 @@ class ConfirmDto {
 @UseGuards(JwtGuard)
 @Controller({ path: 'ai', version: '1' })
 export class AiAssistantController {
-  constructor(private readonly svc: AiAssistantService) {}
+  constructor(
+    private readonly svc: AiAssistantService,
+    private readonly voice: VoiceService,
+  ) {}
 
   @Get('status') status() {
     return this.svc.status();
@@ -68,7 +81,23 @@ export class AiAssistantController {
   @Post('chat')
   @ApiOperation({ summary: 'Send a message to Mkulima' })
   chat(@CurrentUser() u: any, @Body() dto: ChatDto) {
-    return this.svc.chat(u.id, dto.message, dto.conversation_id);
+    return this.svc.chat(u.id, dto.message, dto.conversation_id, dto.language);
+  }
+
+  @Throttle({ default: { limit: 6, ttl: 60000 } })
+  @Post('voice')
+  @ApiOperation({
+    summary:
+      'Transcribe a voice message (xAI STT). Returns the transcript for the user to confirm; nothing is sent to Mkulima and the audio is not stored.',
+  })
+  @UseInterceptors(
+    FileInterceptor('audio', {
+      storage: memoryStorage(),
+      limits: { fileSize: VOICE_MAX_BYTES, files: 1 },
+    }),
+  )
+  transcribe(@UploadedFile() file: Express.Multer.File, @Body() dto: VoiceDto) {
+    return this.voice.transcribe(file, dto?.language);
   }
 
   @Get('conversations') async list(@CurrentUser() u: any) {

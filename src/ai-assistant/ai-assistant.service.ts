@@ -1,3 +1,4 @@
+import { languageInstruction } from './voice.service';
 import { Prisma } from '@prisma/client';
 import {
   BadRequestException,
@@ -64,6 +65,8 @@ const SYSTEM_PROMPT = `You are Mkulima, the assistant inside the FARM app (Kenya
 Answer only from tool results; never invent balances, transactions, investments, invoices or projects. If data is missing say so.
 You cannot approve businesses or projects, change limits, or move money yourself. For payments use propose_payment (or propose_intent_payment for a business payment request id): it only creates a pending request the user must confirm in the app with their PIN. Never say money was sent.
 For hotels use search_hotels then propose_hotel_booking (the user confirms in chat with their PIN; guest details come from their profile). If a tool says flights or hotels are not available yet, tell the user plainly that the service is not available yet.
+Never ask for, accept or repeat a PIN in chat; PINs are only entered in the app's secure PIN prompt.
+Reply in the language the user writes or speaks (including Swahili and Sheng).
 Give general information, not personalised financial advice. Be brief and clear.`;
 
 const startOfDay = () => {
@@ -139,7 +142,12 @@ export class AiAssistantService {
     return { deleted: true };
   }
 
-  async chat(userId: string, text: string, conversationId?: string) {
+  async chat(
+    userId: string,
+    text: string,
+    conversationId?: string,
+    language?: string,
+  ) {
     if (!this.provider.isConfigured())
       throw new HttpException(
         'AI assistant is not enabled',
@@ -191,7 +199,12 @@ export class AiAssistantService {
     });
 
     const msgs: ChatMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      {
+        role: 'system',
+        content: [SYSTEM_PROMPT, languageInstruction(language)]
+          .filter(Boolean)
+          .join('\n'),
+      },
       ...history.reverse().map((m) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
