@@ -10,7 +10,7 @@ Everything is **off** until its env vars are set. TestNet is the default; MainNe
 
 ## Live MainNet values
 
-- `FARM_ASA_ID=3759199569` (FARM, unit FARM, 2 decimals, 1,000,000,000.00 supply): https://allo.info/asset/3759199569
+- `FARM_ASA_ID=3759208862` (FARM, unit FARM, 2 decimals, 10,000,000,000,000.00 supply (10 trillion; replaced the earlier 1bn asset 3759199569, destroyed)): https://allo.info/asset/3759208862
 - `FARM_RESERVE_ADDRESS=A4P7SNWVO47VRYUVOHCWZ5OIF6A2XTPSGHMXGWBXN5XCDHJ4E4N5TXDTCI` (Falcon-1024 quantum account, manager + reserve, holds the full supply)
 - Creation tx: https://allo.info/tx/AVKTWQY7QQ4JTAOXXIRGILSQGICDDUD67IXAG774WA6USWG6XCCA
 - MainNet also needs `ALGORAND_NETWORK=mainnet`, `ALGORAND_ALLOW_MAINNET=true`, `USDC_ASA_ID=31566704`.
@@ -45,7 +45,7 @@ Native Falcon-1024 accounts are live on MainNet since go-algorand v5.0.0 (Aug 20
 
 The funder can be the same account as the Phase 5 issuer if you prefer; the app never creates the FARM ASA.
 
-## Create FARM in Pera (reference only; MainNet FARM already exists as 3759199569, created by the Falcon reserve)
+## Create FARM in Pera (reference only; MainNet FARM already exists as 3759208862, created by the Falcon reserve)
 
 1. Pera Wallet → create (or pick) an account to be the **FARM reserve**. Back up its 25-word passphrase offline.
    Use TestNet first: Settings → Developer Settings → Node Settings → TestNet; fund it from the
@@ -54,7 +54,7 @@ The funder can be the same account as the Phase 5 issuer if you prefer; the app 
 3. Pera Web (https://web.perawallet.app) → connect the account → **Create Asset** (Asset Creation tool), enter:
    - Asset name: `FARM`
    - Unit name: `FARM`
-   - Total supply: e.g. `1000000000` (= 1,000,000,000 FARM = KSh 1bn; on-chain base units = total × 100)
+   - Total supply: e.g. `10000000000000` (= 10 trillion FARM; on-chain base units = total × 100)
    - Decimals: **`2`** (1 FARM = 1 KSh, smallest unit 0.01 = 1 cent)
    - URL: optional (project site)
    - Manager / Reserve address: the reserve account itself
@@ -124,7 +124,7 @@ fewer FARM per USDC. Values outside `USDC_KES_RATE_MIN`/`MAX` are rejected; depo
 | `WALLET_KEY_ENCRYPTION_KEY` (32 bytes base64: `openssl rand -base64 32`) | wallets |
 | `ALGORAND_FUNDER_MNEMONIC` | wallets (0.31 ALGO each) + fees |
 | `ALGORAND_KEY_SCHEME` (default `falcon1024`), `FARM_RESERVE_KEY_SCHEME`, `ALGORAND_FUNDER_KEY_SCHEME`, `ALGORAND_ISSUER_KEY_SCHEME` (opt) | signing scheme |
-| `FARM_ASA_ID` (MainNet 3759199569), `FARM_RESERVE_ADDRESS` (MainNet A4P7…TXDTCI), `USDC_ASA_ID` (TestNet 10458941, MainNet 31566704) | wallets |
+| `FARM_ASA_ID` (MainNet 3759208862), `FARM_RESERVE_ADDRESS` (MainNet A4P7…TXDTCI), `USDC_ASA_ID` (TestNet 10458941, MainNet 31566704) | wallets |
 | `CHAIN_DEPOSITS_ENABLED=true` | deposit polling |
 | `USDC_KES_RATE_URL`, `USDC_KES_RATE_JSON_PATH`, `USDC_KES_RATE_HEADER` + `USDC_KES_RATE_API_KEY` (opt), `USDC_KES_RATE_FALLBACK_URL`, `USDC_KES_RATE_FALLBACK_JSON_PATH`, `USDC_KES_SPREAD_BPS`, `USDC_KES_RATE_MIN`, `USDC_KES_RATE_MAX`, `USDC_KES_RATE_MAX_AGE_SECONDS` | USDC conversion |
 | `FARM_RESERVE_MNEMONIC` | sync + mirror (option A) |
