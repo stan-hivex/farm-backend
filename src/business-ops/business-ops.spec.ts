@@ -58,7 +58,7 @@ function makeCommerce() {
   };
   const finance: any = { walletFor: jest.fn().mockResolvedValue({ wallet_address: 'WAL-OWNER' }) };
   const wallets: any = { sendFunds: jest.fn().mockResolvedValue({ data: { transaction_reference: 'TX1', fee: 0 } }) };
-  const svc = new BusinessCommerceService(prisma, {} as any, finance, wallets);
+  const svc = new BusinessCommerceService(prisma, {} as any, finance, wallets, { emit: jest.fn() } as any);
   return { prisma, wallets, svc };
 }
 
@@ -119,7 +119,7 @@ describe('BusinessFinanceService', () => {
     };
     const access: any = { resolve: jest.fn().mockResolvedValue({ role: 'finance', business: biz }) };
     const auth: any = { verifyPin: jest.fn() };
-    const svc = new BusinessFinanceService(prisma, access, auth);
+    const svc = new BusinessFinanceService(prisma, access, auth, { emit: jest.fn() } as any);
     await expect(svc.analytics('u', '2w')).rejects.toBeInstanceOf(BadRequestException);
     await expect(svc.requestPayout('u', { amount: 50, pin: '1', payout_method: 'bank', account_name: 'a', account_number: '1' })).rejects.toThrow('Insufficient available balance');
     expect(auth.verifyPin).toHaveBeenCalledWith('u', '1');
@@ -139,7 +139,7 @@ describe('BusinessEscrowService', () => {
   it('requires milestones to sum to the amount', async () => {
     const prisma: any = { users: { findFirst: jest.fn().mockResolvedValue({ id: 'buyer' }) } };
     const access: any = { resolve: jest.fn().mockResolvedValue({ role: 'owner', business: biz }) };
-    const svc = new BusinessEscrowService(prisma, access, {} as any);
+    const svc = new BusinessEscrowService(prisma, access, {} as any, { emit: jest.fn() } as any);
     await expect(svc.create('owner', { buyer_identifier: 'b', title: 't', amount: 100, milestones: [{ title: 'a', amount: 40 }] })).rejects.toThrow('Milestone amounts');
   });
   it('funds through EscrowService and rolls back the claim on failure', async () => {
@@ -153,7 +153,7 @@ describe('BusinessEscrowService', () => {
       users: { findUnique: jest.fn().mockResolvedValue({ username: 'acme' }) },
     };
     const escrow: any = { create: jest.fn().mockRejectedValue(new BadRequestException('Insufficient balance')) };
-    const svc = new BusinessEscrowService(prisma, {} as any, escrow);
+    const svc = new BusinessEscrowService(prisma, {} as any, escrow, { emit: jest.fn() } as any);
     await expect(svc.fund('buyer', 'e1', '1234')).rejects.toThrow('Insufficient balance');
     expect(escrow.create).toHaveBeenCalledWith('buyer', expect.objectContaining({ seller_identifier: 'acme', amount: 20, pin: '1234' }));
     expect(prisma.business_escrows.update).toHaveBeenCalledWith({ where: { id: 'e1' }, data: { status: 'awaiting_payment' } });

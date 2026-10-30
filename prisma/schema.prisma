@@ -28,6 +28,18 @@ model api_keys {
   expires_at   DateTime? @db.Timestamp(6)
   created_at   DateTime? @default(now()) @db.Timestamp(6)
   users        users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  // V2 Phase 3: business developer API keys (sandbox/live)
+  business_id  String?   @db.Uuid
+  name         String?   @db.VarChar(120)
+  mode         String?   @db.VarChar(10)
+  key_prefix   String?   @db.VarChar(40)
+  status       String?   @default("active") @db.VarChar(20)
+  revoked_at   DateTime? @db.Timestamp(6)
+  rotated_from_id String?
+  business     businesses? @relation("api_keys_business", fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  requests     business_api_requests[]
+
+  @@index([business_id, mode])
 }
 
 model audit_logs {
@@ -1084,6 +1096,10 @@ model businesses {
   payment_links        business_payment_links[]
   payments             business_payments[]
   escrows              business_escrows[]
+  api_keys             api_keys[] @relation("api_keys_business")
+  webhook_endpoints    business_webhook_endpoints[]
+  api_requests         business_api_requests[]
+  sandbox_objects      business_sandbox_objects[]
 
   @@index([status], map: "idx_businesses_status")
 }
@@ -1275,4 +1291,78 @@ model business_escrows {
 
   @@index([business_id, status], map: "idx_business_escrows_business_status")
   @@index([buyer_user_id], map: "idx_business_escrows_buyer")
+}
+
+// ---------- V2 Phase 3: developer API ----------
+model business_webhook_endpoints {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id      String     @db.Uuid
+  mode             String     @db.VarChar(10)
+  url              String
+  description      String?    @db.VarChar(255)
+  events           Json
+  secret_encrypted String
+  is_active        Boolean    @default(true)
+  created_by       String?    @db.Uuid
+  created_at       DateTime   @default(now()) @db.Timestamp(6)
+  updated_at       DateTime   @default(now()) @updatedAt @db.Timestamp(6)
+  business         businesses @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  deliveries       business_webhook_deliveries[]
+
+  @@index([business_id, mode])
+}
+
+model business_webhook_deliveries {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  endpoint_id     String    @db.Uuid
+  event_id        String    @db.VarChar(64)
+  event_type      String    @db.VarChar(80)
+  payload         Json
+  status          String    @default("pending") @db.VarChar(20)
+  attempts        Int       @default(0)
+  response_status Int?
+  response_body   String?
+  error           String?
+  next_attempt_at DateTime? @db.Timestamp(6)
+  delivered_at    DateTime? @db.Timestamp(6)
+  created_at      DateTime  @default(now()) @db.Timestamp(6)
+  endpoint        business_webhook_endpoints @relation(fields: [endpoint_id], references: [id], onDelete: Cascade)
+
+  @@index([endpoint_id, created_at])
+  @@index([status, next_attempt_at])
+}
+
+model business_api_requests {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id String     @db.Uuid
+  api_key_id  String?
+  mode        String     @db.VarChar(10)
+  method      String     @db.VarChar(10)
+  path        String
+  status_code Int
+  duration_ms Int
+  ip_address  String?    @db.VarChar(100)
+  error       String?
+  created_at  DateTime   @default(now()) @db.Timestamp(6)
+  business    businesses @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  api_key     api_keys?  @relation(fields: [api_key_id], references: [id], onDelete: SetNull)
+
+  @@index([business_id, created_at])
+  @@index([api_key_id, created_at])
+}
+
+/// Sandbox-only objects. Never linked to wallets or real transactions.
+model business_sandbox_objects {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id String     @db.Uuid
+  object_type String     @db.VarChar(40)
+  status      String     @db.VarChar(40)
+  amount      Decimal?   @db.Decimal(20, 2)
+  currency    String?    @db.VarChar(10)
+  data        Json
+  created_at  DateTime   @default(now()) @db.Timestamp(6)
+  updated_at  DateTime   @default(now()) @updatedAt @db.Timestamp(6)
+  business    businesses @relation(fields: [business_id], references: [id], onDelete: Cascade)
+
+  @@index([business_id, object_type, created_at])
 }

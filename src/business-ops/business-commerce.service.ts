@@ -11,6 +11,7 @@ import { WalletsService } from '../wallets/wallets.service';
 import { paginate, paginationParams } from '../common/utils/pagination.util';
 import { BusinessAccessService } from './business-access.service';
 import { BusinessFinanceService } from './business-finance.service';
+import { BusinessWebhooksService } from './business-webhooks.service';
 import { CustomerDto, InvoiceDto, PaymentLinkDto } from './business-ops.dto';
 
 const INVOICE_STATUSES = [
@@ -34,6 +35,7 @@ export class BusinessCommerceService {
     private readonly access: BusinessAccessService,
     private readonly finance: BusinessFinanceService,
     private readonly wallets: WalletsService,
+    private readonly webhooks: BusinessWebhooksService,
   ) {}
 
   // ---------- customers ----------
@@ -406,6 +408,12 @@ export class BusinessCommerceService {
         'payment_link',
         l.id,
       );
+      this.webhooks.emit(l.business_id, 'live', 'payment_link.paid', {
+        payment_link_id: l.id,
+        code: l.code,
+        amount: Number(l.amount),
+        transaction_reference: res.data.transaction_reference,
+      });
       return res;
     } catch (e) {
       await this.prisma.business_payment_links.update({
@@ -484,6 +492,12 @@ export class BusinessCommerceService {
         where: { id: inv.id },
         data: { transaction_reference: res.data.transaction_reference },
       });
+      this.webhooks.emit(inv.business_id, 'live', 'invoice.paid', {
+        invoice_id: inv.id,
+        invoice_number: inv.invoice_number,
+        amount: Number(inv.total),
+        transaction_reference: res.data.transaction_reference,
+      });
       return res;
     } catch (e) {
       await this.prisma.business_invoices.update({
@@ -521,6 +535,12 @@ export class BusinessCommerceService {
         amount,
         transaction_reference: res.data.transaction_reference,
       },
+    });
+    this.webhooks.emit(businessId, 'live', 'payment.succeeded', {
+      source,
+      source_id: sourceId,
+      amount,
+      transaction_reference: res.data.transaction_reference,
     });
     return {
       data: {

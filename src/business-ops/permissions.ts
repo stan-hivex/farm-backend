@@ -26,7 +26,9 @@ export type BusinessPermission =
   | 'escrow:manage'
   | 'analytics:read'
   | 'profile:read'
-  | 'profile:manage';
+  | 'profile:manage'
+  | 'developers:read'
+  | 'developers:manage';
 
 const ALL: BusinessRole[] = [...BUSINESS_ROLES];
 
@@ -56,6 +58,9 @@ export const PERMISSION_MATRIX: Record<BusinessPermission, BusinessRole[]> = {
   'analytics:read': ['owner', 'admin', 'finance', 'accountant'],
   'profile:read': ALL,
   'profile:manage': ['owner', 'admin'],
+  // Phase 3: developer API (keys, webhooks, logs)
+  'developers:read': ['owner', 'admin', 'developer'],
+  'developers:manage': ['owner', 'admin', 'developer'],
 };
 
 export function can(role: BusinessRole, perm: BusinessPermission): boolean {

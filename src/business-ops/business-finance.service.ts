@@ -9,6 +9,7 @@ import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { paginate, paginationParams } from '../common/utils/pagination.util';
 import { BusinessAccessService } from './business-access.service';
+import { BusinessWebhooksService } from './business-webhooks.service';
 import { PayoutDto } from './business-ops.dto';
 
 /** UI status -> stored transaction_status. */
@@ -44,6 +45,7 @@ export class BusinessFinanceService {
     private readonly prisma: PrismaService,
     private readonly access: BusinessAccessService,
     private readonly auth: AuthService,
+    private readonly webhooks: BusinessWebhooksService,
   ) {}
 
   /** The business wallet is the owner's active wallet (the merchant settlement wallet). */
@@ -287,7 +289,11 @@ export class BusinessFinanceService {
   }
 
   /** Reuses merchant_payouts (admin processes it as today). Requires the actor's PIN. */
-  async requestPayout(userId: string, dto: PayoutDto) {
+  async requestPayout(
+    userId: string,
+    dto: Omit<PayoutDto, 'pin'> & { pin?: string },
+    opts: { viaApiKeyId?: string } = {},
+  ) {
     const a = await this.access.resolve(userId, 'payouts:create');
     if (!a.business.merchant_id)
       throw new ForbiddenException('Business has no linked merchant account');
@@ -296,7 +302,9 @@ export class BusinessFinanceService {
     });
     if (merchant?.status !== 'approved')
       throw new ForbiddenException('Merchant not approved');
-    await this.auth.verifyPin(userId, dto.pin);
+    // Dashboard requests need the actor's PIN; API requests are authorised by a
+    // live key that carries the payouts:write scope.
+    if (!opts.viaApiKeyId) await this.auth.verifyPin(userId, dto.pin ?? '');
     const w = await this.walletFor(a.business.owner_user_id);
     if (w.is_frozen)
       throw new ForbiddenException(
@@ -332,10 +340,19 @@ export class BusinessFinanceService {
           action: 'business.payout_requested',
           entity_type: 'business',
           entity_id: a.business.id,
-          new_values: { payout_id: payout.id, amount: dto.amount },
+          new_values: {
+            payout_id: payout.id,
+            amount: dto.amount,
+            via_api_key: opts.viaApiKeyId ?? null,
+          },
         } as any,
       })
       .catch(() => undefined);
+    this.webhooks.emit(a.business.id, 'live', 'payout.requested', {
+      id: payout.id,
+      amount: Number(payout.amount),
+      status: 'pending',
+    });
     return {
       data: { ...payout, amount: Number(payout.amount), status: 'pending' },
       message: 'Payout request submitted',
