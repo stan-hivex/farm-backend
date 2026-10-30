@@ -108,7 +108,9 @@ export class NowpaymentsService {
           (error.response?.data as any)?.message ??
           (error.response?.data as any)?.status;
         this.logger.error(
-          `NOWPayments ${method.toUpperCase()} ${path} failed${status ? ` (HTTP ${status})` : ''}`,
+          `NOWPayments ${method.toUpperCase()} ${path} failed${status ? ` (HTTP ${status})` : ''}${
+            typeof providerMessage === 'string' ? `: ${providerMessage.slice(0, 300)}` : ''
+          }`,
         );
         if (status && status >= 400 && status < 500) {
           throw new BadGatewayException(
