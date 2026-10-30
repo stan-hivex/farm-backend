@@ -6,6 +6,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CacheService } from '../common/cache/cache.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import { HIDDEN_TRANSACTION_HISTORY_STATUSES } from '../common/utils/hidden-transaction-history-statuses';
 
 @Injectable()
 export class WalletsService {
@@ -250,11 +251,23 @@ export class WalletsService {
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     if (!wallet) throw new NotFoundException('Wallet not found');
 
-    const where: any = { OR: [{ sender_wallet_id: wallet.id }, { receiver_wallet_id: wallet.id }] };
-    if (query.type) where.transaction_type = query.type;
-    if (query.status) where.status = query.status;
+    // Unsuccessful/in-flight transactions stay hidden from user history
+    // (asserted by wallets.service.spec.ts on main).
+    const where: any = {
+      AND: [
+        {
+          OR: [
+            { sender_wallet_id: wallet.id },
+            { receiver_wallet_id: wallet.id },
+          ],
+        },
+        { status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES } },
+      ],
+    };
+    if (query.type) where.AND.push({ transaction_type: query.type });
+    if (query.status) where.AND.push({ status: query.status });
 
-    const cacheKey = `transactions:${userId}:${page}:${limit}`;
+    const cacheKey = `transactions:${userId}:${page}:${limit}:${query.type ?? ''}:${query.status ?? ''}`;
     const cached = await this.cache.cacheGet<any>(cacheKey);
     if (cached) {
       return cached;
