@@ -3,11 +3,9 @@ import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CacheService } from '../common/cache/cache.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
-import { HIDDEN_TRANSACTION_HISTORY_STATUSES } from '../common/utils/hidden-transaction-history-statuses';
-import { CacheService } from '../common/cache/cache.service';
-import { WebsocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class WalletsService {
@@ -19,16 +17,21 @@ export class WalletsService {
     private securityService: SecurityService,
     private notificationsService: NotificationsService,
     private cache: CacheService,
-    private websocket: WebsocketGateway,
   ) {}
 
   async getMyWallet(userId: string) {
+    const cacheKey = `wallet:${userId}:balance`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true },
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const available = Number(wallet.balance) - Number(wallet.locked_balance);
-    return {
+    const payload = {
       data: {
         id: wallet.id,
         wallet_address: wallet.wallet_address,
@@ -41,6 +44,9 @@ export class WalletsService {
         is_frozen: wallet.is_frozen,
       },
     };
+
+    await this.cache.cacheSet(cacheKey, payload, 30);
+    return payload;
   }
 
   async sendFunds(
@@ -74,7 +80,7 @@ export class WalletsService {
       include: { wallets: { where: { is_active: true }, take: 1 } },
     });
 
-    let receiverUserId = receiverUser?.id;
+    const receiverUserId = receiverUser?.id;
     let receiverWalletId: string;
     if (receiverUser?.wallets[0]) {
       receiverWalletId = receiverUser.wallets[0].id;
@@ -178,15 +184,14 @@ export class WalletsService {
       const recvWallet = await tx.wallets.findUnique({ where: { id: receiverWalletId } });
       if (!recvWallet) throw new NotFoundException('Recipient wallet not found');
 
-      const updatedSenderWallet = await tx.wallets.update({
+      await tx.wallets.update({
         where: { id: senderWallet.id },
         data: { balance: { decrement: totalOut } },
       });
-      const updatedReceiverWallet = await tx.wallets.update({
+      await tx.wallets.update({
         where: { id: receiverWalletId },
         data: { balance: { increment: dto.amount } },
       });
-      receiverUserId = receiverUserId ?? recvWallet.user_id ?? undefined;
 
       await tx.ledger_entries.createMany({
         data: [
@@ -219,27 +224,17 @@ export class WalletsService {
       return {
         data: { transaction_reference: reference, amount: dto.amount, fee, status: 'completed' },
         message: 'Transfer successful',
-        senderBalance: Number(updatedSenderWallet.balance),
-        receiverBalance: Number(updatedReceiverWallet.balance),
       };
     });
 
-    try {
-      this.websocket.emitBalanceUpdate(senderId, result.senderBalance);
-      this.websocket.emitTransactionUpdate(senderId, {
-        reference: result.data.transaction_reference,
-        status: 'SUCCESS',
-      });
-      if (receiverUserId) {
-        this.websocket.emitBalanceUpdate(receiverUserId, result.receiverBalance);
-        this.websocket.emitTransactionUpdate(receiverUserId, {
-          reference: result.data.transaction_reference,
-          status: 'SUCCESS',
-        });
-      }
-    } catch (error) {
-      this.logger.warn(`Transfer realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    await Promise.all([
+      this.cache.cacheInvalidatePattern(`wallet:${senderId}:balance`),
+      this.cache.cacheInvalidatePattern(`wallet:${receiverUserId}:balance`),
+      this.cache.cacheInvalidatePattern(`dashboard:${senderId}`),
+      this.cache.cacheInvalidatePattern(`dashboard:${receiverUserId}`),
+      this.cache.cacheInvalidatePattern(`transactions:${senderId}:*`),
+      this.cache.cacheInvalidatePattern(`transactions:${receiverUserId}:*`),
+    ]);
 
     if (receiverUserId) {
       this.notificationsService
@@ -247,16 +242,7 @@ export class WalletsService {
         .catch((error) => this.logger.error('Transfer notification failed', error));
     }
 
-    await Promise.all([
-      this.cache.cacheDelete(`wallet:${senderId}:balance`),
-      ...(receiverUserId ? [this.cache.cacheDelete(`wallet:${receiverUserId}:balance`)] : []),
-      this.cache.cacheDelete(`dashboard:${senderId}`),
-      ...(receiverUserId ? [this.cache.cacheDelete(`dashboard:${receiverUserId}`)] : []),
-      this.cache.cacheInvalidatePattern(`transactions:${senderId}:*`),
-      ...(receiverUserId ? [this.cache.cacheInvalidatePattern(`transactions:${receiverUserId}:*`)] : []),
-    ]);
-
-    return { data: result.data, message: result.message };
+    return result;
   }
 
   async getTransactions(userId: string, query: any) {
@@ -264,19 +250,15 @@ export class WalletsService {
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     if (!wallet) throw new NotFoundException('Wallet not found');
 
-    const where: any = {
-      AND: [
-        {
-          OR: [
-            { sender_wallet_id: wallet.id },
-            { receiver_wallet_id: wallet.id },
-          ],
-        },
-        { status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES } },
-      ],
-    };
-    if (query.type) where.AND.push({ transaction_type: query.type });
-    if (query.status) where.AND.push({ status: query.status });
+    const where: any = { OR: [{ sender_wallet_id: wallet.id }, { receiver_wallet_id: wallet.id }] };
+    if (query.type) where.transaction_type = query.type;
+    if (query.status) where.status = query.status;
+
+    const cacheKey = `transactions:${userId}:${page}:${limit}`;
+    const cached = await this.cache.cacheGet<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
 
     const [txns, total] = await Promise.all([
       this.prisma.transactions.findMany({
@@ -319,7 +301,7 @@ export class WalletsService {
       }),
       this.prisma.transactions.count({ where }),
     ]);
-    return {
+    const payload = {
       data: txns.map((t) => {
         const senderUser = this.buildUserSummary(
           t.wallets_transactions_sender_wallet_idTowallets?.users,
@@ -344,6 +326,9 @@ export class WalletsService {
       }),
       meta: paginate(total, page, limit),
     };
+
+    await this.cache.cacheSet(cacheKey, payload, 45);
+    return payload;
   }
 
   private buildUserSummary(user: any) {
