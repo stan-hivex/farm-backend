@@ -48,4 +48,8 @@ Travel is off by default. It turns on only when `TRAVEL_ENABLED=true` and a flig
 
 ## Pricing and providers
 - **Duffel flights** (https://duffel.com/pricing): $3 per order + 1% managed content, $2 per paid ancillary, 2% FX fee, and an excess search fee of $0.005 per search over a 1500:1 search-to-book ratio. There are no upfront fees, and Duffel's IATA accreditation is used.
-- **Hotels (next adapter):** candidates are Duffel Stays (same account, profit share), LiteAPI (https://www.liteapi.travel/pricing) and Hotelbeds (contract). Amadeus Self-Service is being retired, so don't build on it.
+- **Hotels (next adapter):**
+  - **LiteAPI / Nuitee Connect.** The core Rates → Prebook → Book flow is free (reasonable look-to-book ratio). You earn by adding a margin (e.g. 15%), with weekly payouts. Pricing: https://docs.liteapi.travel/reference/api-pricing-usage-costs
+  - **Duffel Stays.** Same account, with profit share on completed stays.
+  - **Hotelbeds.** Needs a contract.
+  - Amadeus Self-Service was decommissioned on July 17, 2026; only Amadeus Enterprise (with a contract) remains.
