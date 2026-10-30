@@ -16,6 +16,14 @@ export class PaystackTransferInitiationError extends Error {
   }
 }
 
+export function paystackMockVerifyAllowed(env = process.env): boolean {
+  return (
+    env.PAYSTACK_MOCK_VERIFY === 'true' &&
+    env.NODE_ENV !== 'production' &&
+    env.RENDER !== 'true'
+  );
+}
+
 @Injectable()
 export class PaystackService {
   private readonly logger = new Logger(PaystackService.name);
@@ -183,9 +191,13 @@ export class PaystackService {
   async verifyTransaction(reference: string) {
     if (!this.secretKey) {
       this.logger.warn(
-        'PAYSTACK_SECRET_KEY not configured, returning mock verify',
+        'PAYSTACK_SECRET_KEY not configured, cannot verify transaction',
       );
-      return { status: 'success', reference };
+      // Never report success without a real verification: the stuck-deposit
+      // sweeper would otherwise credit FARM for unpaid deposits. Local tests
+      // can opt in explicitly (never honoured in production).
+      if (paystackMockVerifyAllowed()) return { status: 'success', reference };
+      return { status: 'unverified', reference };
     }
 
     try {
