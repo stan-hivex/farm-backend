@@ -16,8 +16,11 @@ export interface ToolSpec {
 /**
  * Provider-agnostic client for any OpenAI-compatible /chat/completions endpoint
  * (OpenAI, xAI, Groq, Together, OpenRouter, local vLLM/Ollama, ...).
- * Disabled unless AI_ASSISTANT_ENABLED=true AND AI_BASE_URL, AI_MODEL, AI_API_KEY are set.
+ * Defaults to xAI (https://api.x.ai/v1, grok-4.3); override with AI_BASE_URL / AI_MODEL.
+ * Disabled unless AI_ASSISTANT_ENABLED=true AND AI_API_KEY is set.
  */
+export const AI_DEFAULT_BASE_URL = 'https://api.x.ai/v1';
+export const AI_DEFAULT_MODEL = 'grok-4.3';
 @Injectable()
 export class AiProvider {
   private readonly logger = new Logger(AiProvider.name);
@@ -26,15 +29,13 @@ export class AiProvider {
   isConfigured(): boolean {
     return (
       this.config.get<string>('AI_ASSISTANT_ENABLED') === 'true' &&
-      !!this.config.get<string>('AI_BASE_URL') &&
-      !!this.config.get<string>('AI_MODEL') &&
       !!this.config.get<string>('AI_API_KEY')
     );
   }
 
   async complete(messages: ChatMessage[], tools: ToolSpec[]): Promise<ChatMessage> {
     if (!this.isConfigured()) throw new ServiceUnavailableException('AI assistant is not enabled');
-    const base = this.config.get<string>('AI_BASE_URL')!.replace(/\/+$/, '');
+    const base = (this.config.get<string>('AI_BASE_URL') || AI_DEFAULT_BASE_URL).replace(/\/+$/, '');
     const timeoutMs = Number(this.config.get<string>('AI_TIMEOUT_MS') ?? 30000);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -47,7 +48,7 @@ export class AiProvider {
           authorization: `Bearer ${this.config.get<string>('AI_API_KEY')}`,
         },
         body: JSON.stringify({
-          model: this.config.get<string>('AI_MODEL'),
+          model: this.config.get<string>('AI_MODEL') || AI_DEFAULT_MODEL,
           messages,
           tools,
           tool_choice: 'auto',

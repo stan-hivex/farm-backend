@@ -1,6 +1,6 @@
 # Phase 7 — Mkulima AI assistant
 
-Off by default. It turns on only when `AI_ASSISTANT_ENABLED=true` and `AI_BASE_URL`, `AI_MODEL` and `AI_API_KEY` are all set. When it is off, `POST /v1/ai/chat` returns 503 and `GET /v1/ai/status` returns `enabled:false`.
+Off by default. It turns on only when `AI_ASSISTANT_ENABLED=true` and `AI_API_KEY` is set. The chosen provider is **xAI**: `AI_BASE_URL` defaults to `https://api.x.ai/v1` and `AI_MODEL` to `grok-4.3` (function calling; $1.25 in / $2.50 out per 1M tokens, https://docs.x.ai/docs/models). For the most capable model set `AI_MODEL=grok-4.7` ($2 / $6). When it is off, `POST /v1/ai/chat` returns 503 and `GET /v1/ai/status` returns `enabled:false`.
 
 ## Provider
 The assistant works with any OpenAI-compatible `/chat/completions` endpoint that supports tool calling, such as OpenAI, xAI, Groq, OpenRouter, Together, or a self-hosted vLLM or Ollama server.
@@ -8,9 +8,9 @@ The assistant works with any OpenAI-compatible `/chat/completions` endpoint that
 | Var | Example | Notes |
 |---|---|---|
 | AI_ASSISTANT_ENABLED | false | master switch |
-| AI_BASE_URL | https://api.openai.com/v1 | no trailing `/chat/completions` |
-| AI_MODEL | gpt-4o-mini | must support tools |
-| AI_API_KEY | (secret) | set in Render; never commit |
+| AI_BASE_URL | https://api.x.ai/v1 (default) | no trailing `/chat/completions` |
+| AI_MODEL | grok-4.3 (default) | must support tool calling |
+| AI_API_KEY | (secret, xAI key from console.x.ai) | set in Render; never commit |
 | AI_DAILY_MESSAGE_LIMIT | 50 | user messages per user per day |
 | AI_TIMEOUT_MS | 30000 | |
 

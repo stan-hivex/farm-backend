@@ -23,7 +23,7 @@ function mkPrisma(perm: any = null, committed = 0) {
   } as any;
 }
 const cfg = (env: Record<string, string>) => ({ get: (k: string) => env[k] }) as any;
-const ON = { AI_ASSISTANT_ENABLED: 'true', AI_BASE_URL: 'https://llm.example/v1', AI_MODEL: 'm', AI_API_KEY: 'k' };
+const ON = { AI_ASSISTANT_ENABLED: 'true', AI_API_KEY: 'k' };
 const PERM = { enabled: true, revoked_at: null, per_tx_cap: 1000, daily_cap: 2000, allowed_actions: ['send_farm'] };
 
 function mk(prisma: any, env = ON, provider?: any, wallets?: any) {
