@@ -23,6 +23,31 @@ export class AiToolsService {
       {
         type: 'function',
         function: {
+          name: 'search_flights',
+          description: 'Search real flight offers (prices in FARM). Airports are 3-letter IATA codes, e.g. NBO, MBA, KIS.',
+          parameters: {
+            type: 'object',
+            properties: {
+              origin: { type: 'string' }, destination: { type: 'string' },
+              departure_date: { type: 'string', description: 'YYYY-MM-DD' }, return_date: { type: 'string' },
+              adults: { type: 'integer', minimum: 1, maximum: 9 },
+            },
+            required: ['origin', 'destination', 'departure_date', 'adults'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'propose_flight_booking',
+          description: 'Propose booking a flight offer from search_flights. Only creates a pending request; the user adds passenger details and confirms with their PIN in the app. Never claim it is booked.',
+          parameters: { type: 'object', properties: { offer_id: { type: 'string' } }, required: ['offer_id'], additionalProperties: false },
+        },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'propose_payment',
           description:
             'Propose sending FARM to a recipient (username, phone or wallet address). This only creates a pending request; the user must confirm it in the app with their PIN. Never claim a payment was sent.',

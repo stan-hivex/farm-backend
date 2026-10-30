@@ -1772,6 +1772,7 @@ model ai_action_requests {
   status               String    @default("pending")
   transaction_ref      String?
   failure_reason       String?
+  payload              Json?
   expires_at           DateTime
   decided_at           DateTime?
   created_at           DateTime  @default(now())
@@ -1786,5 +1787,35 @@ model ai_audit_log {
   details    Json?
   created_at DateTime @default(now())
 
+  @@index([user_id, created_at])
+}
+
+// ---- Phase 8: Travel (additive) ----
+model travel_bookings {
+  id                  String    @id @default(uuid()) @db.Uuid
+  user_id             String    @db.Uuid
+  idempotency_key     String
+  kind                String    @default("flight")
+  provider            String
+  provider_offer_id   String
+  provider_order_id   String?
+  booking_reference   String?
+  status              String    @default("pending")
+  offer_currency      String
+  offer_amount        Decimal   @db.Decimal(20, 2)
+  fx_rate             Decimal?  @db.Decimal(20, 6)
+  service_fee_farm    Decimal   @default(0) @db.Decimal(20, 2)
+  total_farm          Decimal   @db.Decimal(20, 2)
+  transaction_id      String?   @db.Uuid
+  refund_transaction_id String? @db.Uuid
+  ai_action_id        String?   @db.Uuid
+  summary             Json?
+  passengers          Json?
+  failure_reason      String?
+  live_mode           Boolean   @default(false)
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  @@unique([user_id, idempotency_key])
   @@index([user_id, created_at])
 }

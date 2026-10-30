@@ -1,0 +1,338 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { PrismaService } from '../database/prisma.service';
+import { AuthService } from '../auth/auth.service';
+import { RateService } from '../chain-wallet/rate.service';
+import { generateTxReference } from '../common/utils/reference.util';
+import { DuffelProvider } from './duffel.provider';
+import { FlightOffer, FlightSearch, Passenger, ProviderRejectedError, ProviderUnknownError } from './travel-provider';
+
+const IATA = /^[A-Z]{3}$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const round2up = (n: number) => Math.ceil(n * 100 - 1e-9) / 100;
+
+export interface BookDto {
+  offer_id: string;
+  passengers: Passenger[];
+  expected_total_farm: number;
+  pin: string;
+  idempotency_key: string;
+  ai_action_id?: string;
+}
+
+@Injectable()
+export class TravelService {
+  private readonly log = new Logger(TravelService.name);
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auth: AuthService,
+    private readonly rates: RateService,
+    private readonly flights: DuffelProvider,
+  ) {}
+
+  private get env(): NodeJS.ProcessEnv {
+    return process.env;
+  }
+
+  enabled() {
+    return this.env.TRAVEL_ENABLED === 'true' && this.flights.isConfigured();
+  }
+  status() {
+    const on = this.enabled();
+    return {
+      enabled: on,
+      flights: on ? { provider: this.flights.name, sandbox: !(this.env.DUFFEL_API_TOKEN ?? '').startsWith('duffel_live_') } : null,
+      stays: null,
+    };
+  }
+  private ensure() {
+    if (!this.enabled()) throw new ServiceUnavailableException('Travel is not available yet');
+  }
+
+  /** FARM price for a provider price. KES is 1:1; USD uses the configured USDC/KES mid + markup; other currencies are unavailable. */
+  async priceFarm(amount: number, currency: string) {
+    const fee = Math.max(Number(this.env.TRAVEL_SERVICE_FEE_FARM ?? 0) || 0, 0);
+    if (currency === 'KES') return { fx_rate: 1, fee, total: round2up(amount + fee) };
+    if (currency === 'USD') {
+      const r = await this.rates.usdcKes(this.env);
+      if (!r?.mid) return null;
+      const markup = Math.min(Math.max(Number(this.env.TRAVEL_FX_MARKUP_BPS ?? 200) || 0, 0), 1000);
+      const fx = Math.ceil(r.mid * (1 + markup / 10_000) * 1e6) / 1e6;
+      return { fx_rate: fx, fee, total: round2up(amount * fx + fee) };
+    }
+    return null;
+  }
+
+  private async withPrice(o: FlightOffer) {
+    const p = await this.priceFarm(o.total_amount, o.total_currency);
+    return { ...o, price_farm: p?.total ?? null, fx_rate: p?.fx_rate ?? null, service_fee_farm: p?.fee ?? null, bookable: !!p };
+  }
+
+  validateSearch(q: FlightSearch) {
+    const origin = String(q.origin ?? '').toUpperCase().trim();
+    const destination = String(q.destination ?? '').toUpperCase().trim();
+    if (!IATA.test(origin) || !IATA.test(destination) || origin === destination)
+      throw new BadRequestException('Use 3-letter airport codes, e.g. NBO and MBA');
+    if (!DATE.test(q.departure_date)) throw new BadRequestException('Departure date must be YYYY-MM-DD');
+    const today = new Date().toISOString().slice(0, 10);
+    if (q.departure_date < today) throw new BadRequestException('Departure date is in the past');
+    if (q.return_date && (!DATE.test(q.return_date) || q.return_date < q.departure_date))
+      throw new BadRequestException('Return date must be on or after departure');
+    const adults = Math.trunc(Number(q.adults ?? 1));
+    if (!(adults >= 1 && adults <= 9)) throw new BadRequestException('1 to 9 adults');
+    const cabin = q.cabin_class ?? 'economy';
+    if (!['economy', 'premium_economy', 'business', 'first'].includes(cabin)) throw new BadRequestException('Unknown cabin');
+    return { origin, destination, departure_date: q.departure_date, return_date: q.return_date || undefined, adults, cabin_class: cabin };
+  }
+
+  async search(q: FlightSearch) {
+    this.ensure();
+    const offers = await this.flights.searchFlights(this.validateSearch(q)).catch((e) => {
+      if (e instanceof ProviderRejectedError) throw new BadRequestException(e.message);
+      throw new ServiceUnavailableException('Flight search is unavailable right now');
+    });
+    return Promise.all(offers.map((o) => this.withPrice(o)));
+  }
+
+  async offer(id: string) {
+    this.ensure();
+    if (!/^[A-Za-z0-9_]{5,80}$/.test(id)) throw new BadRequestException('Invalid offer id');
+    const o = await this.flights.getOffer(id).catch((e) => {
+      if (e instanceof NotFoundException) throw e;
+      if (e instanceof ProviderRejectedError) throw new BadRequestException(e.message);
+      throw new ServiceUnavailableException('Offer lookup is unavailable right now');
+    });
+    return this.withPrice(o);
+  }
+
+  private validatePassengers(offer: FlightOffer, list: Passenger[]) {
+    if (!Array.isArray(list) || list.length !== offer.passengers.length)
+      throw new BadRequestException(`Details for ${offer.passengers.length} passenger(s) are required`);
+    const ids = new Set(offer.passengers.map((p) => p.id));
+    return list.map((p) => {
+      if (!ids.has(p.id)) throw new BadRequestException('Passenger does not match the offer');
+      if (!['mr', 'ms', 'mrs', 'miss', 'dr'].includes(p.title)) throw new BadRequestException('Invalid title');
+      if (!['m', 'f'].includes(p.gender)) throw new BadRequestException('Invalid gender');
+      if (!DATE.test(p.born_on)) throw new BadRequestException('Date of birth must be YYYY-MM-DD');
+      if (!/^\S+@\S+\.\S+$/.test(p.email)) throw new BadRequestException('Invalid email');
+      if (!/^\+[1-9]\d{6,14}$/.test(p.phone_number)) throw new BadRequestException('Phone must be in +2547... format');
+      const name = (s: string) => String(s ?? '').trim().slice(0, 60);
+      if (!name(p.given_name) || !name(p.family_name)) throw new BadRequestException('Passenger names are required');
+      return { id: p.id, title: p.title, gender: p.gender, born_on: p.born_on, email: p.email.trim(), phone_number: p.phone_number, given_name: name(p.given_name), family_name: name(p.family_name) };
+    });
+  }
+
+  /** AI-proposed bookings must stay within the user's AI caps and allowlist. */
+  private async checkAiAction(userId: string, actionId: string, offerId: string, total: number) {
+    const a = await this.prisma.ai_action_requests.findFirst({ where: { id: actionId, user_id: userId } });
+    if (!a || a.action !== 'book_flight' || a.status !== 'pending' || a.expires_at <= new Date())
+      throw new BadRequestException('Mkulima request is not pending');
+    if ((a.payload as Record<string, unknown> | null)?.offer_id !== offerId) throw new BadRequestException('Mkulima request is for a different offer');
+    const p = await this.prisma.ai_spend_permissions.findUnique({ where: { user_id: userId } });
+    if (!p || !p.enabled || p.revoked_at || !p.allowed_actions.includes('book_flight'))
+      throw new ForbiddenException('Mkulima flight booking is not allowed in your settings');
+    if (total > Number(p.per_tx_cap)) throw new ForbiddenException('Price is above your Mkulima per-payment cap');
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const agg = await this.prisma.ai_action_requests.aggregate({
+      where: { user_id: userId, status: 'executed', created_at: { gte: start } },
+      _sum: { amount: true },
+    });
+    if (Number(agg._sum.amount ?? 0) + total > Number(p.daily_cap)) throw new ForbiddenException('Price is above your Mkulima daily cap');
+    return a;
+  }
+
+  async book(userId: string, dto: BookDto, ip: string) {
+    this.ensure();
+    const key = String(dto.idempotency_key ?? '').trim();
+    if (!/^[A-Za-z0-9_-]{8,80}$/.test(key)) throw new BadRequestException('idempotency_key is required');
+    const existing = await this.prisma.travel_bookings.findUnique({ where: { user_id_idempotency_key: { user_id: userId, idempotency_key: key } } });
+    if (existing) return this.view(existing);
+
+    if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
+    await this.auth.verifyPin(userId, dto.pin);
+
+    const offer = await this.offer(dto.offer_id);
+    if (!offer.bookable || offer.price_farm == null) throw new ServiceUnavailableException('This offer cannot be priced in FARM right now');
+    if (offer.live_mode && this.env.TRAVEL_ALLOW_LIVE !== 'true') throw new ForbiddenException('Live bookings are disabled');
+    if (offer.price_farm > Number(dto.expected_total_farm) + 0.001)
+      throw new ConflictException({ message: 'The price changed. Please review the new price.', price_farm: offer.price_farm });
+    const passengers = this.validatePassengers(offer, dto.passengers);
+    const total = offer.price_farm;
+    if (dto.ai_action_id) await this.checkAiAction(userId, dto.ai_action_id, offer.id, total);
+
+    // 1) Hold: debit the wallet into a processing escrow_lock transaction (atomic, balance re-checked in-tx).
+    let booking;
+    try {
+      booking = await this.prisma.$transaction(async (tx) => {
+        const w = await tx.wallets.findFirst({ where: { user_id: userId, is_active: true } });
+        if (!w) throw new NotFoundException('Wallet not found');
+        if (w.is_frozen) throw new ForbiddenException('Your wallet is frozen. Contact support.');
+        const available = Number(w.balance) - Number(w.locked_balance ?? 0);
+        if (available < total) throw new BadRequestException(`Insufficient balance. Available: ${available.toFixed(2)} FARM`);
+        const upd = await tx.wallets.updateMany({ where: { id: w.id, balance: { gte: total } }, data: { balance: { decrement: total } } });
+        if (upd.count !== 1) throw new BadRequestException('Insufficient balance');
+        const t = await tx.transactions.create({
+          data: {
+            transaction_reference: generateTxReference(),
+            sender_wallet_id: w.id,
+            transaction_type: 'escrow_lock',
+            status: 'processing',
+            amount: total,
+            fee: offer.service_fee_farm ?? 0,
+            net_amount: total - (offer.service_fee_farm ?? 0),
+            currency: 'FARM',
+            description: `Flight ${offer.slices.map((s) => `${s.origin}-${s.destination}`).join(', ')}`,
+            ip_address: ip,
+            metadata: { user_id: userId, kind: 'travel_flight', provider: offer.provider, offer_id: offer.id },
+          },
+        });
+        await tx.ledger_entries.create({
+          data: {
+            transaction_id: t.id,
+            wallet_id: w.id,
+            entry_type: 'debit',
+            amount: total,
+            balance_before: Number(w.balance),
+            balance_after: Number(w.balance) - total,
+            description: 'Flight booking (held)',
+          },
+        });
+        return tx.travel_bookings.create({
+          data: {
+            user_id: userId,
+            idempotency_key: key,
+            provider: offer.provider,
+            provider_offer_id: offer.id,
+            status: 'payment_held',
+            offer_currency: offer.total_currency,
+            offer_amount: offer.total_amount,
+            fx_rate: offer.fx_rate,
+            service_fee_farm: offer.service_fee_farm ?? 0,
+            total_farm: total,
+            transaction_id: t.id,
+            ai_action_id: dto.ai_action_id ?? null,
+            live_mode: offer.live_mode,
+            summary: { owner: offer.owner, slices: offer.slices } as object,
+            passengers: passengers.map((p) => ({ given_name: p.given_name, family_name: p.family_name })) as object,
+          },
+        });
+      });
+    } catch (e) {
+      // Unique (user, idempotency_key) race: return the winner.
+      if ((e as { code?: string }).code === 'P2002') {
+        const b = await this.prisma.travel_bookings.findUnique({ where: { user_id_idempotency_key: { user_id: userId, idempotency_key: key } } });
+        if (b) return this.view(b);
+      }
+      throw e;
+    }
+
+    // 2) Book with the provider.
+    try {
+      const order = await this.flights.createOrder(offer, passengers, booking.id);
+      const done = await this.prisma.$transaction(async (tx) => {
+        await tx.transactions.update({ where: { id: booking.transaction_id! }, data: { status: 'completed', processed_at: new Date() } });
+        if (booking.ai_action_id)
+          await tx.ai_action_requests.update({ where: { id: booking.ai_action_id }, data: { status: 'executed', decided_at: new Date(), amount: total } });
+        return tx.travel_bookings.update({
+          where: { id: booking.id },
+          data: { status: 'confirmed', provider_order_id: order.id, booking_reference: order.booking_reference },
+        });
+      });
+      return this.view(done);
+    } catch (e) {
+      if (e instanceof ProviderUnknownError) {
+        // Outcome unknown: keep funds held, flag for review; never double-book or refund blindly.
+        this.log.error(`Travel booking ${booking.id} outcome unknown: ${e.message}`);
+        const b = await this.prisma.travel_bookings.update({ where: { id: booking.id }, data: { status: 'needs_review', failure_reason: e.message.slice(0, 200) } });
+        return this.view(b);
+      }
+      const reason = (e as Error).message?.slice(0, 200) ?? 'Booking failed';
+      const b = await this.refund(booking.id, reason);
+      return this.view(b);
+    }
+  }
+
+  /** Full refund to the wallet for a booking whose payment is held. Idempotent. */
+  async refund(bookingId: string, reason: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const b = await tx.travel_bookings.findUnique({ where: { id: bookingId } });
+      if (!b) throw new NotFoundException('Booking not found');
+      const claim = await tx.travel_bookings.updateMany({
+        where: { id: bookingId, status: { in: ['payment_held', 'needs_review'] } },
+        data: { status: 'refunding' },
+      });
+      if (claim.count !== 1) return b;
+      const hold = await tx.transactions.findUnique({ where: { id: b.transaction_id! } });
+      const w = await tx.wallets.findUnique({ where: { id: hold!.sender_wallet_id! } });
+      const amt = Number(b.total_farm);
+      await tx.wallets.update({ where: { id: w!.id }, data: { balance: { increment: amt } } });
+      await tx.transactions.update({ where: { id: hold!.id }, data: { status: 'reversed', processed_at: new Date() } });
+      const r = await tx.transactions.create({
+        data: {
+          transaction_reference: generateTxReference(),
+          receiver_wallet_id: w!.id,
+          transaction_type: 'escrow_refund',
+          status: 'completed',
+          amount: amt,
+          fee: 0,
+          net_amount: amt,
+          currency: 'FARM',
+          description: 'Flight booking refund',
+          processed_at: new Date(),
+          metadata: { user_id: b.user_id, kind: 'travel_refund', booking_id: b.id, hold_tx: hold!.id },
+        },
+      });
+      await tx.ledger_entries.create({
+        data: {
+          transaction_id: r.id,
+          wallet_id: w!.id,
+          entry_type: 'credit',
+          amount: amt,
+          balance_before: Number(w!.balance),
+          balance_after: Number(w!.balance) + amt,
+          description: 'Flight booking refund',
+        },
+      });
+      return tx.travel_bookings.update({ where: { id: b.id }, data: { status: 'failed_refunded', refund_transaction_id: r.id, failure_reason: reason } });
+    });
+  }
+
+  view(b: { [k: string]: any }) {
+    return {
+      id: b.id,
+      kind: b.kind,
+      provider: b.provider,
+      status: b.status,
+      booking_reference: b.booking_reference,
+      total_farm: Number(b.total_farm),
+      offer_amount: Number(b.offer_amount),
+      offer_currency: b.offer_currency,
+      fx_rate: b.fx_rate == null ? null : Number(b.fx_rate),
+      service_fee_farm: Number(b.service_fee_farm),
+      summary: b.summary,
+      passengers: b.passengers,
+      failure_reason: b.failure_reason,
+      live_mode: b.live_mode,
+      created_at: b.created_at,
+    };
+  }
+
+  async list(userId: string) {
+    const rows = await this.prisma.travel_bookings.findMany({ where: { user_id: userId }, orderBy: { created_at: 'desc' }, take: 50 });
+    return rows.map((b) => this.view(b));
+  }
+
+  async get(userId: string, id: string) {
+    const b = await this.prisma.travel_bookings.findFirst({ where: { id, user_id: userId } });
+    if (!b) throw new NotFoundException('Booking not found');
+    return this.view(b);
+  }
+}
