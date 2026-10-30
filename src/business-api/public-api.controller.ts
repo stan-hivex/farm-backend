@@ -32,6 +32,7 @@ import {
 } from './api-key-auth.guard';
 import { ApiPayoutDto } from './business-api.dto';
 import { SandboxService } from './sandbox.service';
+import { BusinessProjectsService } from '../project-marketplace/business-projects.service';
 import { ApiPayoutsService } from './api-payouts.service';
 
 const live = async (p: Promise<any>) => ({ livemode: true, ...(await p) });
@@ -53,6 +54,7 @@ export class PublicApiController {
     private readonly escrow: BusinessEscrowService,
     private readonly sandbox: SandboxService,
     private readonly apiPayouts: ApiPayoutsService,
+    private readonly projectsSvc: BusinessProjectsService,
   ) {}
 
   private api(req: any): FarmApiContext {
@@ -303,17 +305,20 @@ export class PublicApiController {
       : live(this.apiPayouts.create(a, dto, idempotencyKey));
   }
 
-  // ---------- projects (not built yet) ----------
+  // ---------- projects (read-only; same data in sandbox and live) ----------
   @Get('projects')
   @RequireScope('projects:read')
-  projects() {
-    throw new NotImplementedException('The Projects API is not available yet');
+  @ApiOperation({ summary: 'Your investment projects and their funding status' })
+  async projects(@Req() req: any) {
+    const a = this.api(req);
+    return { livemode: a.mode === 'live', data: await this.projectsSvc.listForBusiness(a.businessId) };
   }
 
   @Get('projects/:id')
   @RequireScope('projects:read')
-  project() {
-    throw new NotImplementedException('The Projects API is not available yet');
+  async project(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+    const a = this.api(req);
+    return { livemode: a.mode === 'live', data: await this.projectsSvc.getForBusiness(a.businessId, id) };
   }
 
   // ---------- webhooks ----------

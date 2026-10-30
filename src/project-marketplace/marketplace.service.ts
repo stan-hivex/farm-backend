@@ -1,0 +1,517 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../database/prisma.service';
+import { AuthService } from '../auth/auth.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { generateTxReference } from '../common/utils/reference.util';
+import { paginate, paginationParams } from '../common/utils/pagination.util';
+import {
+  eligibilityMode,
+  INVESTABLE,
+  MARKET_VISIBLE,
+  retailCapPerProject,
+  RISK_DISCLOSURE_TEXT,
+  RISK_DISCLOSURE_VERSION,
+  SECTORS,
+  stripReturns,
+} from './project-rules';
+
+const n = (v: any) => (v == null ? null : Number(v));
+
+/** Shape a project for investors: numbers as numbers, never any return/ROI field. */
+export function presentProject(p: any, extra: Record<string, any> = {}) {
+  const target = Number(p.target_amount ?? 0);
+  const raised = Number(p.raised_amount ?? 0);
+  const out = stripReturns({
+    ...p,
+    status: p.status === 'open' ? 'listed' : p.status,
+    target_amount: target,
+    raised_amount: raised,
+    minimum_investment: n(p.minimum_investment),
+    maximum_investment: n(p.maximum_investment),
+    funding_progress: target > 0 ? Math.min(100, (raised / target) * 100) : 0,
+    sector:
+      p.sector ?? (p.category ? String(p.category).toLowerCase() : 'other'),
+    legacy: !p.business_id,
+    ...extra,
+  });
+  delete out.business;
+  delete out.review_notes;
+  delete out.reviewed_by;
+  delete out.users;
+  return out;
+}
+
+@Injectable()
+export class MarketplaceService {
+  private readonly logger = new Logger(MarketplaceService.name);
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auth: AuthService,
+    private readonly notifications: NotificationsService,
+  ) {}
+
+  sectors() {
+    return { data: SECTORS };
+  }
+
+  disclosure() {
+    return {
+      data: { version: RISK_DISCLOSURE_VERSION, points: RISK_DISCLOSURE_TEXT },
+    };
+  }
+
+  async list(q: {
+    sector?: string;
+    search?: string;
+    status?: string;
+    page?: any;
+    limit?: any;
+  }) {
+    const { skip, take, page, limit } = paginationParams(q.page, q.limit);
+    const status =
+      q.status === 'all'
+        ? MARKET_VISIBLE
+        : q.status === 'funded'
+          ? ['funded']
+          : INVESTABLE;
+    const where: any = { status: { in: status } };
+    if (q.sector && q.sector !== 'all') where.sector = q.sector;
+    if (q.search)
+      where.OR = [
+        { project_name: { contains: q.search, mode: 'insensitive' } },
+        { summary: { contains: q.search, mode: 'insensitive' } },
+        { location: { contains: q.search, mode: 'insensitive' } },
+      ];
+    const [rows, total] = await Promise.all([
+      this.prisma.investment_projects.findMany({
+        where,
+        skip,
+        take,
+        orderBy: [{ listed_at: 'desc' }, { created_at: 'desc' }],
+        include: {
+          business: { select: { trading_name: true, legal_name: true } },
+        },
+      }),
+      this.prisma.investment_projects.count({ where }),
+    ]);
+    return {
+      data: rows.map((p) =>
+        presentProject(p, {
+          business_name:
+            p.business?.trading_name || p.business?.legal_name || null,
+        }),
+      ),
+      meta: paginate(total, page, limit),
+    };
+  }
+
+  /** Legacy `projects` table (pre-V2). Readable only, never investable. */
+  async legacyList() {
+    const rows = await this.prisma.projects.findMany({
+      orderBy: { created_at: 'desc' },
+      take: 100,
+    });
+    return {
+      data: rows.map((p: any) =>
+        stripReturns({
+          ...JSON.parse(JSON.stringify(p)),
+          legacy: true,
+          investable: false,
+        }),
+      ),
+    };
+  }
+
+  async detail(id: string, userId?: string) {
+    const p = await this.prisma.investment_projects.findUnique({
+      where: { id },
+      include: {
+        business: {
+          select: { trading_name: true, legal_name: true, country: true },
+        },
+        documents: { orderBy: { created_at: 'asc' } },
+        updates: { orderBy: { created_at: 'desc' }, take: 20 },
+      },
+    });
+    if (!p || !MARKET_VISIBLE.includes(p.status ?? ''))
+      throw new NotFoundException('Project not found');
+    const isInvestor = userId
+      ? (await this.prisma.user_investments.count({
+          where: { user_id: userId, project_id: id },
+        })) > 0
+      : false;
+    const docs = p.documents
+      .filter(
+        (d) =>
+          d.visibility === 'public' ||
+          (d.visibility === 'investors' && (isInvestor || !!userId)),
+      )
+      .map((d) => ({
+        id: d.id,
+        kind: d.kind,
+        title: d.title,
+        url: d.url,
+        created_at: d.created_at,
+      }));
+    return {
+      data: presentProject(
+        { ...p, documents: undefined, updates: undefined },
+        {
+          business_name:
+            p.business?.trading_name || p.business?.legal_name || null,
+          documents: docs,
+          updates: p.updates,
+          investable:
+            INVESTABLE.includes(p.status ?? '') &&
+            (!p.ends_at || p.ends_at > new Date()),
+          disclosure: {
+            version: RISK_DISCLOSURE_VERSION,
+            points: RISK_DISCLOSURE_TEXT,
+          },
+        },
+      ),
+    };
+  }
+
+  // ---------------- Eligibility ----------------
+
+  async eligibility(userId: string) {
+    const [profile, user] = await Promise.all([
+      this.prisma.investor_profiles.findUnique({ where: { user_id: userId } }),
+      this.prisma.users.findUnique({
+        where: { id: userId },
+        select: { kyc_status: true },
+      }),
+    ]);
+    const mode = eligibilityMode();
+    let status = profile?.eligibility_status ?? 'pending';
+    let reason: string | null = null;
+    if (status === 'restricted')
+      reason = 'Your account cannot invest right now. Contact support.';
+    else if (status !== 'eligible') {
+      if (mode === 'kyc' && user?.kyc_status === 'verified')
+        status = 'eligible';
+      else
+        reason =
+          user?.kyc_status !== 'verified'
+            ? 'Verify your identity (KYC) before investing.'
+            : 'Your investor profile is waiting for review.';
+    }
+    return {
+      data: {
+        status,
+        eligible: status === 'eligible',
+        reason,
+        category: profile?.category ?? null,
+        kyc_status: user?.kyc_status ?? 'none',
+        mode,
+        retail_cap_per_project: retailCapPerProject() || null,
+      },
+    };
+  }
+
+  /** Investor asks to be reviewed (creates a pending profile; never auto-approves in manual mode). */
+  async requestEligibility(userId: string) {
+    await this.prisma.investor_profiles.upsert({
+      where: { user_id: userId },
+      update: {},
+      create: { user_id: userId, eligibility_status: 'pending' },
+    });
+    return this.eligibility(userId);
+  }
+
+  // ---------------- Investing ----------------
+
+  async invest(
+    userId: string,
+    projectId: string,
+    dto: {
+      amount: number;
+      pin: string;
+      accept_risk?: boolean;
+      disclosure_version?: string;
+    },
+    ip?: string,
+  ) {
+    const amount = Number(dto.amount);
+    if (!Number.isFinite(amount) || amount <= 0)
+      throw new BadRequestException('Amount must be positive');
+    const el = (await this.eligibility(userId)).data;
+    if (!el.eligible)
+      throw new ForbiddenException(
+        el.reason ?? 'You are not eligible to invest yet',
+      );
+    if (
+      dto.accept_risk !== true ||
+      dto.disclosure_version !== RISK_DISCLOSURE_VERSION
+    )
+      throw new BadRequestException(
+        'Please read and accept the latest risk disclosure before investing (update the app if you do not see it).',
+      );
+    await this.auth.verifyPin(userId, dto.pin);
+
+    const project = await this.prisma.investment_projects.findUnique({
+      where: { id: projectId },
+    });
+    if (!project) throw new NotFoundException('Project not found');
+    if (!INVESTABLE.includes(project.status ?? ''))
+      throw new BadRequestException('Project is not open for investment');
+    if (project.ends_at && new Date() > project.ends_at)
+      throw new BadRequestException('Investment period has ended');
+    if (
+      project.minimum_investment &&
+      amount < Number(project.minimum_investment)
+    )
+      throw new BadRequestException(
+        `Minimum investment is ${Number(project.minimum_investment)} FARM`,
+      );
+    const prior = await this.prisma.user_investments.aggregate({
+      where: {
+        user_id: userId,
+        project_id: projectId,
+        status: { in: ['committed', 'active'] },
+      },
+      _sum: { amount: true },
+    });
+    const already = Number(prior._sum.amount ?? 0);
+    if (
+      project.maximum_investment &&
+      already + amount > Number(project.maximum_investment)
+    )
+      throw new BadRequestException(
+        `Maximum per investor is ${Number(project.maximum_investment)} FARM`,
+      );
+    const cap = retailCapPerProject();
+    if (
+      cap &&
+      el.category !== 'sophisticated' &&
+      el.category !== 'institutional' &&
+      already + amount > cap
+    )
+      throw new BadRequestException(
+        `You can invest up to ${cap} FARM in one project`,
+      );
+
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId, is_active: true },
+    });
+    if (!wallet) throw new NotFoundException('Wallet not found');
+
+    const acceptance = await this.prisma.risk_disclosure_acceptances.create({
+      data: {
+        user_id: userId,
+        project_id: projectId,
+        version: RISK_DISCLOSURE_VERSION,
+        ip: ip?.slice(0, 64),
+      },
+    });
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Atomic capacity claim: never oversubscribe, only while still investable.
+      const claimed = await tx.$executeRaw`
+        UPDATE investment_projects
+           SET raised_amount = COALESCE(raised_amount,0) + ${amount},
+               total_backers = COALESCE(total_backers,0) + ${already > 0 ? 0 : 1},
+               updated_at = now()
+         WHERE id = ${projectId}::uuid
+           AND status IN ('listed','open')
+           AND COALESCE(raised_amount,0) + ${amount} <= target_amount`;
+      if (claimed !== 1)
+        throw new ConflictException(
+          'Not enough room left in this project for that amount',
+        );
+      // Atomic debit: funds move into platform custody until the admin settles the round.
+      const debited = await tx.$executeRaw`
+        UPDATE wallets SET balance = balance - ${amount}, updated_at = now()
+         WHERE id = ${wallet.id}::uuid AND balance - COALESCE(locked_balance,0) >= ${amount}`;
+      if (debited !== 1) throw new BadRequestException('Insufficient balance');
+      const txn = await tx.transactions.create({
+        data: {
+          transaction_reference: generateTxReference(),
+          sender_wallet_id: wallet.id,
+          transaction_type: 'investment',
+          status: 'completed',
+          amount,
+          fee: 0,
+          net_amount: amount,
+          description: `Investment: ${project.project_name}`,
+          metadata: {
+            user_id: userId,
+            project_id: projectId,
+            custody: 'platform',
+            disclosure: acceptance.id,
+          },
+          processed_at: new Date(),
+        },
+      });
+      await tx.ledger_entries.create({
+        data: {
+          transaction_id: txn.id,
+          wallet_id: wallet.id,
+          entry_type: 'debit',
+          amount,
+          description: `Investment in ${project.project_name}`,
+        },
+      });
+      const inv = await tx.user_investments.create({
+        data: {
+          user_id: userId,
+          project_id: projectId,
+          amount,
+          transaction_id: txn.id,
+          status: 'committed',
+          disclosure_acceptance_id: acceptance.id,
+        },
+      });
+      const after = await tx.investment_projects.findUnique({
+        where: { id: projectId },
+        select: { raised_amount: true, target_amount: true },
+      });
+      if (after && Number(after.raised_amount) >= Number(after.target_amount))
+        await tx.investment_projects.update({
+          where: { id: projectId },
+          data: { status: 'funded' },
+        });
+      return inv;
+    });
+
+    this.notifications
+      .sendNotification(userId, {
+        type: 'investment_made',
+        title: 'Investment received',
+        body: `You invested ${amount} FARM in ${project.project_name}. Investments carry risk and returns are not guaranteed.`,
+        entityId: result.id,
+        metadata: { investment_id: result.id, project_id: projectId, amount },
+      })
+      .catch((e) => this.logger.error('Investment notification failed', e));
+
+    return {
+      data: stripReturns({ ...result, amount: Number(result.amount) }),
+      message: 'Investment recorded',
+    };
+  }
+
+  // ---------------- Portfolio ----------------
+
+  async portfolio(userId: string) {
+    const rows = await this.prisma.user_investments.findMany({
+      where: { user_id: userId },
+      orderBy: { invested_at: 'desc' },
+      include: {
+        investment_projects: {
+          select: {
+            id: true,
+            project_name: true,
+            sector: true,
+            category: true,
+            status: true,
+            banner_image: true,
+            business_id: true,
+            target_amount: true,
+            raised_amount: true,
+          },
+        },
+      },
+    });
+    const byProject = new Map<string, any>();
+    for (const r of rows) {
+      if (!r.project_id || r.status === 'refunded') continue;
+      const h = byProject.get(r.project_id) ?? {
+        project: presentProject(r.investment_projects ?? { id: r.project_id }),
+        invested: 0,
+        count: 0,
+        status: r.status,
+      };
+      h.invested += Number(r.amount);
+      h.count += 1;
+      byProject.set(r.project_id, h);
+    }
+    const holdings = [...byProject.values()];
+    let legacy: any[] = [];
+    try {
+      legacy = await this.prisma.project_investments.findMany({
+        where: { user_id: userId },
+        include: { project: { select: { title: true } } },
+      });
+    } catch {
+      legacy = [];
+    }
+    return {
+      data: {
+        total_invested: holdings.reduce((s, h) => s + h.invested, 0),
+        holdings,
+        legacy_records: legacy.map((l: any) =>
+          stripReturns({ ...l, amount: n(l.amount_paid), legacy: true }),
+        ),
+      },
+    };
+  }
+
+  async history(userId: string, q: { page?: any; limit?: any }) {
+    const { skip, take, page, limit } = paginationParams(q.page, q.limit);
+    const where = { user_id: userId };
+    const [rows, total] = await Promise.all([
+      this.prisma.user_investments.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { invested_at: 'desc' },
+        include: {
+          investment_projects: { select: { project_name: true, sector: true } },
+        },
+      }),
+      this.prisma.user_investments.count({ where }),
+    ]);
+    return {
+      data: rows.map((r) => stripReturns({ ...r, amount: Number(r.amount) })),
+      meta: paginate(total, page, limit),
+    };
+  }
+
+  async investorDocuments(userId: string) {
+    const ids = (
+      await this.prisma.user_investments.findMany({
+        where: { user_id: userId },
+        select: { project_id: true },
+        distinct: ['project_id'],
+      })
+    )
+      .map((r) => r.project_id)
+      .filter(Boolean) as string[];
+    const docs = await this.prisma.project_documents.findMany({
+      where: {
+        project_id: { in: ids },
+        visibility: { in: ['public', 'investors'] },
+      },
+      orderBy: { created_at: 'desc' },
+      include: { project: { select: { project_name: true } } },
+    });
+    return { data: docs };
+  }
+
+  async investorUpdates(userId: string) {
+    const ids = (
+      await this.prisma.user_investments.findMany({
+        where: { user_id: userId },
+        select: { project_id: true },
+        distinct: ['project_id'],
+      })
+    )
+      .map((r) => r.project_id)
+      .filter(Boolean) as string[];
+    const ups = await this.prisma.project_updates.findMany({
+      where: { project_id: { in: ids } },
+      orderBy: { created_at: 'desc' },
+      take: 100,
+      include: { project: { select: { project_name: true } } },
+    });
+    return { data: ups };
+  }
+}

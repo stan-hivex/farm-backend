@@ -25,6 +25,7 @@ import { SecurityModule } from './security/security.module';
 import { KycModule } from './kyc/kyc.module';
 import { HealthModule } from './health/health.module';
 import { ProjectsModule } from './projects/projects.module';
+import { ProjectMarketplaceModule } from './project-marketplace/project-marketplace.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AdminModule } from './admin/admin.module';
 import { MerchantsModule } from './merchants/merchants.module';
@@ -113,6 +114,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     HealthModule,
     InvestmentsModule,
     ProjectsModule,
+    ProjectMarketplaceModule,
     AnalyticsModule,
     AdminModule,
     MerchantsModule,

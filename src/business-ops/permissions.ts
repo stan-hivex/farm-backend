@@ -28,7 +28,9 @@ export type BusinessPermission =
   | 'profile:read'
   | 'profile:manage'
   | 'developers:read'
-  | 'developers:manage';
+  | 'developers:manage'
+  | 'projects:read'
+  | 'projects:manage';
 
 const ALL: BusinessRole[] = [...BUSINESS_ROLES];
 
@@ -61,6 +63,9 @@ export const PERMISSION_MATRIX: Record<BusinessPermission, BusinessRole[]> = {
   // Phase 3: developer API (keys, webhooks, logs)
   'developers:read': ['owner', 'admin', 'developer'],
   'developers:manage': ['owner', 'admin', 'developer'],
+  // Phase 4: investment projects
+  'projects:read': ['owner', 'admin', 'finance', 'accountant', 'operations'],
+  'projects:manage': ['owner', 'admin'],
 };
 
 export function can(role: BusinessRole, perm: BusinessPermission): boolean {
