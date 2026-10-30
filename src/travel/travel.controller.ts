@@ -1,11 +1,36 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums';
 import type { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Length, Max, Min, ValidateNested } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Length,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
@@ -19,11 +44,18 @@ class SearchDto {
   @IsString() departure_date!: string;
   @IsOptional() @IsString() return_date?: string;
   @IsInt() @Min(1) @Max(9) adults!: number;
-  @IsOptional() @IsIn(['economy', 'premium_economy', 'business', 'first']) cabin_class?: 'economy' | 'premium_economy' | 'business' | 'first';
+  @IsOptional()
+  @IsIn(['economy', 'premium_economy', 'business', 'first'])
+  cabin_class?: 'economy' | 'premium_economy' | 'business' | 'first';
 }
 class PassengerDto {
   @IsString() @IsNotEmpty() id!: string;
-  @IsIn(['mr', 'ms', 'mrs', 'miss', 'dr']) title!: 'mr' | 'ms' | 'mrs' | 'miss' | 'dr';
+  @IsIn(['mr', 'ms', 'mrs', 'miss', 'dr']) title!:
+    | 'mr'
+    | 'ms'
+    | 'mrs'
+    | 'miss'
+    | 'dr';
   @IsString() @Length(1, 60) given_name!: string;
   @IsString() @Length(1, 60) family_name!: string;
   @IsIn(['m', 'f']) gender!: 'm' | 'f';
@@ -34,7 +66,12 @@ class PassengerDto {
 }
 class BookDtoV {
   @IsString() @IsNotEmpty() offer_id!: string;
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(9) @ValidateNested({ each: true }) @Type(() => PassengerDto) passengers!: PassengerDto[];
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(9)
+  @ValidateNested({ each: true })
+  @Type(() => PassengerDto)
+  passengers!: PassengerDto[];
   @IsNumber() @Min(0) expected_total_farm!: number;
   @IsString() @Length(4, 6) pin!: string;
   @IsString() @Length(8, 80) idempotency_key!: string;
@@ -71,41 +108,75 @@ class HotelBookDtoV {
 @UseGuards(JwtGuard)
 @Controller({ path: 'travel', version: '1' })
 export class TravelController {
-  constructor(private readonly svc: TravelService, private readonly hotels: HotelsService) {}
+  constructor(
+    private readonly svc: TravelService,
+    private readonly hotels: HotelsService,
+  ) {}
 
   @Get('status') status() {
     const h = this.hotels.status();
-    return { ...this.svc.status(), stays: h.enabled ? { provider: h.provider, sandbox: h.sandbox } : null, hotels: h };
+    return {
+      ...this.svc.status(),
+      stays: h.enabled ? { provider: h.provider, sandbox: h.sandbox } : null,
+      hotels: h,
+    };
   }
 
   @Throttle({ default: { limit: 20, ttl: 60000 } })
-  @Post('hotels/search') hotelSearch(@Body() dto: HotelSearchDto) { return this.hotels.search(dto).then((data) => ({ data })); }
+  @Post('hotels/search')
+  hotelSearch(@Body() dto: HotelSearchDto) {
+    return this.hotels.search(dto).then((data) => ({ data }));
+  }
 
   @Throttle({ default: { limit: 20, ttl: 60000 } })
-  @Post('hotels/prebook') hotelPrebook(@Body() dto: HotelPrebookDto) { return this.hotels.prebook(dto.offer_id); }
+  @Post('hotels/prebook')
+  hotelPrebook(@Body() dto: HotelPrebookDto) {
+    return this.hotels.prebook(dto.offer_id);
+  }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @UseGuards(JwtGuard, KycGuard)
   @Post('hotels/book')
-  hotelBook(@CurrentUser() u: any, @Body() dto: HotelBookDtoV, @Req() req: Request) { return this.hotels.book(u.id, dto, req.ip || ''); }
+  hotelBook(
+    @CurrentUser() u: any,
+    @Body() dto: HotelBookDtoV,
+    @Req() req: Request,
+  ) {
+    return this.hotels.book(u.id, dto, req.ip || '');
+  }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('hotels/bookings/:id/cancel')
-  hotelCancel(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) { return this.hotels.cancel(u.id, id); }
+  hotelCancel(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) {
+    return this.hotels.cancel(u.id, id);
+  }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('flights/search')
-  async search(@Body() dto: SearchDto) { return { data: await this.svc.search(dto) }; }
+  async search(@Body() dto: SearchDto) {
+    return { data: await this.svc.search(dto) };
+  }
 
-  @Get('flights/offers/:id') offer(@Param('id') id: string) { return this.svc.offer(id); }
+  @Get('flights/offers/:id') offer(@Param('id') id: string) {
+    return this.svc.offer(id);
+  }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @UseGuards(JwtGuard, KycGuard)
   @Post('flights/book')
-  book(@CurrentUser() u: any, @Body() dto: BookDtoV, @Req() req: Request) { return this.svc.book(u.id, dto, req.ip || ''); }
+  book(@CurrentUser() u: any, @Body() dto: BookDtoV, @Req() req: Request) {
+    return this.svc.book(u.id, dto, req.ip || '');
+  }
 
-  @Get('bookings') async list(@CurrentUser() u: any) { return { data: await this.svc.list(u.id) }; }
-  @Get('bookings/:id') get(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) { return this.svc.get(u.id, id); }
+  @Get('bookings') async list(@CurrentUser() u: any) {
+    return { data: await this.svc.list(u.id) };
+  }
+  @Get('bookings/:id') get(
+    @CurrentUser() u: any,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.svc.get(u.id, id);
+  }
 }
 
 class ResolveDto {
@@ -126,7 +197,12 @@ export class AdminTravelController {
   @Get('bookings') async list(@Query('status') status?: string) {
     return { data: await this.svc.adminList(status) };
   }
-  @Post('bookings/:id/resolve') resolve(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ResolveDto, @Req() req: Request) {
+  @Post('bookings/:id/resolve') resolve(
+    @CurrentUser() u: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ResolveDto,
+    @Req() req: Request,
+  ) {
     return this.svc.adminResolve(u.id, id, dto, req.ip);
   }
 }

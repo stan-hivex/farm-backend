@@ -1,7 +1,19 @@
-import { Body, Controller, Get, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { BusinessApiKeyGuard, FarmApiContext, RequireScope } from './api-key-auth.guard';
+import {
+  BusinessApiKeyGuard,
+  FarmApiContext,
+  RequireScope,
+} from './api-key-auth.guard';
 import { X402Service } from '../x402/x402.service';
 
 /**
@@ -21,21 +33,50 @@ export class X402FacilitatorController {
     if (a.mode !== 'live') return null;
     return { a, payTo: await this.svc.payToFor(a.ownerUserId) };
   }
-  @Get('supported') @RequireScope('x402:facilitate')
+  @Get('supported')
+  @RequireScope('x402:facilitate')
   supported() {
     return this.svc.supported();
   }
-  @Post('verify') @HttpCode(200) @RequireScope('x402:facilitate')
+  @Post('verify')
+  @HttpCode(200)
+  @RequireScope('x402:facilitate')
   async verify(@Req() req: any, @Body() b: any) {
     const ctx = await this.payTo(req);
-    if (!ctx) return { isValid: false, invalidReason: 'invalid_network', invalidMessage: 'Use a live API key' };
-    const { group, txId, sponsored, ...out } = await this.svc.verify(b?.paymentPayload, b?.paymentRequirements ?? {}, ctx.payTo);
+    if (!ctx)
+      return {
+        isValid: false,
+        invalidReason: 'invalid_network',
+        invalidMessage: 'Use a live API key',
+      };
+    const { group, txId, sponsored, ...out } = await this.svc.verify(
+      b?.paymentPayload,
+      b?.paymentRequirements ?? {},
+      ctx.payTo,
+    );
     return out;
   }
-  @Post('settle') @HttpCode(200) @RequireScope('x402:facilitate')
+  @Post('settle')
+  @HttpCode(200)
+  @RequireScope('x402:facilitate')
   async settle(@Req() req: any, @Body() b: any) {
     const ctx = await this.payTo(req);
-    if (!ctx) return { success: false, errorReason: 'invalid_network', transaction: '', network: '' };
-    return this.svc.settle(b?.paymentPayload, b?.paymentRequirements ?? {}, { source: 'facilitator', businessId: ctx.a.businessId, apiKeyId: ctx.a.keyId }, ctx.payTo);
+    if (!ctx)
+      return {
+        success: false,
+        errorReason: 'invalid_network',
+        transaction: '',
+        network: '',
+      };
+    return this.svc.settle(
+      b?.paymentPayload,
+      b?.paymentRequirements ?? {},
+      {
+        source: 'facilitator',
+        businessId: ctx.a.businessId,
+        apiKeyId: ctx.a.keyId,
+      },
+      ctx.payTo,
+    );
   }
 }

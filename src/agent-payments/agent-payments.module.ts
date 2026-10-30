@@ -5,7 +5,10 @@ import { WalletsModule } from '../wallets/wallets.module';
 import { BusinessOpsModule } from '../business-ops/business-ops.module';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { AgentPaymentsService } from './agent-payments.service';
-import { AgentPaymentsController, BusinessIntentsController } from './agent-payments.controller';
+import {
+  AgentPaymentsController,
+  BusinessIntentsController,
+} from './agent-payments.controller';
 
 @Module({
   imports: [AuthModule, WalletsModule, BusinessOpsModule, NotificationsModule],

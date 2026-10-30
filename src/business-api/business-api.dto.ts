@@ -68,10 +68,16 @@ export class ApiPayoutDto {
   @IsIn(['BANK_TRANSFER', 'MOBILE_MONEY', 'CRYPTO'])
   method!: 'BANK_TRANSFER' | 'MOBILE_MONEY' | 'CRYPTO';
   @IsOptional() @IsString() @MaxLength(255) account_name?: string;
-  @IsOptional() @IsString() @MaxLength(64) @Matches(/^[0-9A-Za-z-]{4,64}$/, { message: 'account_number is invalid' }) account_number?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Matches(/^[0-9A-Za-z-]{4,64}$/, { message: 'account_number is invalid' })
+  account_number?: string;
   @IsOptional() @IsString() @MaxLength(120) bank_name?: string;
   @IsOptional()
-  @Matches(/^(\+?254|0)(7|1)\d{8}$/, { message: 'phone_number must be a valid Kenyan mobile number' })
+  @Matches(/^(\+?254|0)(7|1)\d{8}$/, {
+    message: 'phone_number must be a valid Kenyan mobile number',
+  })
   phone_number?: string;
   @IsOptional() @IsString() @MaxLength(20) crypto_currency?: string;
   @IsOptional() @IsString() @MaxLength(255) crypto_address?: string;
@@ -81,5 +87,7 @@ export class ApiPayoutDto {
 
 /** Dashboard payout: the API payout fields plus the actor's PIN. */
 export class DashboardPayoutDto extends ApiPayoutDto {
-  @IsString() @Matches(/^\d{4,6}$/, { message: 'pin must be 4-6 digits' }) pin!: string;
+  @IsString()
+  @Matches(/^\d{4,6}$/, { message: 'pin must be 4-6 digits' })
+  pin!: string;
 }

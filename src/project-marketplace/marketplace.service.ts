@@ -440,7 +440,7 @@ export class MarketplaceService {
       byProject.set(r.project_id, h);
     }
     const holdings = [...byProject.values()];
-    let legacy: any[] = [];
+    let legacy: any[];
     try {
       legacy = await this.prisma.project_investments.findMany({
         where: { user_id: userId },

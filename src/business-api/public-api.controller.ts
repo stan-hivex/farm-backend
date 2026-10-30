@@ -292,7 +292,8 @@ export class PublicApiController {
   @RequireScope('payouts:write')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({
-    summary: 'Request a payout (live: processed automatically; send an Idempotency-Key header)',
+    summary:
+      'Request a payout (live: processed automatically; send an Idempotency-Key header)',
   })
   requestPayout(
     @Req() req: any,
@@ -308,17 +309,25 @@ export class PublicApiController {
   // ---------- projects (read-only; same data in sandbox and live) ----------
   @Get('projects')
   @RequireScope('projects:read')
-  @ApiOperation({ summary: 'Your investment projects and their funding status' })
+  @ApiOperation({
+    summary: 'Your investment projects and their funding status',
+  })
   async projects(@Req() req: any) {
     const a = this.api(req);
-    return { livemode: a.mode === 'live', data: await this.projectsSvc.listForBusiness(a.businessId) };
+    return {
+      livemode: a.mode === 'live',
+      data: await this.projectsSvc.listForBusiness(a.businessId),
+    };
   }
 
   @Get('projects/:id')
   @RequireScope('projects:read')
   async project(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
     const a = this.api(req);
-    return { livemode: a.mode === 'live', data: await this.projectsSvc.getForBusiness(a.businessId, id) };
+    return {
+      livemode: a.mode === 'live',
+      data: await this.projectsSvc.getForBusiness(a.businessId, id),
+    };
   }
 
   // ---------- webhooks ----------

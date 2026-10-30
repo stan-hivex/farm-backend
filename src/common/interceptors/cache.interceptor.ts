@@ -1,4 +1,10 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Logger,
+} from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { Request, Response } from 'express';
@@ -13,7 +19,9 @@ export class CacheInterceptor implements NestInterceptor {
 
   private buildCacheKey(req: Request) {
     const authHeader = req.headers.authorization ?? '';
-    const authHash = authHeader ? createHash('sha256').update(authHeader).digest('hex') : 'anonymous';
+    const authHash = authHeader
+      ? createHash('sha256').update(authHeader).digest('hex')
+      : 'anonymous';
     return `http:${req.method}:${req.originalUrl}:${authHash}`;
   }
 

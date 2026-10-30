@@ -39,7 +39,14 @@ export const invoiceUrl = (n: string) =>
   `${payBaseUrl()}/api/pay/i/${encodeURIComponent(n)}`;
 
 export function escapeHtml(v: unknown) {
-  return String(v ?? '').replace(
+  const text =
+    typeof v === 'string' ||
+    typeof v === 'number' ||
+    typeof v === 'boolean' ||
+    typeof v === 'bigint'
+      ? String(v)
+      : '';
+  return text.replace(
     /[&<>"']/g,
     (c) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
@@ -577,7 +584,10 @@ export class BusinessCommerceService {
         id: inv.id,
         status: { in: PAYABLE as any },
         // A web checkout in progress holds the invoice until it expires.
-        OR: [{ payment_hold_ref: null }, { payment_hold_until: { lt: new Date() } }],
+        OR: [
+          { payment_hold_ref: null },
+          { payment_hold_until: { lt: new Date() } },
+        ],
       },
       data: { status: 'paid', paid_at: new Date() },
     });

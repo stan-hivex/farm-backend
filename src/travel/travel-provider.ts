@@ -75,7 +75,11 @@ export interface FlightProvider {
   isSandbox(): boolean;
   searchFlights(q: FlightSearch): Promise<FlightOffer[]>;
   getOffer(id: string): Promise<FlightOffer>;
-  createOrder(offer: FlightOffer, passengers: Passenger[], idempotencyKey: string): Promise<FlightOrder>;
+  createOrder(
+    offer: FlightOffer,
+    passengers: Passenger[],
+    idempotencyKey: string,
+  ): Promise<FlightOrder>;
 }
 
 /* ---------------- Hotels ---------------- */
@@ -87,7 +91,11 @@ export interface HotelSearch {
   checkout: string;
   adults: number;
 }
-export interface CancelPolicy { cancel_time: string; amount: number; currency: string }
+export interface CancelPolicy {
+  cancel_time: string;
+  amount: number;
+  currency: string;
+}
 export interface HotelOffer {
   id: string; // provider offer id (prebook input)
   provider: string;
@@ -115,9 +123,25 @@ export interface HotelPrebook {
   cancel_policies: CancelPolicy[];
   live_mode: boolean;
 }
-export interface HotelGuest { first_name: string; last_name: string; email: string; phone: string }
-export interface HotelOrder { id: string; confirmation_code: string | null; status: string; total_amount: number; total_currency: string }
-export interface HotelCancel { status: string; refund_amount: number; cancellation_fee: number; currency: string }
+export interface HotelGuest {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+}
+export interface HotelOrder {
+  id: string;
+  confirmation_code: string | null;
+  status: string;
+  total_amount: number;
+  total_currency: string;
+}
+export interface HotelCancel {
+  status: string;
+  refund_amount: number;
+  cancellation_fee: number;
+  currency: string;
+}
 export interface HotelProvider {
   readonly name: string;
   isConfigured(): boolean;
@@ -125,6 +149,10 @@ export interface HotelProvider {
   searchHotels(q: HotelSearch): Promise<HotelOffer[]>;
   prebook(offerId: string): Promise<HotelPrebook>;
   getPrebook(prebookId: string): Promise<HotelPrebook>;
-  book(prebookId: string, guest: HotelGuest, clientReference: string): Promise<HotelOrder>;
+  book(
+    prebookId: string,
+    guest: HotelGuest,
+    clientReference: string,
+  ): Promise<HotelOrder>;
   cancel(bookingId: string): Promise<HotelCancel>;
 }

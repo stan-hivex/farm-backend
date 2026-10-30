@@ -1,7 +1,11 @@
 import { EscrowService, remainingAmount } from '../escrow/escrow.service';
 import { BusinessEscrowService, milestonesOf } from './business-escrow.service';
 import { BusinessWebCheckoutService } from './business-web-checkout.service';
-import { BusinessCommerceService, invoiceUrl, linkUrl } from './business-commerce.service';
+import {
+  BusinessCommerceService,
+  invoiceUrl,
+  linkUrl,
+} from './business-commerce.service';
 
 const escrowRow = {
   id: 'e1',
@@ -22,17 +26,23 @@ function makeEscrow(rows: any[]) {
     escrow_contracts: { update: jest.fn() },
     wallets: { update: jest.fn().mockResolvedValue({ balance: 10 }) },
     transactions: {
-      create: jest.fn().mockImplementation(({ data }) => ({ id: 't1', ...data })),
+      create: jest
+        .fn()
+        .mockImplementation(({ data }) => ({ id: 't1', ...data })),
     },
     ledger_entries: { createMany: jest.fn(), create: jest.fn() },
   };
   const prisma: any = { $transaction: jest.fn((w) => w(tx)) };
   const auth: any = { verifyPin: jest.fn().mockResolvedValue(true) };
-  const notif: any = { sendNotification: jest.fn().mockResolvedValue(undefined) };
+  const notif: any = {
+    sendNotification: jest.fn().mockResolvedValue(undefined),
+  };
   const ws: any = { emitBalanceUpdate: jest.fn() };
   const svc = new EscrowService(prisma, auth, {} as any, notif, {} as any, ws);
   jest.spyOn(svc as any, 'getEscrowOrFail').mockResolvedValue({ ...escrowRow });
-  jest.spyOn(svc as any, 'creditSuperadminWalletInTx').mockResolvedValue(undefined);
+  jest
+    .spyOn(svc as any, 'creditSuperadminWalletInTx')
+    .mockResolvedValue(undefined);
   return { svc, tx, auth };
 }
 
@@ -44,7 +54,9 @@ describe('Phase 2b: partial escrow release', () => {
   });
 
   it('releases one milestone: buyer locked funds down, seller credited minus 1.5%', async () => {
-    const { svc, tx, auth } = makeEscrow([{ amount: 100, released_amount: 40 }]);
+    const { svc, tx, auth } = makeEscrow([
+      { amount: 100, released_amount: 40 },
+    ]);
     const r = await svc.releasePartial('e1', 'buyer', 40, '1234', 'Design');
     expect(auth.verifyPin).toHaveBeenCalledWith('buyer', '1234');
     expect(tx.wallets.update).toHaveBeenCalledWith({
@@ -55,33 +67,46 @@ describe('Phase 2b: partial escrow release', () => {
       where: { id: 'sw' },
       data: { balance: { increment: 39.4 } },
     });
-    expect(tx.transactions.create.mock.calls[0][0].data.metadata.partial).toBe(true);
+    expect(tx.transactions.create.mock.calls[0][0].data.metadata.partial).toBe(
+      true,
+    );
     expect(tx.escrow_contracts.update).not.toHaveBeenCalled();
-    expect(r.data).toMatchObject({ amount: 40, fee: 0.6, remaining: 60, completed: false });
+    expect(r.data).toMatchObject({
+      amount: 40,
+      fee: 0.6,
+      remaining: 60,
+      completed: false,
+    });
   });
 
   it('completes the escrow when the last milestone is released', async () => {
     const { svc, tx } = makeEscrow([{ amount: 100, released_amount: 100 }]);
     const r = await svc.releasePartial('e1', 'buyer', 60, '1234', 'Final');
     expect(tx.escrow_contracts.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'completed' }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'completed' }),
+      }),
     );
     expect(r.data.completed).toBe(true);
   });
 
   it('refuses to release more than is still locked and moves no money', async () => {
     const { svc, tx } = makeEscrow([]);
-    await expect(svc.releasePartial('e1', 'buyer', 500, '1234', 'Too much')).rejects.toThrow(
-      /exceeds what is still locked/,
-    );
+    await expect(
+      svc.releasePartial('e1', 'buyer', 500, '1234', 'Too much'),
+    ).rejects.toThrow(/exceeds what is still locked/);
     expect(tx.wallets.update).not.toHaveBeenCalled();
     expect(tx.transactions.create).not.toHaveBeenCalled();
   });
 
   it('only the buyer can release, and amounts must be positive', async () => {
     const { svc } = makeEscrow([]);
-    await expect(svc.releasePartial('e1', 'seller', 10, '1', 'x')).rejects.toThrow(/Only the buyer/);
-    await expect(svc.releasePartial('e1', 'buyer', 0, '1', 'x')).rejects.toThrow(/positive/);
+    await expect(
+      svc.releasePartial('e1', 'seller', 10, '1', 'x'),
+    ).rejects.toThrow(/Only the buyer/);
+    await expect(
+      svc.releasePartial('e1', 'buyer', 0, '1', 'x'),
+    ).rejects.toThrow(/positive/);
   });
 });
 
@@ -110,7 +135,7 @@ describe('Phase 2b: business milestones', () => {
     const escrow: any = { releasePartial: jest.fn(releaseImpl) };
     const webhooks: any = { emit: jest.fn() };
     const svc = new BusinessEscrowService(prisma, {} as any, escrow, webhooks);
-    jest.spyOn(svc, 'sync').mockResolvedValue(undefined as any);
+    jest.spyOn(svc, 'sync').mockResolvedValue(undefined);
     return { svc, prisma, escrow, webhooks };
   }
 
@@ -119,26 +144,43 @@ describe('Phase 2b: business milestones', () => {
       data: { transaction_reference: 'T1', remaining: 60, completed: false },
     }));
     await svc.releaseMilestone('buyer', 'b1', 0, '1234');
-    expect(escrow.releasePartial).toHaveBeenCalledWith('e1', 'buyer', 40, '1234', 'Design');
-    const saved = prisma.business_escrows.update.mock.calls[0][0].data.milestones;
+    expect(escrow.releasePartial).toHaveBeenCalledWith(
+      'e1',
+      'buyer',
+      40,
+      '1234',
+      'Design',
+    );
+    const saved =
+      prisma.business_escrows.update.mock.calls[0][0].data.milestones;
     expect(saved[0].status).toBe('released');
     expect(saved[1].status).toBe('pending');
-    expect(webhooks.emit).toHaveBeenCalledWith('biz', 'live', 'escrow.milestone_released', expect.any(Object));
+    expect(webhooks.emit).toHaveBeenCalledWith(
+      'biz',
+      'live',
+      'escrow.milestone_released',
+      expect.any(Object),
+    );
   });
 
   it('puts the milestone back when the release fails (wrong PIN etc.)', async () => {
     const { svc, prisma } = make(async () => {
       throw new Error('Invalid PIN');
     });
-    await expect(svc.releaseMilestone('buyer', 'b1', 0, 'bad')).rejects.toThrow('Invalid PIN');
-    const restored = prisma.business_escrows.update.mock.calls[0][0].data.milestones;
+    await expect(svc.releaseMilestone('buyer', 'b1', 0, 'bad')).rejects.toThrow(
+      'Invalid PIN',
+    );
+    const restored =
+      prisma.business_escrows.update.mock.calls[0][0].data.milestones;
     expect(milestonesOf({ milestones: restored })[0].status).toBe('pending');
   });
 
   it('refuses a release when another request already claimed the milestone', async () => {
     const { svc, prisma, escrow } = make(async () => ({}));
     prisma.business_escrows.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.releaseMilestone('buyer', 'b1', 0, '1234')).rejects.toThrow(/try again/);
+    await expect(
+      svc.releaseMilestone('buyer', 'b1', 0, '1234'),
+    ).rejects.toThrow(/try again/);
     expect(escrow.releasePartial).not.toHaveBeenCalled();
   });
 });
@@ -150,14 +192,28 @@ describe('Phase 2b: web checkout reconciliation', () => {
         findUnique: jest.fn().mockResolvedValue(checkout),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      transactions: { findUnique: jest.fn().mockResolvedValue({ amount: 50, status: 'completed' }) },
+      transactions: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ amount: 50, status: 'completed' }),
+      },
       business_payments: { create: jest.fn() },
       business_payment_links: { update: jest.fn() },
-      business_invoices: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      business_invoices: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     };
-    const qr: any = { verify: jest.fn().mockResolvedValue({ data: { status: verifyStatus } }) };
+    const qr: any = {
+      verify: jest.fn().mockResolvedValue({ data: { status: verifyStatus } }),
+    };
     const webhooks: any = { emit: jest.fn() };
-    const svc = new BusinessWebCheckoutService(prisma, {} as any, qr, {} as any, webhooks);
+    const svc = new BusinessWebCheckoutService(
+      prisma,
+      {} as any,
+      qr,
+      {} as any,
+      webhooks,
+    );
     return { svc, prisma, webhooks };
   }
   const base = {
@@ -171,13 +227,25 @@ describe('Phase 2b: web checkout reconciliation', () => {
   };
 
   it('records a web payment once; the link use was already reserved at checkout start', async () => {
-    const { svc, prisma, webhooks } = make({ ...base, reserved: true }, 'completed');
+    const { svc, prisma, webhooks } = make(
+      { ...base, reserved: true },
+      'completed',
+    );
     expect(await svc.reconcile('QR-1')).toBe('completed');
     expect(prisma.business_payments.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ channel: 'web', payer_user_id: null, source_id: 'l1' }),
+      data: expect.objectContaining({
+        channel: 'web',
+        payer_user_id: null,
+        source_id: 'l1',
+      }),
     });
     expect(prisma.business_payment_links.update).not.toHaveBeenCalled();
-    expect(webhooks.emit).toHaveBeenCalledWith('biz', 'live', 'payment_link.paid', expect.any(Object));
+    expect(webhooks.emit).toHaveBeenCalledWith(
+      'biz',
+      'live',
+      'payment_link.paid',
+      expect.any(Object),
+    );
   });
 
   it('does not double-record when another worker already claimed the checkout', async () => {
@@ -188,7 +256,10 @@ describe('Phase 2b: web checkout reconciliation', () => {
   });
 
   it('marks an invoice paid on completion', async () => {
-    const { svc, prisma } = make({ ...base, source: 'invoice', source_id: 'i1' }, 'completed');
+    const { svc, prisma } = make(
+      { ...base, source: 'invoice', source_id: 'i1' },
+      'completed',
+    );
     await svc.reconcile('QR-1');
     expect(prisma.business_invoices.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ id: 'i1' }) }),
@@ -228,7 +299,14 @@ describe('Phase 2b: share URLs and invoice email', () => {
       },
     };
     const notif: any = { sendEmail: jest.fn().mockResolvedValue(sent) };
-    const svc = new BusinessCommerceService(prisma, {} as any, {} as any, {} as any, {} as any, notif);
+    const svc = new BusinessCommerceService(
+      prisma,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      notif,
+    );
     return { svc, prisma, notif };
   }
 

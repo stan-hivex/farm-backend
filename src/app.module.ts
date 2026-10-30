@@ -83,7 +83,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: async (cfg: ConfigService) => {
+      useFactory: (cfg: ConfigService) => {
         const redisUrl = cfg.get<string>('REDIS_URL')?.trim();
         if (!redisUrl) {
           throw new Error(

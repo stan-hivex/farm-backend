@@ -416,9 +416,11 @@ describe('EscrowService dispute evidence', () => {
       $transaction: jest.fn((work) => work(tx)),
     };
     const cloudinary = {
-      uploadEscrowEvidence: jest.fn().mockResolvedValue(
-        'https://res.cloudinary.com/example/image/upload/evidence.jpg',
-      ),
+      uploadEscrowEvidence: jest
+        .fn()
+        .mockResolvedValue(
+          'https://res.cloudinary.com/example/image/upload/evidence.jpg',
+        ),
     };
     const notifications = {
       sendNotification: jest.fn().mockResolvedValue(undefined),

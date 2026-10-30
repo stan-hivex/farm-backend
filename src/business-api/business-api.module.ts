@@ -17,8 +17,21 @@ import { DeveloperController } from './developer.controller';
 import { PublicApiController } from './public-api.controller';
 
 @Module({
-  imports: [AuthModule, BusinessOpsModule, WithdrawModule, ProjectMarketplaceModule, AgentPaymentsModule, X402Module],
-  controllers: [DeveloperController, PublicApiController, BusinessPayoutsController, AgentPaymentsApiController, X402FacilitatorController],
+  imports: [
+    AuthModule,
+    BusinessOpsModule,
+    WithdrawModule,
+    ProjectMarketplaceModule,
+    AgentPaymentsModule,
+    X402Module,
+  ],
+  controllers: [
+    DeveloperController,
+    PublicApiController,
+    BusinessPayoutsController,
+    AgentPaymentsApiController,
+    X402FacilitatorController,
+  ],
   providers: [
     ApiKeysService,
     DeveloperService,

@@ -17,7 +17,8 @@ export function isPublicIp(ip: string): boolean {
   const v = ip.toLowerCase();
   if (v === '::' || v === '::1') return false;
   if (v.startsWith('::ffff:')) return isPublicIp(v.slice(7));
-  if (/^f[cd]/.test(v) || /^fe[89ab]/.test(v) || v.startsWith('ff')) return false;
+  if (/^f[cd]/.test(v) || /^fe[89ab]/.test(v) || v.startsWith('ff'))
+    return false;
   return true;
 }
 
@@ -30,12 +31,17 @@ export async function assertSafeUrl(raw: string): Promise<URL> {
     throw new Error('Invalid URL');
   }
   if (u.protocol !== 'https:') throw new Error('Upstream URL must be https');
-  if (u.username || u.password) throw new Error('Upstream URL must not contain credentials');
+  if (u.username || u.password)
+    throw new Error('Upstream URL must not contain credentials');
   const host = u.hostname.replace(/^\[|\]$/g, '');
-  if (/^localhost$|\.local$|\.internal$/i.test(host)) throw new Error('Upstream host is not public');
-  const addrs = isIP(host) ? [{ address: host }] : await lookup(host, { all: true }).catch(() => []);
+  if (/^localhost$|\.local$|\.internal$/i.test(host))
+    throw new Error('Upstream host is not public');
+  const addrs = isIP(host)
+    ? [{ address: host }]
+    : await lookup(host, { all: true }).catch(() => []);
   if (!addrs.length) throw new Error('Upstream host does not resolve');
-  if (addrs.some((a) => !isPublicIp(a.address))) throw new Error('Upstream host is not public');
+  if (addrs.some((a) => !isPublicIp(a.address)))
+    throw new Error('Upstream host is not public');
   return u;
 }
 
@@ -46,9 +52,16 @@ export interface UpstreamResult {
 }
 
 /** One request to a vetted upstream: no redirects, 15 s timeout, 2 MB cap. */
-export async function safeFetch(url: string, init: { method: string; headers: Record<string, string>; body?: string }): Promise<UpstreamResult> {
+export async function safeFetch(
+  url: string,
+  init: { method: string; headers: Record<string, string>; body?: string },
+): Promise<UpstreamResult> {
   await assertSafeUrl(url);
-  const r = await fetch(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(15_000) });
+  const r = await fetch(url, {
+    ...init,
+    redirect: 'manual',
+    signal: AbortSignal.timeout(15_000),
+  });
   const max = 2 * 1024 * 1024;
   const chunks: Buffer[] = [];
   let size = 0;
@@ -59,5 +72,9 @@ export async function safeFetch(url: string, init: { method: string; headers: Re
       chunks.push(Buffer.from(c));
     }
   }
-  return { status: r.status, contentType: r.headers.get('content-type'), body: Buffer.concat(chunks) };
+  return {
+    status: r.status,
+    contentType: r.headers.get('content-type'),
+    body: Buffer.concat(chunks),
+  };
 }

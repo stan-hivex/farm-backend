@@ -1,4 +1,8 @@
-import { ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  NotFoundException,
+} from '@nestjs/common';
 import { AiAssistantService } from './ai-assistant.service';
 import { AiProvider } from './ai-provider';
 import { AiToolsService } from './ai-tools.service';
@@ -8,41 +12,112 @@ function mkPrisma(perm: any = null, committed = 0) {
   const store: any = { req: null };
   return {
     store,
-    ai_spend_permissions: { findUnique: jest.fn().mockResolvedValue(perm), upsert: jest.fn() },
+    ai_spend_permissions: {
+      findUnique: jest.fn().mockResolvedValue(perm),
+      upsert: jest.fn(),
+    },
     ai_action_requests: {
       aggregate: jest.fn().mockResolvedValue({ _sum: { amount: committed } }),
-      create: jest.fn().mockImplementation(({ data }) => ({ id: 'req-1', created_at: new Date(), ...data })),
-      findFirst: jest.fn().mockImplementation(({ where }) => (store.req && where.user_id === store.req.user_id && where.id === store.req.id ? store.req : null)),
+      create: jest.fn().mockImplementation(({ data }) => ({
+        id: 'req-1',
+        created_at: new Date(),
+        ...data,
+      })),
+      findFirst: jest
+        .fn()
+        .mockImplementation(({ where }) =>
+          store.req &&
+          where.user_id === store.req.user_id &&
+          where.id === store.req.id
+            ? store.req
+            : null,
+        ),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       update: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
     },
     ai_audit_log: { create: jest.fn(), findMany: jest.fn() },
-    ai_messages: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), create: jest.fn().mockImplementation(({ data }) => ({ id: 'm', ...data })) },
-    ai_conversations: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ id: 'c1' }), update: jest.fn(), findMany: jest.fn(), deleteMany: jest.fn() },
+    ai_messages: {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest
+        .fn()
+        .mockImplementation(({ data }) => ({ id: 'm', ...data })),
+    },
+    ai_conversations: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: 'c1' }),
+      update: jest.fn(),
+      findMany: jest.fn(),
+      deleteMany: jest.fn(),
+    },
   } as any;
 }
-const cfg = (env: Record<string, string>) => ({ get: (k: string) => env[k] }) as any;
+const cfg = (env: Record<string, string>) =>
+  ({ get: (k: string) => env[k] }) as any;
 const ON = { AI_ASSISTANT_ENABLED: 'true', AI_API_KEY: 'k' };
-const PERM = { enabled: true, revoked_at: null, per_tx_cap: 1000, daily_cap: 2000, allowed_actions: ['send_farm'], spend_categories: ['Hotels', 'Flights', 'Transport', 'Shopping', 'Bills', 'Services', 'Investments', 'Crypto'] };
+const PERM = {
+  enabled: true,
+  revoked_at: null,
+  per_tx_cap: 1000,
+  daily_cap: 2000,
+  allowed_actions: ['send_farm'],
+  spend_categories: [
+    'Hotels',
+    'Flights',
+    'Transport',
+    'Shopping',
+    'Bills',
+    'Services',
+    'Investments',
+    'Crypto',
+  ],
+};
 
-function mk(prisma: any, env = ON, provider?: any, wallets?: any, travel: any = { search: jest.fn(), offer: jest.fn() }, agent: any = { payIntent: jest.fn(), publicIntent: jest.fn(), myRequests: jest.fn() }) {
+function mk(
+  prisma: any,
+  env = ON,
+  provider?: any,
+  wallets?: any,
+  travel: any = { search: jest.fn(), offer: jest.fn() },
+  agent: any = {
+    payIntent: jest.fn(),
+    publicIntent: jest.fn(),
+    myRequests: jest.fn(),
+  },
+) {
   const p = provider ?? new AiProvider(cfg(env));
-  return new AiAssistantService(prisma, p, new AiToolsService(prisma), wallets ?? { sendFunds: jest.fn() }, cfg(env), travel as any, agent as any);
+  return new AiAssistantService(
+    prisma,
+    p,
+    new AiToolsService(prisma),
+    wallets ?? { sendFunds: jest.fn() },
+    cfg(env),
+    travel,
+    agent,
+  );
 }
 
 describe('AiProvider', () => {
   it('is off unless enabled flag and all settings are present', () => {
     expect(new AiProvider(cfg({})).isConfigured()).toBe(false);
-    expect(new AiProvider(cfg({ ...ON, AI_API_KEY: '' })).isConfigured()).toBe(false);
-    expect(new AiProvider(cfg({ ...ON, AI_ASSISTANT_ENABLED: 'false' })).isConfigured()).toBe(false);
+    expect(new AiProvider(cfg({ ...ON, AI_API_KEY: '' })).isConfigured()).toBe(
+      false,
+    );
+    expect(
+      new AiProvider(
+        cfg({ ...ON, AI_ASSISTANT_ENABLED: 'false' }),
+      ).isConfigured(),
+    ).toBe(false);
     expect(new AiProvider(cfg(ON)).isConfigured()).toBe(true);
   });
 });
 
 describe('AiAssistantService', () => {
   it('chat returns 503 when not configured', async () => {
-    await expect(mk(mkPrisma(), {} as any).chat(U, 'hi')).rejects.toBeInstanceOf(HttpException);
+    await expect(
+      mk(mkPrisma(), {} as any).chat(U, 'hi'),
+    ).rejects.toBeInstanceOf(HttpException);
   });
 
   it('enforces the daily message limit', async () => {
@@ -53,23 +128,74 @@ describe('AiAssistantService', () => {
 
   it('runs tools scoped to the caller and returns the reply', async () => {
     const pr = mkPrisma();
-    pr.wallets = { findFirst: jest.fn().mockResolvedValue({ currency: 'FARM', balance: 500, locked_balance: 0, is_frozen: false }) };
-    const provider = { isConfigured: () => true, complete: jest.fn()
-      .mockResolvedValueOnce({ role: 'assistant', content: null, tool_calls: [{ id: 't1', type: 'function', function: { name: 'get_wallet', arguments: '{"user_id":"someone-else"}' } }] })
-      .mockResolvedValueOnce({ role: 'assistant', content: 'You have 500 FARM.' }) };
+    pr.wallets = {
+      findFirst: jest.fn().mockResolvedValue({
+        currency: 'FARM',
+        balance: 500,
+        locked_balance: 0,
+        is_frozen: false,
+      }),
+    };
+    const provider = {
+      isConfigured: () => true,
+      complete: jest
+        .fn()
+        .mockResolvedValueOnce({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 't1',
+              type: 'function',
+              function: {
+                name: 'get_wallet',
+                arguments: '{"user_id":"someone-else"}',
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          role: 'assistant',
+          content: 'You have 500 FARM.',
+        }),
+    };
     const out = await mk(pr, ON, provider).chat(U, 'balance?');
-    expect(pr.wallets.findFirst).toHaveBeenCalledWith({ where: { user_id: U, is_active: true } });
+    expect(pr.wallets.findFirst).toHaveBeenCalledWith({
+      where: { user_id: U, is_active: true },
+    });
     expect(out.message.content).toBe('You have 500 FARM.');
-    const toolMsg = provider.complete.mock.calls[1][0].find((m: any) => m.role === 'tool');
+    const toolMsg = provider.complete.mock.calls[1][0].find(
+      (m: any) => m.role === 'tool',
+    );
     expect(JSON.parse(toolMsg.content).available).toBe(500);
   });
 
   it('propose_payment via chat only creates a pending request', async () => {
     const pr = mkPrisma(PERM);
     const wallets = { sendFunds: jest.fn() };
-    const provider = { isConfigured: () => true, complete: jest.fn()
-      .mockResolvedValueOnce({ role: 'assistant', content: null, tool_calls: [{ id: 't', type: 'function', function: { name: 'propose_payment', arguments: '{"recipient_identifier":"jane","amount":100}' } }] })
-      .mockResolvedValueOnce({ role: 'assistant', content: 'Please confirm in the app.' }) };
+    const provider = {
+      isConfigured: () => true,
+      complete: jest
+        .fn()
+        .mockResolvedValueOnce({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 't',
+              type: 'function',
+              function: {
+                name: 'propose_payment',
+                arguments: '{"recipient_identifier":"jane","amount":100}',
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          role: 'assistant',
+          content: 'Please confirm in the app.',
+        }),
+    };
     const out = await mk(pr, ON, provider, wallets).chat(U, 'send jane 100');
     expect(out.pending_actions).toHaveLength(1);
     expect(wallets.sendFunds).not.toHaveBeenCalled();
@@ -83,100 +209,283 @@ describe('AiAssistantService', () => {
     ['over per-tx cap', PERM, 1001, 0],
     ['over daily cap', PERM, 600, 1500],
   ])('rejects proposals when %s', async (_n, perm, amount, committed) => {
-    await expect(mk(mkPrisma(perm, committed)).proposePayment(U, { recipient_identifier: 'jane', amount })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      mk(mkPrisma(perm, committed)).proposePayment(U, {
+        recipient_identifier: 'jane',
+        amount,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('validates permission updates', async () => {
     const s = mk(mkPrisma());
-    await expect(s.updatePermissions(U, { enabled: true, per_tx_cap: 10, daily_cap: 5, allowed_actions: ['send_farm'] })).rejects.toThrow();
-    await expect(s.updatePermissions(U, { enabled: true, per_tx_cap: 1, daily_cap: 5, allowed_actions: ['approve_business'] })).rejects.toThrow('Unknown action');
+    await expect(
+      s.updatePermissions(U, {
+        enabled: true,
+        per_tx_cap: 10,
+        daily_cap: 5,
+        allowed_actions: ['send_farm'],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      s.updatePermissions(U, {
+        enabled: true,
+        per_tx_cap: 1,
+        daily_cap: 5,
+        allowed_actions: ['approve_business'],
+      }),
+    ).rejects.toThrow('Unknown action');
   });
 
   it('confirm requires the owner, executes via WalletsService with the PIN, and audits', async () => {
     const pr = mkPrisma(PERM);
-    pr.store.req = { id: 'req-1', action: 'send_farm', user_id: U, status: 'pending', amount: 100, recipient_identifier: 'jane', description: null, expires_at: new Date(Date.now() + 60000), created_at: new Date() };
-    const wallets = { sendFunds: jest.fn().mockResolvedValue({ data: { transaction_reference: 'TX1' } }) };
+    pr.store.req = {
+      id: 'req-1',
+      action: 'send_farm',
+      user_id: U,
+      status: 'pending',
+      amount: 100,
+      recipient_identifier: 'jane',
+      description: null,
+      expires_at: new Date(Date.now() + 60000),
+      created_at: new Date(),
+    };
+    const wallets = {
+      sendFunds: jest
+        .fn()
+        .mockResolvedValue({ data: { transaction_reference: 'TX1' } }),
+    };
     const s = mk(pr, ON, undefined, wallets);
-    await expect(s.confirmAction('other', 'req-1', '1234', '')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      s.confirmAction('other', 'req-1', '1234', ''),
+    ).rejects.toBeInstanceOf(NotFoundException);
     const r = await s.confirmAction(U, 'req-1', '1234', '1.1.1.1');
-    expect(wallets.sendFunds).toHaveBeenCalledWith(U, expect.objectContaining({ recipient_identifier: 'jane', amount: 100, pin: '1234' }), '1.1.1.1');
+    expect(wallets.sendFunds).toHaveBeenCalledWith(
+      U,
+      expect.objectContaining({
+        recipient_identifier: 'jane',
+        amount: 100,
+        pin: '1234',
+      }),
+      '1.1.1.1',
+    );
     expect(wallets.sendFunds.mock.calls[0][1].biometric_auth).toBeUndefined();
-    expect(r).toEqual({ id: 'req-1', status: 'executed', transaction_ref: 'TX1' });
-    expect(pr.ai_audit_log.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ event: 'action_executed' }) }));
+    expect(r).toEqual({
+      id: 'req-1',
+      status: 'executed',
+      transaction_ref: 'TX1',
+    });
+    expect(pr.ai_audit_log.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ event: 'action_executed' }),
+      }),
+    );
   });
 
   it('confirm re-checks caps and puts request back to pending on failure', async () => {
     const pr = mkPrisma({ ...PERM, enabled: false });
-    pr.store.req = { id: 'req-1', action: 'send_farm', user_id: U, status: 'pending', amount: 100, recipient_identifier: 'jane', expires_at: new Date(Date.now() + 60000), created_at: new Date() };
-    await expect(mk(pr).confirmAction(U, 'req-1', '1234', '')).rejects.toBeInstanceOf(ForbiddenException);
+    pr.store.req = {
+      id: 'req-1',
+      action: 'send_farm',
+      user_id: U,
+      status: 'pending',
+      amount: 100,
+      recipient_identifier: 'jane',
+      expires_at: new Date(Date.now() + 60000),
+      created_at: new Date(),
+    };
+    await expect(
+      mk(pr).confirmAction(U, 'req-1', '1234', ''),
+    ).rejects.toBeInstanceOf(ForbiddenException);
     const pr2 = mkPrisma(PERM);
     pr2.store.req = { ...pr.store.req };
-    const wallets = { sendFunds: jest.fn().mockRejectedValue(new Error('Invalid PIN')) };
-    await expect(mk(pr2, ON, undefined, wallets).confirmAction(U, 'req-1', '0000', '')).rejects.toThrow('Invalid PIN');
-    expect(pr2.ai_action_requests.update).toHaveBeenCalledWith({ where: { id: 'req-1' }, data: { status: 'pending', failure_reason: 'Invalid PIN' } });
+    const wallets = {
+      sendFunds: jest.fn().mockRejectedValue(new Error('Invalid PIN')),
+    };
+    await expect(
+      mk(pr2, ON, undefined, wallets).confirmAction(U, 'req-1', '0000', ''),
+    ).rejects.toThrow('Invalid PIN');
+    expect(pr2.ai_action_requests.update).toHaveBeenCalledWith({
+      where: { id: 'req-1' },
+      data: { status: 'pending', failure_reason: 'Invalid PIN' },
+    });
   });
 
   it('revoke disables and cancels pending requests', async () => {
     const pr = mkPrisma();
     await mk(pr).revokePermissions(U);
-    expect(pr.ai_action_requests.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { user_id: U, status: 'pending' } }));
+    expect(pr.ai_action_requests.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { user_id: U, status: 'pending' } }),
+    );
   });
 });
 
 describe('Mkulima pay_intent (Phase 9)', () => {
   const IID = '11111111-1111-1111-1111-111111111111';
-  const intent = { id: IID, business_name: 'Shamba Ltd', amount: 500, status: 'requires_payment', description: 'Seeds', expires_at: new Date(Date.now() + 3600e3) };
+  const intent = {
+    id: IID,
+    business_name: 'Shamba Ltd',
+    amount: 500,
+    status: 'requires_payment',
+    description: 'Seeds',
+    expires_at: new Date(Date.now() + 3600e3),
+  };
   it('proposes only when pay_intent is allowed and within caps', async () => {
-    const agent = { publicIntent: jest.fn().mockResolvedValue(intent), payIntent: jest.fn() };
+    const agent = {
+      publicIntent: jest.fn().mockResolvedValue(intent),
+      payIntent: jest.fn(),
+    };
     const pr = mkPrisma(PERM);
     const svc = mk(pr, ON, undefined, undefined, undefined, agent);
-    await expect(svc.proposeIntent(U, { payment_intent_id: IID })).rejects.toThrow('Paying businesses is not an allowed AI action');
-    pr.ai_spend_permissions.findUnique.mockResolvedValue({ ...PERM, allowed_actions: ['pay_intent'], per_tx_cap: 100 });
-    await expect(svc.proposeIntent(U, { payment_intent_id: IID })).rejects.toBeInstanceOf(ForbiddenException);
-    pr.ai_spend_permissions.findUnique.mockResolvedValue({ ...PERM, allowed_actions: ['pay_intent'] });
+    await expect(
+      svc.proposeIntent(U, { payment_intent_id: IID }),
+    ).rejects.toThrow('Paying businesses is not an allowed AI action');
+    pr.ai_spend_permissions.findUnique.mockResolvedValue({
+      ...PERM,
+      allowed_actions: ['pay_intent'],
+      per_tx_cap: 100,
+    });
+    await expect(
+      svc.proposeIntent(U, { payment_intent_id: IID }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    pr.ai_spend_permissions.findUnique.mockResolvedValue({
+      ...PERM,
+      allowed_actions: ['pay_intent'],
+    });
     const r = await svc.proposeIntent(U, { payment_intent_id: IID });
     expect(r.action).toBe('pay_intent');
     expect(r.amount).toBe(500);
     expect(agent.payIntent).not.toHaveBeenCalled();
   });
   it('confirm pays the intent with the PIN via AgentPaymentsService', async () => {
-    const agent = { publicIntent: jest.fn(), payIntent: jest.fn().mockResolvedValue({ amount: 500, transaction_reference: 'TX1' }) };
+    const agent = {
+      publicIntent: jest.fn(),
+      payIntent: jest
+        .fn()
+        .mockResolvedValue({ amount: 500, transaction_reference: 'TX1' }),
+    };
     const pr = mkPrisma({ ...PERM, allowed_actions: ['pay_intent'] });
-    pr.store.req = { id: 'req-1', action: 'pay_intent', user_id: U, status: 'pending', amount: 500, payload: { payment_intent_id: IID }, expires_at: new Date(Date.now() + 60e3), created_at: new Date() };
+    pr.store.req = {
+      id: 'req-1',
+      action: 'pay_intent',
+      user_id: U,
+      status: 'pending',
+      amount: 500,
+      payload: { payment_intent_id: IID },
+      expires_at: new Date(Date.now() + 60e3),
+      created_at: new Date(),
+    };
     const wallets = { sendFunds: jest.fn() };
     const svc = mk(pr, ON, undefined, wallets, undefined, agent);
     const r = await svc.confirmAction(U, 'req-1', '1234', 'ip');
-    expect(agent.payIntent).toHaveBeenCalledWith(U, IID, '1234', 'ip', 'mkulima');
+    expect(agent.payIntent).toHaveBeenCalledWith(
+      U,
+      IID,
+      '1234',
+      'ip',
+      'mkulima',
+    );
     expect(wallets.sendFunds).not.toHaveBeenCalled();
     expect(r.transaction_ref).toBe('TX1');
   });
 });
 
-
 describe('Mkulima spending categories & activity (gap fix)', () => {
   const IID = '11111111-1111-1111-1111-111111111111';
-  const intent = { id: IID, business_name: 'Shamba Ltd', amount: 500, status: 'requires_payment', description: 'Seeds', expires_at: new Date(Date.now() + 3600e3) };
+  const intent = {
+    id: IID,
+    business_name: 'Shamba Ltd',
+    amount: 500,
+    status: 'requires_payment',
+    description: 'Seeds',
+    expires_at: new Date(Date.now() + 3600e3),
+  };
   it('blocks a payment whose category is turned off', async () => {
-    const agent = { publicIntent: jest.fn().mockResolvedValue(intent), payIntent: jest.fn() };
-    const pr = mkPrisma({ ...PERM, allowed_actions: ['pay_intent'], spend_categories: ['Flights'] });
+    const agent = {
+      publicIntent: jest.fn().mockResolvedValue(intent),
+      payIntent: jest.fn(),
+    };
+    const pr = mkPrisma({
+      ...PERM,
+      allowed_actions: ['pay_intent'],
+      spend_categories: ['Flights'],
+    });
     const svc = mk(pr, ON, undefined, undefined, undefined, agent);
-    await expect(svc.proposeIntent(U, { payment_intent_id: IID })).rejects.toThrow('Services is turned off');
+    await expect(
+      svc.proposeIntent(U, { payment_intent_id: IID }),
+    ).rejects.toThrow('Services is turned off');
   });
   it('rejects unknown categories', async () => {
     const svc = mk(mkPrisma(PERM));
-    await expect(svc.updatePermissions(U, { enabled: true, per_tx_cap: 1, daily_cap: 2, allowed_actions: [], spend_categories: ['Casino'] })).rejects.toThrow('Unknown category');
+    await expect(
+      svc.updatePermissions(U, {
+        enabled: true,
+        per_tx_cap: 1,
+        daily_cap: 2,
+        allowed_actions: [],
+        spend_categories: ['Casino'],
+      }),
+    ).rejects.toThrow('Unknown category');
   });
   it('maps requests and bookings to the activity shape and statuses', async () => {
     const pr = mkPrisma(PERM);
     const now = new Date();
     pr.ai_action_requests.findMany.mockResolvedValue([
-      { id: 'a1', action: 'pay_intent', status: 'pending', amount: 5, recipient_identifier: 'Shamba', description: 'Seeds', expires_at: new Date(Date.now() + 6e4), created_at: now },
-      { id: 'a2', action: 'book_flight', status: 'executed', amount: 900, recipient_identifier: 'NBO-MBA', transaction_ref: 'TX1', expires_at: now, created_at: now },
-      { id: 'a3', action: 'send_farm', status: 'rejected', amount: 1, recipient_identifier: 'bob', expires_at: now, created_at: now },
+      {
+        id: 'a1',
+        action: 'pay_intent',
+        status: 'pending',
+        amount: 5,
+        recipient_identifier: 'Shamba',
+        description: 'Seeds',
+        expires_at: new Date(Date.now() + 6e4),
+        created_at: now,
+      },
+      {
+        id: 'a2',
+        action: 'book_flight',
+        status: 'executed',
+        amount: 900,
+        recipient_identifier: 'NBO-MBA',
+        transaction_ref: 'TX1',
+        expires_at: now,
+        created_at: now,
+      },
+      {
+        id: 'a3',
+        action: 'send_farm',
+        status: 'rejected',
+        amount: 1,
+        recipient_identifier: 'bob',
+        expires_at: now,
+        created_at: now,
+      },
     ]);
-    pr.travel_bookings = { findMany: jest.fn().mockResolvedValue([{ ai_action_id: 'a2', provider: 'duffel', total_farm: 950, booking_reference: 'ABC123', status: 'failed_refunded' }]) };
+    pr.travel_bookings = {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          ai_action_id: 'a2',
+          provider: 'duffel',
+          total_farm: 950,
+          booking_reference: 'ABC123',
+          status: 'failed_refunded',
+        },
+      ]),
+    };
     const a = await mk(pr).activity(U);
-    expect(a.map((x: any) => x.status)).toEqual(['Awaiting Approval', 'Refunded', 'Cancelled']);
-    expect(a[1]).toMatchObject({ provider: 'duffel', amount: 950, booking_ref: 'ABC123', confirmation: 'TX1', refund_status: 'Refunded', payment_method: 'FARM wallet', category: 'Flights' });
+    expect(a.map((x: any) => x.status)).toEqual([
+      'Awaiting Approval',
+      'Refunded',
+      'Cancelled',
+    ]);
+    expect(a[1]).toMatchObject({
+      provider: 'duffel',
+      amount: 950,
+      booking_ref: 'ABC123',
+      confirmation: 'TX1',
+      refund_status: 'Refunded',
+      payment_method: 'FARM wallet',
+      category: 'Flights',
+    });
   });
 });

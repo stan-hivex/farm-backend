@@ -7,5 +7,9 @@ import { AiAssistantService } from './ai-assistant.service';
 import { AiProvider } from './ai-provider';
 import { AiToolsService } from './ai-tools.service';
 
-@Module({ imports: [WalletsModule, TravelModule, AgentPaymentsModule], controllers: [AiAssistantController], providers: [AiAssistantService, AiProvider, AiToolsService] })
+@Module({
+  imports: [WalletsModule, TravelModule, AgentPaymentsModule],
+  controllers: [AiAssistantController],
+  providers: [AiAssistantService, AiProvider, AiToolsService],
+})
 export class AiAssistantModule {}

@@ -54,7 +54,7 @@ export class ApiPayoutsService {
         ownerUserId: a.business.owner_user_id,
         actorUserId: userId,
       },
-      rest as ApiPayoutDto,
+      rest,
       idempotencyKey,
     );
   }
@@ -182,15 +182,17 @@ export class ApiPayoutsService {
         .create({
           data: {
             user_id: ctx.actorUserId ?? ctx.ownerUserId,
-            action: ctx.keyId ? 'business.api_payout' : 'business.dashboard_payout',
+            action: ctx.keyId
+              ? 'business.api_payout'
+              : 'business.dashboard_payout',
             entity_type: 'business',
             entity_id: ctx.businessId,
             new_values: {
               reference: res?.reference,
               amount: dto.amount,
               api_key_id: ctx.keyId ?? null,
-          source: ctx.keyId ? 'api' : 'dashboard',
-          actor_user_id: ctx.actorUserId ?? null,
+              source: ctx.keyId ? 'api' : 'dashboard',
+              actor_user_id: ctx.actorUserId ?? null,
             },
           } as any,
         })

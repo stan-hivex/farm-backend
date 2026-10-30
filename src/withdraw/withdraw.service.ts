@@ -105,8 +105,6 @@ export class WithdrawService {
       dto.walletAddress ??
       dto.walletaddress ??
       dto.wallet_address;
-    const cryptoAsset = dto.cryptoAsset ?? dto.token;
-    const normalizedNetwork = dto.network?.trim();
     const method = dto.method;
 
     const originalMethodMinima = {
@@ -253,11 +251,11 @@ export class WithdrawService {
       return created;
     });
 
-    setImmediate(() =>
-      this.processWithdrawal(reference).catch((error) =>
+    setImmediate(() => {
+      void this.processWithdrawal(reference).catch((error) =>
         this.logger.error(error?.message ?? error),
-      ),
-    );
+      );
+    });
 
     await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
     await this.cache.cacheInvalidatePattern(`dashboard:${userId}`);
@@ -297,7 +295,9 @@ export class WithdrawService {
     opts: { preAuthorized?: string } = {},
   ) {
     if (opts.preAuthorized) {
-      this.logger.log(`Crypto withdrawal pre-authorised by ${opts.preAuthorized}`);
+      this.logger.log(
+        `Crypto withdrawal pre-authorised by ${opts.preAuthorized}`,
+      );
     } else if (dto.biometric_auth) {
       const fingerprint = dto.device_fingerprint;
       if (!fingerprint) {
@@ -466,15 +466,16 @@ export class WithdrawService {
       this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
     ]);
     this.websocket.emitBalanceUpdate(userId, availableBalance - amount);
-    setImmediate(() =>
-      this.submitNowpaymentsPayout(reference, 'system:auto').catch((error) =>
-        this.logger.warn(
-          `Automatic NOWPayments payout for ${reference} did not complete: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        ),
-      ),
-    );
+    setImmediate(() => {
+      void this.submitNowpaymentsPayout(reference, 'system:auto').catch(
+        (error) =>
+          this.logger.warn(
+            `Automatic NOWPayments payout for ${reference} did not complete: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+      );
+    });
     return {
       success: true,
       reference,
@@ -506,8 +507,9 @@ export class WithdrawService {
     const pending = transactions.filter((transaction) => {
       const metadata =
         (transaction.metadata as Record<string, unknown> | null) ?? {};
-      const payoutStatus = String(
-        metadata.nowpayments_payout_status ?? '',
+      const rawPayoutStatus = metadata.nowpayments_payout_status;
+      const payoutStatus = (
+        typeof rawPayoutStatus === 'string' ? rawPayoutStatus : ''
       ).toLowerCase();
       return (
         metadata.provider === 'nowpayments' &&
