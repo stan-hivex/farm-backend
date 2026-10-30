@@ -239,6 +239,9 @@ model investment_projects {
   approved_at        DateTime?          @db.Timestamptz(6)
   listed_at          DateTime?          @db.Timestamptz(6)
   reviewed_by        String?            @db.Uuid
+  /// Funds released to the business so far (milestone by milestone)
+  released_amount    Decimal            @default(0) @db.Decimal(30, 8)
+  milestones         project_milestones[]
   business           businesses?        @relation("business_projects", fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   documents          project_documents[]
   reviews            project_reviews[]
@@ -1531,4 +1534,29 @@ model risk_disclosure_acceptances {
   accepted_at DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([user_id, project_id])
+}
+
+/// V2 Phase 4: funding milestones. Raised funds are released to the business
+/// one milestone at a time, each by an admin.
+model project_milestones {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id      String              @db.Uuid
+  position        Int
+  title           String              @db.VarChar(255)
+  description     String?
+  amount          Decimal             @db.Decimal(30, 8)
+  status          String              @default("planned") @db.VarChar(20)
+  evidence        String?
+  evidence_url    String?
+  requested_at    DateTime?           @db.Timestamptz(6)
+  requested_by    String?             @db.Uuid
+  released_amount Decimal?            @db.Decimal(30, 8)
+  released_at     DateTime?           @db.Timestamptz(6)
+  released_by     String?             @db.Uuid
+  release_notes   String?
+  transaction_id  String?             @db.Uuid
+  created_at      DateTime            @default(now()) @db.Timestamptz(6)
+  project         investment_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, position])
 }

@@ -1,4 +1,9 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  ValidateNested,
   IsBoolean,
   IsIn,
   IsInt,
@@ -94,4 +99,29 @@ export class EligibilityDto {
   @IsIn(['retail', 'sophisticated', 'institutional'])
   category?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
+}
+
+export class MilestoneItemDto {
+  @IsString() @Length(1, 255) title!: string;
+  @IsOptional() @IsString() @MaxLength(5000) description?: string;
+  @IsNumber() @IsPositive() amount!: number;
+}
+export class MilestonePlanDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(12)
+  @ValidateNested({ each: true })
+  @Type(() => MilestoneItemDto)
+  milestones!: MilestoneItemDto[];
+}
+export class MilestoneRequestDto {
+  @IsString() @Length(1, 5000) evidence!: string;
+  @IsOptional()
+  @IsString()
+  @Matches(/^https:\/\/\S+$/)
+  @MaxLength(2000)
+  evidence_url?: string;
+}
+export class MilestoneNotesDto {
+  @IsOptional() @IsString() @MaxLength(5000) notes?: string;
 }

@@ -28,6 +28,9 @@ import {
   ProjectInputDto,
   ProjectUpdateDto,
   ReviewActionDto,
+  MilestoneNotesDto,
+  MilestonePlanDto,
+  MilestoneRequestDto,
 } from './project.dto';
 
 @ApiTags('Marketplace - Projects')
@@ -135,6 +138,22 @@ export class BusinessProjectsController {
   submit(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) {
     return this.svc.submit(u.id, id);
   }
+  @Patch(':id/milestones') milestones(
+    @CurrentUser() u: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: MilestonePlanDto,
+  ) {
+    return this.svc.setMilestones(u.id, id, dto.milestones);
+  }
+  @Post(':id/milestones/:mid/request')
+  requestMs(
+    @CurrentUser() u: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('mid', ParseUUIDPipe) mid: string,
+    @Body() dto: MilestoneRequestDto,
+  ) {
+    return this.svc.requestMilestone(u.id, id, mid, dto);
+  }
   @Post(':id/updates') postUpdate(
     @CurrentUser() u: any,
     @Param('id', ParseUUIDPipe) id: string,
@@ -176,10 +195,22 @@ export class AdminProjectsController {
   ) {
     return this.svc.transition(u.id, id, dto.action, dto.notes);
   }
-  @Post(':id/settle') settle(
+  @Post(':id/milestones/:mid/release')
+  release(
     @CurrentUser() u: any,
     @Param('id', ParseUUIDPipe) id: string,
+    @Param('mid', ParseUUIDPipe) mid: string,
+    @Body() dto: MilestoneNotesDto,
   ) {
-    return this.svc.settle(u.id, id);
+    return this.svc.releaseMilestone(u.id, id, mid, dto.notes);
+  }
+  @Post(':id/milestones/:mid/return')
+  returnMilestone(
+    @CurrentUser() u: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('mid', ParseUUIDPipe) mid: string,
+    @Body() dto: MilestoneNotesDto,
+  ) {
+    return this.svc.returnMilestone(u.id, id, mid, dto.notes ?? '');
   }
 }

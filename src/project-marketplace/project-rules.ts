@@ -86,18 +86,15 @@ export const RISK_DISCLOSURE_TEXT = [
 ];
 
 /**
- * Investor eligibility. `manual` (default): an admin must mark the investor
- * eligible. `kyc`: KYC-verified users are eligible unless an admin restricted them.
- * The user/business owner decides which rule applies (see open questions).
+ * Investor eligibility (approved rule): any KYC-verified user may invest,
+ * unless an admin has restricted them. No per-investor retail cap.
  */
-export function eligibilityMode(): 'manual' | 'kyc' {
-  return process.env.INVESTOR_ELIGIBILITY_MODE === 'kyc' ? 'kyc' : 'manual';
-}
-/** Optional per-project cap for non-sophisticated investors (0 = no cap). */
-export function retailCapPerProject(): number {
-  const n = Number(process.env.INVESTOR_RETAIL_CAP_PER_PROJECT ?? 0);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
+export const ELIGIBILITY_RULE = 'kyc_verified';
+
+/** Milestones: raised funds are released to the business stage by stage, each by an admin. */
+export const MAX_MILESTONES = 12;
+/** Funding rounds that have ended and can release milestones. */
+export const RELEASABLE: string[] = ['funded', 'closed'];
 
 /** Strip every guaranteed-return / ROI field before a project leaves the API. */
 export const HIDDEN_RETURN_FIELDS = [

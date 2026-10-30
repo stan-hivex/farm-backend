@@ -52,18 +52,20 @@ describe('Phase 4 – invest gates', () => {
   const OLD = process.env.INVESTOR_ELIGIBILITY_MODE;
   afterEach(() => (process.env.INVESTOR_ELIGIBILITY_MODE = OLD));
 
-  it('blocks investors who are not eligible (manual mode, KYC alone is not enough)', async () => {
-    delete process.env.INVESTOR_ELIGIBILITY_MODE;
-    const { svc, auth, prisma } = marketMocks({ profile: null });
+  it('any KYC-verified user can invest; unverified KYC is blocked before PIN/debit', async () => {
+    expect((await marketMocks({ profile: null }).svc.eligibility('u1')).data.eligible).toBe(true);
+    const { svc, auth, prisma } = marketMocks({ profile: null, kyc: 'pending' });
     await expect(svc.invest('u1', PID, good)).rejects.toBeInstanceOf(ForbiddenException);
     expect(auth.verifyPin).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
-  it('kyc mode lets KYC-verified users invest, but not restricted ones', async () => {
-    process.env.INVESTOR_ELIGIBILITY_MODE = 'kyc';
-    expect((await marketMocks({ profile: null }).svc.eligibility('u1')).data.eligible).toBe(true);
+  it('restricted investors cannot invest even with KYC', async () => {
     expect((await marketMocks({ profile: { eligibility_status: 'restricted' } }).svc.eligibility('u1')).data.eligible).toBe(false);
-    expect((await marketMocks({ profile: null, kyc: 'pending' }).svc.eligibility('u1')).data.eligible).toBe(false);
+  });
+  it('no per-investor retail cap: a large commitment within project limits goes through', async () => {
+    const { svc, prisma } = marketMocks({ profile: null, project: { ...listed, target_amount: 1_000_000 }, already: 500_000 });
+    await svc.invest('u1', PID, { ...good, amount: 400_000 });
+    expect(prisma.$transaction).toHaveBeenCalled();
   });
   it('requires accepting the current risk disclosure', async () => {
     const { svc, prisma } = marketMocks();
@@ -119,10 +121,21 @@ describe('Phase 4 – business projects', () => {
   const full = {
     ...listed, status: 'draft', sector: 'energy', summary: 's', description: 'd', use_of_funds: 'u', risk_factors: 'r',
     instrument_type: 'equity', location: 'Nakuru', documents: [{ kind: 'business_plan' }, { kind: 'financial_statements' }], updates: [], reviews: [],
+    milestones: [{ id: 'm1', position: 1, amount: 400, status: 'planned' }, { id: 'm2', position: 2, amount: 600, status: 'planned' }],
   };
   it('submit requires the mandatory documents', async () => {
     const { svc } = bizMocks({ ...full, documents: [{ kind: 'business_plan' }] });
     await expect(svc.submit('u', PID)).rejects.toBeInstanceOf(BadRequestException);
+  });
+  it('submit requires milestones that add up to the target', async () => {
+    await expect(bizMocks({ ...full, milestones: [] }).svc.submit('u', PID)).rejects.toThrow('incomplete');
+    await expect(bizMocks({ ...full, milestones: [{ id: 'm1', position: 1, amount: 10 }] }).svc.submit('u', PID)).rejects.toThrow('incomplete');
+  });
+  it('milestones are locked after submit and released in order', async () => {
+    await expect(bizMocks({ ...full, status: 'submitted' }).svc.setMilestones('u', PID, [{ title: 'a', amount: 1000 }])).rejects.toThrow('locked');
+    const funded = { ...full, status: 'funded' };
+    await expect(bizMocks(funded).svc.requestMilestone('u', PID, 'm2', { evidence: 'done' })).rejects.toThrow('Earlier');
+    await expect(bizMocks({ ...full, status: 'listed' }).svc.requestMilestone('u', PID, 'm1', { evidence: 'done' })).rejects.toThrow('funding round');
   });
   it('submit moves to under review and logs it; never auto-approves', async () => {
     const { svc, prisma } = bizMocks(full);
@@ -162,6 +175,61 @@ describe('Phase 4 – admin review', () => {
     await expect(svc.transition('a', PID, 'reject')).rejects.toThrow('Notes');
     await svc.transition('a', PID, 'approve');
     expect(prisma.project_reviews.create.mock.calls[0][0].data).toMatchObject({ action: 'approve', to_status: 'approved' });
+  });
+});
+
+describe('Phase 4 – milestone releases (admin only, backend logic)', () => {
+  const base = {
+    ...listed, status: 'funded', target_amount: 1000, raised_amount: 800, released_amount: 0,
+    business: { owner_user_id: 'owner', status: 'approved' },
+    milestones: [
+      { id: 'm1', position: 1, amount: 400, status: 'requested' },
+      { id: 'm2', position: 2, amount: 600, status: 'planned' },
+    ],
+  };
+  function relMocks(p: any, claim = 1) {
+    const tx: any = {
+      project_milestones: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), update: jest.fn() },
+      $executeRaw: jest.fn().mockResolvedValue(claim),
+      wallets: { update: jest.fn() },
+      transactions: { create: jest.fn().mockResolvedValue({ id: 'tx1' }) },
+      ledger_entries: { create: jest.fn() },
+      user_investments: { updateMany: jest.fn() },
+    };
+    const prisma: any = {
+      investment_projects: { findUnique: jest.fn().mockResolvedValue(p) },
+      wallets: { findFirst: jest.fn().mockResolvedValue({ id: 'w1' }) },
+      project_reviews: { create: jest.fn() },
+      project_milestones: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      $transaction: jest.fn((fn: any) => fn(tx)),
+    };
+    return { svc: new ProjectReviewService(prisma), prisma, tx };
+  }
+  it('releases the milestone pro-rata to what was raised, with a real transaction + ledger entry', async () => {
+    const { svc, tx } = relMocks(base);
+    const r = await svc.releaseMilestone('admin', PID, 'm1');
+    expect(r.data).toEqual({ milestone_id: 'm1', released_amount: 320, transaction_id: 'tx1' });
+    expect(tx.wallets.update.mock.calls[0][0].data.balance.increment).toBe(320);
+    expect(tx.transactions.create.mock.calls[0][0].data.transaction_type).toBe('investment_settlement');
+    expect(tx.ledger_entries.create).toHaveBeenCalled();
+    expect(tx.user_investments.updateMany.mock.calls[0][0].data.status).toBe('active');
+  });
+  it('the last milestone releases exactly the remaining held funds', async () => {
+    const p = { ...base, released_amount: 320, milestones: [{ ...base.milestones[0], status: 'released' }, { ...base.milestones[1], status: 'requested' }] };
+    expect((await relMocks(p).svc.releaseMilestone('admin', PID, 'm2')).data.released_amount).toBe(480);
+  });
+  it('refuses out-of-order, unrequested, pre-funding and over-release', async () => {
+    await expect(relMocks({ ...base, milestones: [{ ...base.milestones[0], status: 'planned' }, { ...base.milestones[1], status: 'requested' }] }).svc.releaseMilestone('a', PID, 'm2')).rejects.toThrow('Earlier');
+    await expect(relMocks({ ...base, milestones: [{ ...base.milestones[0], status: 'planned' }] }).svc.releaseMilestone('a', PID, 'm1')).rejects.toThrow('not requested');
+    await expect(relMocks({ ...base, status: 'listed' }).svc.releaseMilestone('a', PID, 'm1')).rejects.toThrow('funding round');
+    await expect(relMocks(base, 0).svc.releaseMilestone('a', PID, 'm1')).rejects.toThrow('exceed');
+  });
+  it('return needs notes', async () => {
+    await expect(relMocks(base).svc.returnMilestone('a', PID, 'm1', ' ')).rejects.toThrow('Notes');
+    expect((await relMocks(base).svc.returnMilestone('a', PID, 'm1', 'more evidence')).data.status).toBe('returned');
+  });
+  it('the old lump-sum settle is gone', () => {
+    expect((ProjectReviewService.prototype as any).settle).toBeUndefined();
   });
 });
 

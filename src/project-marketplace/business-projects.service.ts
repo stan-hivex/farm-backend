@@ -6,6 +6,8 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { BusinessAccessService } from '../business-ops/business-access.service';
 import {
+  MAX_MILESTONES,
+  RELEASABLE,
   DOCUMENT_KINDS,
   DOCUMENT_VISIBILITY,
   EDITABLE,
@@ -126,6 +128,7 @@ export class BusinessProjectsService {
       include: {
         documents: { orderBy: { created_at: 'asc' } },
         updates: { orderBy: { created_at: 'desc' } },
+        milestones: { orderBy: { position: 'asc' } },
         reviews: {
           orderBy: { created_at: 'desc' },
           select: {
@@ -172,6 +175,13 @@ export class BusinessProjectsService {
         documents: p.documents,
         updates: p.updates,
         reviews: p.reviews,
+        released_amount: Number(p.released_amount ?? 0),
+        milestones: p.milestones.map((m) => ({
+          ...m,
+          amount: Number(m.amount),
+          released_amount:
+            m.released_amount == null ? null : Number(m.released_amount),
+        })),
         investment_summary: investors.map((g) => ({
           status: g.status,
           count: g._count._all,
@@ -344,6 +354,14 @@ export class BusinessProjectsService {
       missing.push('maximum_investment (below minimum)');
     if (Number(p.minimum_investment ?? 0) > Number(p.target_amount))
       missing.push('minimum_investment (above target)');
+    const ms = p.milestones ?? [];
+    if (!ms.length) missing.push('milestones');
+    else if (
+      Math.abs(
+        ms.reduce((t, m) => t + Number(m.amount), 0) - Number(p.target_amount),
+      ) > 0.005
+    )
+      missing.push('milestones (amounts must add up to the target)');
     const kinds = new Set(p.documents.map((d) => d.kind));
     for (const k of REQUIRED_DOCUMENTS)
       if (!kinds.has(k)) missing.push(`document:${k}`);
@@ -369,6 +387,91 @@ export class BusinessProjectsService {
       },
     });
     return { data: { id, status: 'submitted' } };
+  }
+
+  /** Replace the milestone plan (only while the project is editable). */
+  async setMilestones(
+    userId: string,
+    id: string,
+    items: { title: string; description?: string; amount: number }[],
+  ) {
+    const { p } = await this.own(userId, id, 'projects:manage');
+    if (!EDITABLE.includes(p.status ?? ''))
+      throw new BadRequestException(
+        'Milestones are locked once the project is submitted',
+      );
+    if (!Array.isArray(items) || !items.length || items.length > MAX_MILESTONES)
+      throw new BadRequestException(`Add 1-${MAX_MILESTONES} milestones`);
+    for (const m of items) {
+      if (!m.title?.trim() || m.title.length > 255)
+        throw new BadRequestException('Each milestone needs a title');
+      if (!(Number(m.amount) > 0))
+        throw new BadRequestException('Each milestone needs a positive amount');
+    }
+    await this.prisma.$transaction([
+      this.prisma.project_milestones.deleteMany({ where: { project_id: id } }),
+      this.prisma.project_milestones.createMany({
+        data: items.map((m, i) => ({
+          project_id: id,
+          position: i + 1,
+          title: m.title.trim(),
+          description: m.description?.trim() || null,
+          amount: Number(m.amount),
+        })),
+      }),
+    ]);
+    return this.get(userId, id);
+  }
+
+  /**
+   * Ask FARM to release the next milestone. Milestones are released in order,
+   * only after the funding round has ended. The admin decides.
+   */
+  async requestMilestone(
+    userId: string,
+    id: string,
+    milestoneId: string,
+    dto: { evidence: string; evidence_url?: string },
+  ) {
+    const { p } = await this.own(userId, id, 'projects:manage');
+    if (!RELEASABLE.includes(p.status ?? ''))
+      throw new BadRequestException(
+        'Milestones can be requested once the funding round has ended',
+      );
+    const m = p.milestones.find((x) => x.id === milestoneId);
+    if (!m) throw new NotFoundException('Milestone not found');
+    const earlier = p.milestones.filter((x) => x.position < m.position);
+    if (earlier.some((x) => x.status !== 'released'))
+      throw new BadRequestException(
+        'Earlier milestones must be released first',
+      );
+    if (!dto.evidence?.trim() || dto.evidence.length > 5000)
+      throw new BadRequestException('Describe the progress for this milestone');
+    if (dto.evidence_url && !/^https:\/\/\S{4,1990}$/.test(dto.evidence_url))
+      throw new BadRequestException('evidence_url must be an https link');
+    const r = await this.prisma.project_milestones.updateMany({
+      where: { id: milestoneId, status: { in: ['planned', 'returned'] } },
+      data: {
+        status: 'requested',
+        evidence: dto.evidence.trim(),
+        evidence_url: dto.evidence_url ?? null,
+        requested_at: new Date(),
+        requested_by: userId,
+      },
+    });
+    if (!r.count)
+      throw new BadRequestException('This milestone was already requested');
+    await this.prisma.project_reviews.create({
+      data: {
+        project_id: id,
+        actor_id: userId,
+        action: 'milestone_requested',
+        from_status: p.status,
+        to_status: p.status ?? 'funded',
+        notes: `Milestone ${m.position}: ${m.title}`,
+      },
+    });
+    return { data: { id: milestoneId, status: 'requested' } };
   }
 
   async postUpdate(

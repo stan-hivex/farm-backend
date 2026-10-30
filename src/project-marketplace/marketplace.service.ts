@@ -12,10 +12,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginate, paginationParams } from '../common/utils/pagination.util';
 import {
-  eligibilityMode,
+  ELIGIBILITY_RULE,
   INVESTABLE,
   MARKET_VISIBLE,
-  retailCapPerProject,
   RISK_DISCLOSURE_TEXT,
   RISK_DISCLOSURE_VERSION,
   SECTORS,
@@ -138,6 +137,18 @@ export class MarketplaceService {
         },
         documents: { orderBy: { created_at: 'asc' } },
         updates: { orderBy: { created_at: 'desc' }, take: 20 },
+        milestones: {
+          orderBy: { position: 'asc' },
+          select: {
+            position: true,
+            title: true,
+            description: true,
+            amount: true,
+            status: true,
+            released_amount: true,
+            released_at: true,
+          },
+        },
       },
     });
     if (!p || !MARKET_VISIBLE.includes(p.status ?? ''))
@@ -162,12 +173,24 @@ export class MarketplaceService {
       }));
     return {
       data: presentProject(
-        { ...p, documents: undefined, updates: undefined },
+        {
+          ...p,
+          documents: undefined,
+          updates: undefined,
+          milestones: undefined,
+        },
         {
           business_name:
             p.business?.trading_name || p.business?.legal_name || null,
           documents: docs,
           updates: p.updates,
+          released_amount: Number(p.released_amount ?? 0),
+          milestones: p.milestones.map((m) => ({
+            ...m,
+            amount: Number(m.amount),
+            released_amount:
+              m.released_amount == null ? null : Number(m.released_amount),
+          })),
           investable:
             INVESTABLE.includes(p.status ?? '') &&
             (!p.ends_at || p.ends_at > new Date()),
@@ -190,20 +213,14 @@ export class MarketplaceService {
         select: { kyc_status: true },
       }),
     ]);
-    const mode = eligibilityMode();
-    let status = profile?.eligibility_status ?? 'pending';
+    // Approved rule: any KYC-verified user may invest unless an admin restricted them.
+    let status = 'pending';
     let reason: string | null = null;
-    if (status === 'restricted')
+    if (profile?.eligibility_status === 'restricted') {
+      status = 'restricted';
       reason = 'Your account cannot invest right now. Contact support.';
-    else if (status !== 'eligible') {
-      if (mode === 'kyc' && user?.kyc_status === 'verified')
-        status = 'eligible';
-      else
-        reason =
-          user?.kyc_status !== 'verified'
-            ? 'Verify your identity (KYC) before investing.'
-            : 'Your investor profile is waiting for review.';
-    }
+    } else if (user?.kyc_status === 'verified') status = 'eligible';
+    else reason = 'Verify your identity (KYC) before investing.';
     return {
       data: {
         status,
@@ -211,13 +228,12 @@ export class MarketplaceService {
         reason,
         category: profile?.category ?? null,
         kyc_status: user?.kyc_status ?? 'none',
-        mode,
-        retail_cap_per_project: retailCapPerProject() || null,
+        rule: ELIGIBILITY_RULE,
       },
     };
   }
 
-  /** Investor asks to be reviewed (creates a pending profile; never auto-approves in manual mode). */
+  /** Creates an investor profile record (eligibility itself follows KYC). */
   async requestEligibility(userId: string) {
     await this.prisma.investor_profiles.upsert({
       where: { user_id: userId },
@@ -287,16 +303,6 @@ export class MarketplaceService {
     )
       throw new BadRequestException(
         `Maximum per investor is ${Number(project.maximum_investment)} FARM`,
-      );
-    const cap = retailCapPerProject();
-    if (
-      cap &&
-      el.category !== 'sophisticated' &&
-      el.category !== 'institutional' &&
-      already + amount > cap
-    )
-      throw new BadRequestException(
-        `You can invest up to ${cap} FARM in one project`,
       );
 
     const wallet = await this.prisma.wallets.findFirst({
