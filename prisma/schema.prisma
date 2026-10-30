@@ -1904,3 +1904,55 @@ model agent_payment_requests {
   @@index([user_id, status])
   @@index([authorization_id, created_at])
 }
+
+// ---- Phase 10: x402 (HTTP 402 Payment Required) on Algorand (additive) ----
+
+/// A business's paid HTTP endpoint behind the FARM x402 gateway.
+model x402_resources {
+  id           String    @id @db.Uuid
+  business_id  String    @db.Uuid
+  created_by   String    @db.Uuid
+  name         String    @db.VarChar(100)
+  description  String?   @db.VarChar(255)
+  method       String    @default("GET") @db.VarChar(10)
+  upstream_url String    @db.VarChar(2048)
+  mime_type    String?   @db.VarChar(100)
+  asset        String    @db.VarChar(10)
+  price_units  BigInt
+  pay_to       String    @db.VarChar(64)
+  status       String    @default("active") @db.VarChar(20)
+  enc_secret   String
+  enc_iv       String    @db.VarChar(32)
+  enc_tag      String    @db.VarChar(32)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([business_id])
+}
+
+/// Every x402 payment FARM settled (gateway or facilitator). Unique per on-chain txn: no replays.
+model x402_payments {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  network         String    @db.VarChar(64)
+  tx_id           String    @db.VarChar(64)
+  source          String    @db.VarChar(20)
+  business_id     String?   @db.Uuid
+  resource_id     String?   @db.Uuid
+  api_key_id      String?   @db.Uuid
+  payer           String    @db.VarChar(64)
+  pay_to          String    @db.VarChar(64)
+  asset           String    @db.VarChar(10)
+  asset_id        BigInt
+  amount_units    BigInt
+  fee_sponsored   Boolean   @default(false)
+  status          String    @default("settling") @db.VarChar(20)
+  error           String?   @db.VarChar(500)
+  upstream_status Int?
+  confirmed_round BigInt?
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  settled_at      DateTime? @db.Timestamptz(6)
+
+  @@unique([network, tx_id])
+  @@index([business_id, created_at])
+  @@index([resource_id])
+}

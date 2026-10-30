@@ -19,6 +19,7 @@ export const API_SCOPES = [
   'refunds:write',
   'agent_payments:read',
   'agent_payments:write',
+  'x402:facilitate',
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
@@ -47,6 +48,7 @@ export const SCOPE_REQUIRES: Record<ApiScope, BusinessPermission> = {
   'payment_intents:read': 'links:read',
   'payment_intents:write': 'links:manage',
   'refunds:write': 'payouts:create',
+  'x402:facilitate': 'links:manage',
   'agent_payments:read': 'links:read',
   'agent_payments:write': 'links:manage',
 };

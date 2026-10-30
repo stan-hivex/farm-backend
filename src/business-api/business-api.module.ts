@@ -1,3 +1,5 @@
+import { X402Module } from '../x402/x402.module';
+import { X402FacilitatorController } from './x402-facilitator.controller';
 import { AgentPaymentsModule } from '../agent-payments/agent-payments.module';
 import { AgentPaymentsApiController } from './agent-payments-api.controller';
 import { ProjectMarketplaceModule } from '../project-marketplace/project-marketplace.module';
@@ -15,8 +17,8 @@ import { DeveloperController } from './developer.controller';
 import { PublicApiController } from './public-api.controller';
 
 @Module({
-  imports: [AuthModule, BusinessOpsModule, WithdrawModule, ProjectMarketplaceModule, AgentPaymentsModule],
-  controllers: [DeveloperController, PublicApiController, BusinessPayoutsController, AgentPaymentsApiController],
+  imports: [AuthModule, BusinessOpsModule, WithdrawModule, ProjectMarketplaceModule, AgentPaymentsModule, X402Module],
+  controllers: [DeveloperController, PublicApiController, BusinessPayoutsController, AgentPaymentsApiController, X402FacilitatorController],
   providers: [
     ApiKeysService,
     DeveloperService,
