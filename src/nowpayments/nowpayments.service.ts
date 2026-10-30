@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   HttpException,
   Injectable,
   Logger,
@@ -227,6 +228,39 @@ export class NowpaymentsService {
       expiration_estimate:
         data.expiration_estimate_date ?? data.expiration_estimate ?? null,
       qr_url: await QRCode.toDataURL(address),
+    };
+  }
+
+  /**
+   * Validates a USD price against NOWPayments' minimum for the asset and
+   * returns a crypto estimate. Used for in-app checkout previews.
+   */
+  async estimateCheckout(priceUsd: number, payCurrency: string) {
+    const currency = payCurrency?.trim().toLowerCase();
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0 || priceUsd > 100_000) {
+      throw new BadRequestException('Enter a valid USD amount');
+    }
+    if (!currency || !/^[a-z0-9]{2,20}$/.test(currency)) {
+      throw new BadRequestException('Choose a valid cryptocurrency');
+    }
+    const available = await this.getAvailableCurrencies();
+    if (!available.includes(currency)) {
+      throw new BadRequestException(
+        'The selected cryptocurrency is not currently available',
+      );
+    }
+    const [estimated, minimum] = await Promise.all([
+      this.estimateAmount(priceUsd, 'usd', currency),
+      this.getMinimumPaymentAmount(currency),
+    ]);
+    return {
+      price_amount: Number(priceUsd.toFixed(2)),
+      price_currency: 'usd',
+      pay_currency: currency,
+      estimated_amount: estimated,
+      minimum_amount: minimum.minimumAmount,
+      minimum_usd: minimum.minimumUsd,
+      meets_minimum: estimated >= minimum.minimumAmount,
     };
   }
 

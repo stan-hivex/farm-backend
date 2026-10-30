@@ -33,6 +33,10 @@ export class DepositService {
     return { data: currencies };
   }
 
+  async estimateUsdCrypto(amountUsd: number, currency: string) {
+    return this.nowpayments.estimateCheckout(amountUsd, currency);
+  }
+
   async getNowpaymentsCryptoMinimum(currency: string) {
     const normalizedCurrency = currency.trim().toLowerCase();
     const currencies = await this.nowpayments.getAvailableCurrencies();
