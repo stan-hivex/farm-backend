@@ -272,7 +272,7 @@ export class MerchantsService {
             where: { id: txn.sender_wallet_id },
             include: { users: true },
           });
-          const u = senderWallet?.users as any | undefined;
+          const u = senderWallet?.users as any;
           if (u && u.username) customerName = `@${u.username}`;
         }
 

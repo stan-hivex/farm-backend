@@ -45,7 +45,7 @@ export class CacheService {
       if (raw == null) return null;
       try {
         return JSON.parse(raw) as T;
-      } catch (e) {
+      } catch {
         return raw as unknown as T;
       }
     } catch (e) {

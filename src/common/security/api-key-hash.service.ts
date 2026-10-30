@@ -43,7 +43,7 @@ export class ApiKeyHashService {
     try {
       const incomingHash = this.hashKey(incomingKey);
       return incomingHash === storedHash;
-    } catch (error) {
+    } catch {
       return false;
     }
   }

@@ -90,7 +90,10 @@ export class UserSupportController {
 
   @Post()
   @Permissions('profile:write')
-  createTicket(@CurrentUser() user: AuthUser, @Body() dto: CreateSupportTicketDto) {
+  createTicket(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateSupportTicketDto,
+  ) {
     return this.supportService.createTicket(
       user.id,
       dto.subject,

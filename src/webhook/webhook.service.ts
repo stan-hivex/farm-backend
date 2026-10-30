@@ -10,8 +10,8 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 
 type IvorypayResolveContext = {
-  transaction: any | null;
-  deposit: any | null;
+  transaction: any;
+  deposit: any;
   resolvedReference: string | null;
   matchedReference: string | null;
 };

@@ -107,7 +107,7 @@ export class WebhookSignatureGuard implements CanActivate {
         throw new Error('Missing IvoryPay webhook data');
       }
       payloadData = JSON.stringify(parsed.data);
-    } catch (e) {
+    } catch {
       this.logger.error(
         'Ivorypay signature verification failed: invalid JSON payload',
       );

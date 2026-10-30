@@ -62,7 +62,7 @@ export class PaystackService {
     if (rawBankMap) {
       try {
         this.bankCodeMap = JSON.parse(rawBankMap);
-      } catch (e) {
+      } catch {
         this.logger.warn(
           'PAYSTACK_BANK_CODE_MAP is not valid JSON. Ignoring configured bank mapping.',
         );

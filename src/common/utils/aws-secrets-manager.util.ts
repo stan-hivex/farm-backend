@@ -54,7 +54,7 @@ export async function loadAwsSecrets(): Promise<void> {
 
     try {
       secrets = JSON.parse(response.SecretString);
-    } catch (err) {
+    } catch {
       console.warn('⚠️ AWS secret JSON is invalid, skipping');
       return;
     }
