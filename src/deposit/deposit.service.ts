@@ -46,6 +46,45 @@ export class DepositService {
     return { data: minimum };
   }
 
+  async getNowpaymentsCryptoEstimate(currency: string, amount: unknown) {
+    const normalizedCurrency = currency.trim().toLowerCase();
+    const priceAmount = Number(amount);
+    if (!/^[a-z0-9]{2,20}$/.test(normalizedCurrency)) {
+      throw new BadRequestException('Choose a valid NOWPayments currency');
+    }
+    if (!Number.isFinite(priceAmount) || priceAmount <= 0) {
+      throw new BadRequestException('Enter a valid USD deposit amount');
+    }
+
+    const currencies = await this.nowpayments.getAvailableCurrencies();
+    if (!currencies.includes(normalizedCurrency)) {
+      throw new BadRequestException(
+        'The selected cryptocurrency is not currently available',
+      );
+    }
+    const [minimum, estimatedAmount] = await Promise.all([
+      this.nowpayments.getMinimumPaymentAmount(normalizedCurrency),
+      this.nowpayments.estimateAmount(
+        priceAmount,
+        'usd',
+        normalizedCurrency,
+      ),
+    ]);
+    return {
+      data: {
+        currency: normalizedCurrency,
+        priceAmount,
+        estimatedAmount,
+        minimumAmount: minimum.minimumAmount,
+        minimumUsd: minimum.minimumUsd,
+        minimumDepositUsd: Math.max(
+          MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD,
+          minimum.minimumUsd,
+        ),
+      },
+    };
+  }
+
   async createNowpaymentsCryptoDeposit(
     userId: string,
     dto: {
