@@ -147,3 +147,6 @@ Generated from a scan of `process.env` / ConfigService usage in `src/`. **Never 
 - `AGENT_PAYMENTS_ENABLED`, `X402_ENABLED`, `TRAVEL_ENABLED`, `HOTELS_ENABLED`
 - `IVORYPAY_RETIRED=true` disables IvoryPay paths
 - `PAYSTACK_MOCK_VERIFY=true` — local only; ignored when `NODE_ENV=production` or `RENDER=true`
+
+| NFC_PAY_ENABLED | `false` | Tap to pay (NFC/QR). Off unless `true`. |
+| NFC_PAY_SECRET | (JWT_SECRET) | HMAC key for tap-to-pay tokens (≥16 chars). |

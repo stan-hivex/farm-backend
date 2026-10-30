@@ -1990,3 +1990,19 @@ model x402_payments {
   @@index([business_id, created_at])
   @@index([resource_id])
 }
+
+/// Tap-to-pay request (NFC HCE / QR fallback). Single use, ~60 s.
+model nfc_payment_requests {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payee_user_id         String    @db.Uuid
+  amount                Decimal   @db.Decimal(30, 8)
+  kind                  String    @db.VarChar(20)
+  description           String?   @db.VarChar(140)
+  expires_at            DateTime  @db.Timestamptz(6)
+  used_at               DateTime? @db.Timestamptz(6)
+  payer_user_id         String?   @db.Uuid
+  transaction_reference String?   @db.VarChar(100)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([payee_user_id, created_at(sort: Desc)], map: "idx_nfc_req_payee")
+}
