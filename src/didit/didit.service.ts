@@ -5,9 +5,12 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 
 const WORKFLOW_ID = '9d75ebb3-2dbe-410e-9062-5c84c41af087';
@@ -81,6 +84,76 @@ export function kycStatusForDiditStatus(
   }
 }
 
+/** Business statuses in which the owner may (re)start Didit KYB. */
+const KYB_STARTABLE_BUSINESS_STATUSES = [
+  'draft',
+  'more_information_required',
+  'rejected',
+  'under_review',
+];
+
+/** Didit KYB session statuses that must not be restarted. */
+const KYB_FINAL_OR_ACTIVE = new Set(['approved', 'in_review']);
+
+/**
+ * Normalises a Didit session status ("Approved", "IN_REVIEW", "In Review")
+ * to a lowercase snake_case value. Returns undefined for anything that is not
+ * a short status-like string.
+ */
+export function normalizeDiditStatus(status: unknown): string | undefined {
+  if (typeof status !== 'string') return undefined;
+  const value = status
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!/^[a-z_]{2,40}$/.test(value)) return undefined;
+  return value;
+}
+
+/** Accepts Unix seconds (number or numeric string) or an ISO-8601 string. */
+export function diditTimestampSeconds(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    if (/^\d+(\.\d+)?$/.test(value.trim())) return Number(value);
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? NaN : ms / 1000;
+  }
+  return NaN;
+}
+
+/**
+ * Didit has shipped both a flat envelope (fields at the top level) and a
+ * nested one (`{ event, data: {...} }`). Merge so handlers read one shape;
+ * top-level fields win.
+ */
+export function flattenDiditPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const data =
+    payload.data &&
+    typeof payload.data === 'object' &&
+    !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>)
+      : {};
+  const merged: Record<string, unknown> = { ...data, ...payload };
+  if (
+    typeof merged.webhook_type !== 'string' &&
+    typeof payload.event === 'string'
+  ) {
+    merged.webhook_type = payload.event;
+  }
+  return merged;
+}
+
+export function isDiditKybEvent(flat: Record<string, unknown>): boolean {
+  const type = typeof flat.webhook_type === 'string' ? flat.webhook_type : '';
+  return (
+    type.startsWith('business.') ||
+    flat.session_kind === 'business' ||
+    typeof flat.business_session_id === 'string'
+  );
+}
+
 function isUniqueConstraintError(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -116,6 +189,117 @@ export class DiditService {
       throw new BadGatewayException('Didit session creation is not configured');
     }
 
+    const session = await this.requestSession(
+      apiKey,
+      WORKFLOW_ID,
+      userId,
+      'KYC',
+    );
+    if (!session.session_token) {
+      throw new BadGatewayException(
+        'Didit returned an incomplete session response',
+      );
+    }
+    return {
+      url: session.url,
+      session_id: session.session_id,
+      session_token: session.session_token,
+    };
+  }
+
+  /**
+   * Starts a Didit KYB (business verification) session for the caller's
+   * business. vendor_data is the business record id. The result is advisory
+   * only: the business is still approved manually by an admin.
+   */
+  async createKybSession(userId: string) {
+    const workflowId = this.config.get<string>('DIDIT_KYB_WORKFLOW_ID')?.trim();
+    const apiKey = this.config.get<string>('DIDIT_API_KEY')?.trim();
+    if (!workflowId || !apiKey) {
+      throw new ServiceUnavailableException(
+        'Business verification is not available yet. DIDIT_KYB_WORKFLOW_ID and DIDIT_API_KEY must be configured.',
+      );
+    }
+
+    const business = await this.prisma.businesses.findUnique({
+      where: { owner_user_id: userId },
+      select: { id: true, status: true, didit_kyb_status: true },
+    });
+    if (!business) {
+      throw new NotFoundException(
+        'No business application found. Start the upgrade first.',
+      );
+    }
+    if (business.status === 'approved') {
+      throw new ConflictException('This business is already approved');
+    }
+    if (!KYB_STARTABLE_BUSINESS_STATUSES.includes(business.status)) {
+      throw new ConflictException(
+        'Business verification cannot be started in the current state',
+      );
+    }
+    if (
+      business.didit_kyb_status &&
+      KYB_FINAL_OR_ACTIVE.has(business.didit_kyb_status)
+    ) {
+      throw new ConflictException(
+        business.didit_kyb_status === 'approved'
+          ? 'Business verification is already complete'
+          : 'Business verification is already being reviewed',
+      );
+    }
+
+    const session = await this.requestSession(
+      apiKey,
+      workflowId,
+      business.id,
+      'KYB',
+    );
+
+    await this.prisma.businesses.update({
+      where: { id: business.id },
+      data: {
+        didit_kyb_session_id: session.session_id,
+        didit_kyb_status: 'not_started',
+        didit_kyb_updated_at: new Date(),
+      },
+    });
+
+    return { url: session.url, session_id: session.session_id };
+  }
+
+  async getKybStatus(userId: string) {
+    const business = await this.prisma.businesses.findUnique({
+      where: { owner_user_id: userId },
+      select: {
+        id: true,
+        didit_kyb_session_id: true,
+        didit_kyb_status: true,
+        didit_kyb_entity_status: true,
+        didit_kyb_updated_at: true,
+      },
+    });
+    if (!business) {
+      throw new NotFoundException('No business application found.');
+    }
+    const workflow = this.config.get<string>('DIDIT_KYB_WORKFLOW_ID')?.trim();
+    return {
+      data: {
+        configured: Boolean(workflow),
+        status: business.didit_kyb_status ?? 'none',
+        entity_status: business.didit_kyb_entity_status,
+        session_id: business.didit_kyb_session_id,
+        updated_at: business.didit_kyb_updated_at,
+      },
+    };
+  }
+
+  private async requestSession(
+    apiKey: string,
+    workflowId: string,
+    vendorData: string,
+    kind: 'KYC' | 'KYB',
+  ): Promise<{ url: string; session_id: string; session_token?: string }> {
     let response: Response;
     try {
       response = await fetch(DIDIT_SESSION_URL, {
@@ -125,14 +309,14 @@ export class DiditService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          workflow_id: WORKFLOW_ID,
-          vendor_data: userId,
+          workflow_id: workflowId,
+          vendor_data: vendorData,
         }),
         signal: AbortSignal.timeout(12_000),
       });
     } catch (error) {
       this.logger.error(
-        `Didit session request failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Didit ${kind === 'KYB' ? 'KYB ' : ''}session request failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       throw new BadGatewayException('Didit session creation failed');
     }
@@ -140,10 +324,10 @@ export class DiditService {
     if (!response.ok) {
       const upstreamDetail = (await response.text())
         .replaceAll(apiKey, '[redacted]')
-        .replaceAll(userId, '[redacted]')
+        .replaceAll(vendorData, '[redacted]')
         .slice(0, 1_000);
       this.logger.error(
-        `Didit session request returned HTTP ${response.status}: ${upstreamDetail || '(empty response)'}`,
+        `Didit ${kind === 'KYB' ? 'KYB ' : ''}session request returned HTTP ${response.status}: ${upstreamDetail || '(empty response)'}`,
       );
       const message =
         response.status === 401
@@ -151,7 +335,7 @@ export class DiditService {
           : response.status === 403
             ? 'Didit denied session creation. Check that the API key has write:sessions permission and belongs to the application that owns the workflow.'
             : response.status === 400
-              ? 'Didit rejected the workflow or session configuration. Check that the configured workflow exists, is published, and is a KYC workflow in the same application as the API key.'
+              ? `Didit rejected the workflow or session configuration. Check that the configured workflow exists, is published, and is a ${kind} workflow in the same application as the API key.`
               : response.status === 429
                 ? 'Didit is rate-limiting session creation. Wait briefly and try again.'
                 : `Didit session creation failed (HTTP ${response.status}). Check the backend logs for the sanitized provider response.`;
@@ -174,11 +358,13 @@ export class DiditService {
     }
 
     const values = session as Record<string, unknown>;
-    if (
-      typeof values.url !== 'string' ||
-      typeof values.session_id !== 'string' ||
-      typeof values.session_token !== 'string'
-    ) {
+    const sessionId =
+      typeof values.session_id === 'string'
+        ? values.session_id
+        : typeof values.business_session_id === 'string'
+          ? values.business_session_id
+          : undefined;
+    if (typeof values.url !== 'string' || !sessionId) {
       throw new BadGatewayException(
         'Didit returned an incomplete session response',
       );
@@ -186,8 +372,11 @@ export class DiditService {
 
     return {
       url: values.url,
-      session_id: values.session_id,
-      session_token: values.session_token,
+      session_id: sessionId,
+      session_token:
+        typeof values.session_token === 'string'
+          ? values.session_token
+          : undefined,
     };
   }
 
@@ -218,7 +407,7 @@ export class DiditService {
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    const timestamp = Number(payload.timestamp);
+    const timestamp = diditTimestampSeconds(payload.timestamp);
     if (
       !Number.isFinite(timestamp) ||
       timestamp <= 0 ||
@@ -236,9 +425,14 @@ export class DiditService {
       throw new UnauthorizedException('Invalid webhook event ID');
     }
 
-    const status = payload.status;
+    const flat = flattenDiditPayload(payload);
+    if (isDiditKybEvent(flat)) {
+      return this.processKybWebhook(eventId, flat);
+    }
+
+    const status = flat.status;
     const kycStatus = kycStatusForDiditStatus(status);
-    const vendorData = payload.vendor_data;
+    const vendorData = flat.vendor_data;
 
     try {
       await this.prisma.$transaction(
@@ -247,13 +441,11 @@ export class DiditService {
             data: {
               event_id: eventId,
               webhook_type:
-                typeof payload.webhook_type === 'string'
-                  ? payload.webhook_type
+                typeof flat.webhook_type === 'string'
+                  ? flat.webhook_type
                   : null,
               session_id:
-                typeof payload.session_id === 'string'
-                  ? payload.session_id
-                  : null,
+                typeof flat.session_id === 'string' ? flat.session_id : null,
               status: typeof status === 'string' ? status : null,
             },
           });
@@ -284,6 +476,132 @@ export class DiditService {
                 ? { id: vendorData }
                 : { id: vendorData, NOT: { kyc_status: 'verified' } },
             data: { kyc_status: kycStatus },
+          });
+        },
+        { maxWait: 1_000, timeout: 4_000 },
+      );
+    } catch (error) {
+      if (isUniqueConstraintError(error)) return;
+      throw error;
+    }
+  }
+
+  /**
+   * Stores a signed Didit KYB event on the business record. Advisory only:
+   * businesses.status is never changed here; an admin approves manually.
+   * Idempotent on event_id via didit_webhook_events (unique).
+   */
+  private async processKybWebhook(
+    eventId: string,
+    flat: Record<string, unknown>,
+  ): Promise<void> {
+    const webhookType =
+      typeof flat.webhook_type === 'string' ? flat.webhook_type : '';
+    const isEntityEvent = webhookType.startsWith('business.');
+    const sessionId =
+      typeof flat.session_id === 'string'
+        ? flat.session_id
+        : typeof flat.business_session_id === 'string'
+          ? flat.business_session_id
+          : null;
+    const vendorData = flat.vendor_data;
+    const status = normalizeDiditStatus(flat.status);
+
+    try {
+      await this.prisma.$transaction(
+        async (transaction) => {
+          await transaction.didit_webhook_events.create({
+            data: {
+              event_id: eventId,
+              webhook_type: webhookType ? webhookType.slice(0, 64) : null,
+              session_id: isEntityEvent ? null : sessionId,
+              status:
+                typeof flat.status === 'string'
+                  ? flat.status.slice(0, 64)
+                  : null,
+            },
+          });
+
+          if (
+            typeof vendorData !== 'string' ||
+            !UUID_PATTERN.test(vendorData)
+          ) {
+            this.logger.warn(
+              `Didit KYB event ${eventId} has invalid vendor_data`,
+            );
+            return;
+          }
+
+          const business = await transaction.businesses.findUnique({
+            where: { id: vendorData },
+            select: { id: true, didit_kyb_session_id: true },
+          });
+          if (!business) {
+            this.logger.warn(`Didit KYB event ${eventId}: unknown business`);
+            return;
+          }
+          // Session events must belong to the session we created for this
+          // business, so a stale or foreign session cannot overwrite it.
+          if (
+            !isEntityEvent &&
+            (!sessionId || business.didit_kyb_session_id !== sessionId)
+          ) {
+            this.logger.warn(
+              `Didit KYB event ${eventId}: session does not match business`,
+            );
+            return;
+          }
+
+          const result = JSON.parse(JSON.stringify(flat)) as Record<
+            string,
+            Prisma.InputJsonValue
+          >;
+          delete result.metadata;
+
+          const data: Prisma.businessesUpdateInput = {
+            didit_kyb_updated_at: new Date(),
+          };
+          if (isEntityEvent) {
+            if (webhookType === 'business.status.updated' && status) {
+              data.didit_kyb_entity_status = status.toUpperCase().slice(0, 32);
+            }
+            if (webhookType === 'business.data.updated') {
+              // Entity profile changes are kept alongside the latest session
+              // decision rather than replacing it.
+              const existing = await transaction.businesses.findUnique({
+                where: { id: business.id },
+                select: { didit_kyb_result: true },
+              });
+              const prior =
+                existing?.didit_kyb_result &&
+                typeof existing.didit_kyb_result === 'object' &&
+                !Array.isArray(existing.didit_kyb_result)
+                  ? existing.didit_kyb_result
+                  : {};
+              data.didit_kyb_result = { ...prior, business_entity: result };
+            }
+          } else {
+            if (status) data.didit_kyb_status = status;
+            if (flat.decision && typeof flat.decision === 'object') {
+              data.didit_kyb_result = result;
+            } else if (webhookType === 'data.updated') {
+              const existing = await transaction.businesses.findUnique({
+                where: { id: business.id },
+                select: { didit_kyb_result: true },
+              });
+              const prior =
+                existing?.didit_kyb_result &&
+                typeof existing.didit_kyb_result === 'object' &&
+                !Array.isArray(existing.didit_kyb_result)
+                  ? existing.didit_kyb_result
+                  : {};
+              data.didit_kyb_result = { ...prior, last_data_update: result };
+            }
+          }
+
+          await transaction.businesses.update({
+            where: { id: business.id },
+            data,
           });
         },
         { maxWait: 1_000, timeout: 4_000 },
