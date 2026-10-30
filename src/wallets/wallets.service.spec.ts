@@ -20,6 +20,7 @@ describe('WalletsService transaction history', () => {
         cacheGet: jest.fn().mockResolvedValue(null),
         cacheSet: jest.fn().mockResolvedValue(undefined),
       } as any,
+      {} as any,
     );
 
     await service.getTransactions('user-1', { page: 1, limit: 10 });
