@@ -4,6 +4,7 @@ import {
   Get,
   Ip,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -170,6 +171,12 @@ export class BusinessOpsController {
   ) {
     return this.commerce.sendInvoice(u.id, id);
   }
+  @Post('invoices/:id/resend') resendInvoice(
+    @CurrentUser() u: any,
+    @Param('id', UUID) id: string,
+  ) {
+    return this.commerce.resendInvoice(u.id, id);
+  }
   @Post('invoices/:id/cancel') cancelInvoice(
     @CurrentUser() u: any,
     @Param('id', UUID) id: string,
@@ -233,6 +240,13 @@ export class BusinessOpsController {
   ) {
     return this.escrow.requestRelease(u.id, id);
   }
+  @Post('escrows/:id/milestones/:index/request-release') requestMilestone(
+    @CurrentUser() u: any,
+    @Param('id', UUID) id: string,
+    @Param('index', ParseIntPipe) index: number,
+  ) {
+    return this.escrow.requestMilestone(u.id, id, index);
+  }
   @Post('escrows/:id/cancel') cancelEscrow(
     @CurrentUser() u: any,
     @Param('id', UUID) id: string,
@@ -294,5 +308,16 @@ export class BusinessPayController {
     @Body() dto: PinDto,
   ) {
     return this.escrow.fund(u.id, id, dto.pin);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('escrows/:id/milestones/:index/release')
+  releaseMilestone(
+    @CurrentUser() u: any,
+    @Param('id', UUID) id: string,
+    @Param('index', ParseIntPipe) index: number,
+    @Body() dto: PinDto,
+  ) {
+    return this.escrow.releaseMilestone(u.id, id, index, dto.pin);
   }
 }

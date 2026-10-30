@@ -14,6 +14,7 @@ export const WEBHOOK_EVENTS = [
   'payment_link.paid',
   'invoice.paid',
   'escrow.funded',
+  'escrow.milestone_released',
   'payout.requested',
   'webhook.test',
 ] as const;

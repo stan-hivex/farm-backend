@@ -217,7 +217,8 @@ export class NotificationsService {
     return { message: 'All notifications deleted', deletedCount: result.count };
   }
 
-  async sendEmail(to: string, subject: string, html: string) {
+  /** Sends via the SMTP mailer. Never throws; returns whether it was accepted. */
+  async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
     try {
       await this.mailer.sendMail({
         from: this.cfg.get('SMTP_FROM'),
@@ -225,8 +226,10 @@ export class NotificationsService {
         subject,
         html,
       });
+      return true;
     } catch (e) {
       this.logger.error(`Email failed to ${to}: ${e}`);
+      return false;
     }
   }
 

@@ -12,6 +12,7 @@ import { paginate, paginationParams } from '../common/utils/pagination.util';
 import { BusinessAccessService } from './business-access.service';
 import { BusinessFinanceService } from './business-finance.service';
 import { BusinessWebhooksService } from './business-webhooks.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CustomerDto, InvoiceDto, PaymentLinkDto } from './business-ops.dto';
 
 const INVOICE_STATUSES = [
@@ -23,6 +24,29 @@ const INVOICE_STATUSES = [
   'cancelled',
 ];
 const PAYABLE = ['sent', 'pending', 'overdue'];
+
+/** Public base URL for shareable pay pages. Not a secret; configurable per environment. */
+export function payBaseUrl() {
+  return (
+    process.env.BUSINESS_PAY_BASE_URL ||
+    process.env.APP_URL ||
+    'https://farm-backend-r64g.onrender.com'
+  ).replace(/\/+$/, '');
+}
+export const linkUrl = (code: string) =>
+  `${payBaseUrl()}/api/pay/l/${encodeURIComponent(code)}`;
+export const invoiceUrl = (n: string) =>
+  `${payBaseUrl()}/api/pay/i/${encodeURIComponent(n)}`;
+
+export function escapeHtml(v: unknown) {
+  return String(v ?? '').replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
+        c
+      ] as string,
+  );
+}
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;
@@ -36,6 +60,7 @@ export class BusinessCommerceService {
     private readonly finance: BusinessFinanceService,
     private readonly wallets: WalletsService,
     private readonly webhooks: BusinessWebhooksService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ---------- customers ----------
@@ -228,10 +253,77 @@ export class BusinessCommerceService {
     if (!r.count)
       throw new BadRequestException('Only draft invoices can be sent');
     await this.markOverdue(a.business.id);
+    const emailed = await this.emailInvoice(a.business.id, id);
     return {
       ...(await this.getInvoice(userId, id)),
-      message: 'Invoice issued. Share the invoice number with your customer.',
+      emailed,
+      message: emailed
+        ? 'Invoice issued and emailed to your customer.'
+        : 'Invoice issued. Share the pay link with your customer.',
     };
+  }
+
+  /** Re-sends the invoice email with the pay link. */
+  async resendInvoice(userId: string, id: string) {
+    const a = await this.access.resolve(userId, 'invoices:manage');
+    const inv = await this.prisma.business_invoices.findFirst({
+      where: { id, business_id: a.business.id },
+      include: { customer: true },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found');
+    if (!PAYABLE.includes(inv.status))
+      throw new BadRequestException(`Invoice is ${inv.status}`);
+    if (!inv.customer?.email)
+      throw new BadRequestException('This customer has no email address');
+    const emailed = await this.emailInvoice(a.business.id, id);
+    if (!emailed)
+      throw new BadRequestException(
+        'The email could not be sent. Try again later.',
+      );
+    return {
+      ...(await this.getInvoice(userId, id)),
+      emailed,
+      message: 'Invoice emailed',
+    };
+  }
+
+  /** Emails the customer (if they have an address) with a pay link. Returns true on send. */
+  async emailInvoice(businessId: string, id: string): Promise<boolean> {
+    const inv = await this.prisma.business_invoices.findFirst({
+      where: { id, business_id: businessId },
+      include: {
+        customer: true,
+        business: { select: { trading_name: true, legal_name: true } },
+      },
+    });
+    const to = inv?.customer?.email?.trim();
+    if (!inv || !to) return false;
+    const name = inv.business.trading_name || inv.business.legal_name;
+    const url = invoiceUrl(inv.invoice_number);
+    const rows = (Array.isArray(inv.items) ? (inv.items as any[]) : [])
+      .map(
+        (it) =>
+          `<tr><td style="padding:4px 8px">${escapeHtml(it.description)}</td><td style="padding:4px 8px;text-align:right">${escapeHtml(it.quantity)}</td><td style="padding:4px 8px;text-align:right">${escapeHtml(it.amount ?? '')}</td></tr>`,
+      )
+      .join('');
+    const html = `<div style="font-family:Arial,sans-serif;color:#111;max-width:560px">
+<h2 style="margin:0 0 8px">Invoice ${escapeHtml(inv.invoice_number)}</h2>
+<p>Hi ${escapeHtml(inv.customer?.name)}, ${escapeHtml(name)} has sent you an invoice.</p>
+<table style="border-collapse:collapse;width:100%;border:1px solid #ddd">${rows}</table>
+<p style="font-size:18px"><b>Total: ${Number(inv.total).toFixed(2)} ${escapeHtml(inv.currency)}</b>${inv.due_date ? ` &middot; due ${inv.due_date.toISOString().slice(0, 10)}` : ''}</p>
+<p><a href="${escapeHtml(url)}" style="display:inline-block;background:#111;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none">Pay invoice</a></p>
+<p style="color:#666;font-size:12px">Or open this link: ${escapeHtml(url)}</p></div>`;
+    const ok = await this.notifications.sendEmail(
+      to,
+      `Invoice ${inv.invoice_number} from ${name}`,
+      html,
+    );
+    if (ok)
+      await this.prisma.business_invoices.update({
+        where: { id: inv.id },
+        data: { last_emailed_at: new Date() },
+      });
+    return ok;
   }
 
   async cancelInvoice(userId: string, id: string) {
@@ -253,7 +345,12 @@ export class BusinessCommerceService {
   }
 
   shapeInvoice(i: any) {
-    return { ...i, subtotal: Number(i.subtotal), total: Number(i.total) };
+    return {
+      ...i,
+      subtotal: Number(i.subtotal),
+      total: Number(i.total),
+      pay_url: i.status === 'draft' ? null : invoiceUrl(i.invoice_number),
+    };
   }
 
   // ---------- payment links ----------
@@ -325,7 +422,7 @@ export class BusinessCommerceService {
     return this.getLink(userId, id);
   }
 
-  private linkState(l: any): 'active' | 'disabled' | 'expired' | 'completed' {
+  linkState(l: any): 'active' | 'disabled' | 'expired' | 'completed' {
     if (!l.is_active) return 'disabled';
     if (l.expires_at && new Date(l.expires_at) <= new Date()) return 'expired';
     if (l.max_uses != null && l.use_count >= l.max_uses) return 'completed';
@@ -333,11 +430,16 @@ export class BusinessCommerceService {
   }
 
   private shapeLink(l: any) {
-    return { ...l, amount: Number(l.amount), state: this.linkState(l) };
+    return {
+      ...l,
+      amount: Number(l.amount),
+      state: this.linkState(l),
+      url: linkUrl(l.code),
+    };
   }
 
   // ---------- payer side (any signed-in Farm user) ----------
-  private async businessName(businessId: string) {
+  async businessName(businessId: string) {
     const b = await this.prisma.businesses.findUnique({
       where: { id: businessId },
       select: {

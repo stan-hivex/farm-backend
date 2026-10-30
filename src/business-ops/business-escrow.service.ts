@@ -17,6 +17,26 @@ const OPEN = ['created', 'awaiting_payment'];
  * Business escrow is a request layer on top of the existing escrow_contracts.
  * Funding, release, dispute and refund keep using EscrowService unchanged.
  */
+/** Escrow states in which milestones can be requested or released. */
+const MILESTONE_OPEN = ['funded', 'in_progress', 'release_requested'];
+
+export interface Milestone {
+  title: string;
+  amount: number;
+  status: 'pending' | 'release_requested' | 'releasing' | 'released';
+  released_at?: string;
+  transaction_reference?: string;
+}
+
+export function milestonesOf(e: { milestones?: any }): Milestone[] {
+  if (!Array.isArray(e.milestones)) return [];
+  return e.milestones.map((m: any) => ({
+    ...m,
+    amount: Number(m.amount),
+    status: m.status ?? 'pending',
+  }));
+}
+
 @Injectable()
 export class BusinessEscrowService {
   constructor(
@@ -131,6 +151,7 @@ export class BusinessEscrowService {
           dto.milestones?.map((m) => ({
             title: m.title.trim(),
             amount: m.amount,
+            status: 'pending',
           })) ?? undefined,
         expires_at,
         created_by: userId,
@@ -290,17 +311,136 @@ export class BusinessEscrowService {
   }
 
   private shape(e: any) {
+    const ms = milestonesOf(e);
     return {
       ...e,
       amount: Number(e.amount),
+      milestones: ms.length ? ms : e.milestones,
+      released_amount: e.escrow_contract
+        ? Number(e.escrow_contract.released_amount ?? 0)
+        : 0,
       escrow_contract: e.escrow_contract
         ? {
             id: e.escrow_contract.id,
             reference_code: e.escrow_contract.reference_code,
             status: e.escrow_contract.status,
+            released_amount: Number(e.escrow_contract.released_amount ?? 0),
           }
         : undefined,
     };
+  }
+
+  // ---------- milestones (Phase 2b) ----------
+  /** Seller asks the buyer to release one milestone. */
+  async requestMilestone(userId: string, id: string, index: number) {
+    const a = await this.access.resolve(userId, 'escrow:manage');
+    await this.sync({ id });
+    const e = await this.prisma.business_escrows.findFirst({
+      where: { id, business_id: a.business.id },
+    });
+    if (!e) throw new NotFoundException('Escrow not found');
+    if (!MILESTONE_OPEN.includes(e.status))
+      throw new BadRequestException(
+        'Milestones can only be requested on funded escrows',
+      );
+    const ms = milestonesOf(e);
+    const m = ms[index];
+    if (!m) throw new NotFoundException('Milestone not found');
+    if (m.status !== 'pending')
+      throw new BadRequestException(`Milestone is ${m.status}`);
+    const next = ms.map((x, i) =>
+      i === index
+        ? {
+            ...x,
+            status: 'release_requested',
+            requested_at: new Date().toISOString(),
+          }
+        : x,
+    );
+    const r = await this.prisma.business_escrows.updateMany({
+      where: { id, milestones: { equals: e.milestones as any } },
+      data: { milestones: next as any },
+    });
+    if (!r.count) throw new BadRequestException('Escrow changed, try again');
+    await this.notify(
+      e.buyer_user_id,
+      'Milestone release requested',
+      `The seller asked you to release "${m.title}" (${m.amount} FARM) on escrow "${e.title}".`,
+    );
+    return this.get(userId, id);
+  }
+
+  /**
+   * Buyer releases one milestone. Funds move only inside
+   * EscrowService.releasePartial (server-side, one DB transaction).
+   */
+  async releaseMilestone(
+    buyerId: string,
+    id: string,
+    index: number,
+    pin: string,
+  ) {
+    await this.sync({ id });
+    const e = await this.prisma.business_escrows.findUnique({ where: { id } });
+    if (!e || e.buyer_user_id !== buyerId)
+      throw new NotFoundException('Escrow not found');
+    if (!e.escrow_contract_id || !MILESTONE_OPEN.includes(e.status))
+      throw new BadRequestException('Escrow is not funded or already closed');
+    const ms = milestonesOf(e);
+    const m = ms[index];
+    if (!m) throw new NotFoundException('Milestone not found');
+    if (!['pending', 'release_requested'].includes(m.status))
+      throw new BadRequestException(`Milestone is ${m.status}`);
+    // Claim the milestone first (optimistic lock on the JSON) so it cannot be released twice.
+    const claimed = ms.map((x, i) =>
+      i === index ? { ...x, status: 'releasing' } : x,
+    );
+    const c = await this.prisma.business_escrows.updateMany({
+      where: { id, milestones: { equals: e.milestones as any } },
+      data: { milestones: claimed as any },
+    });
+    if (!c.count) throw new BadRequestException('Escrow changed, try again');
+    try {
+      const res = await this.escrow.releasePartial(
+        e.escrow_contract_id,
+        buyerId,
+        m.amount,
+        pin,
+        m.title,
+      );
+      const done = claimed.map((x, i) =>
+        i === index
+          ? {
+              ...x,
+              status: 'released',
+              released_at: new Date().toISOString(),
+              transaction_reference: res.data.transaction_reference,
+            }
+          : x,
+      );
+      await this.prisma.business_escrows.update({
+        where: { id },
+        data: {
+          milestones: done as any,
+          ...(res.data.completed ? { status: 'released' } : {}),
+        },
+      });
+      this.webhooks.emit(e.business_id, 'live', 'escrow.milestone_released', {
+        escrow_id: id,
+        milestone_index: index,
+        title: m.title,
+        amount: m.amount,
+        remaining: res.data.remaining,
+        transaction_reference: res.data.transaction_reference,
+      });
+      return res;
+    } catch (err) {
+      await this.prisma.business_escrows.update({
+        where: { id },
+        data: { milestones: ms as any },
+      });
+      throw err;
+    }
   }
 
   private async notify(userId: string, title: string, body: string) {
