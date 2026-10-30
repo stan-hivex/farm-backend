@@ -35,10 +35,9 @@ describe('SafeInputValidationPipe', () => {
   it('still screens other fields next to an offer id', () => {
     const pipe = new SafeInputValidationPipe();
     expect(() =>
-      pipe.transform(
-        { offer_id: 'abc--def', note: 'x; drop table users' },
-        { type: 'body' } as any,
-      ),
+      pipe.transform({ offer_id: 'abc--def', note: 'x; drop table users' }, {
+        type: 'body',
+      } as any),
     ).toThrow(BadRequestException);
   });
 });
@@ -48,7 +47,8 @@ describe('SafeInputValidationPipe prose fields', () => {
   const meta = { type: 'body' } as any;
   it('accepts normal prose with ; newlines and SQL-ish words', () => {
     const v = {
-      description: 'Phase 1: create beds; update irrigation.\nPhase 2 -- harvest',
+      description:
+        'Phase 1: create beds; update irrigation.\nPhase 2 -- harvest',
       notes: 'Select seeds; drop off Monday',
     };
     expect(pipe.transform({ ...v }, meta)).toEqual(v);

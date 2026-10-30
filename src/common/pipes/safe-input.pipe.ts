@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
 @Injectable()
 export class SafeInputValidationPipe implements PipeTransform {
   private readonly suspiciousPatterns = [
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters
     /[\u0000-\u001f\u007f]/,
     /--/,
     /\/\*/,
@@ -57,7 +58,9 @@ export class SafeInputValidationPipe implements PipeTransform {
     'content',
     'title',
   ]);
-  private readonly proseForbidden = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+  private readonly proseForbidden =
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
   transform(value: unknown, metadata: { type?: string; data?: string }) {
     if (value === null || value === undefined) {

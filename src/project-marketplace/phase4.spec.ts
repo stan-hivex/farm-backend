@@ -13,6 +13,7 @@ import { ProjectReviewService } from './project-review.service';
 import { RISK_DISCLOSURE_VERSION } from './project-rules';
 import { ProjectsService } from '../projects/projects.service';
 import { can } from '../business-ops/permissions';
+import { chargeConsolidationInTx, heldFunds } from './consolidation';
 
 const PID = '11111111-1111-1111-1111-111111111111';
 const listed = {
@@ -501,7 +502,6 @@ describe('Phase 4 – legacy projects API', () => {
 });
 
 describe('Consolidation fund (once at round close, 15% of raised, refundable per-project reserve)', () => {
-  const { chargeConsolidationInTx, heldFunds } = require('./consolidation');
   function ctx(p: any, claim = 1) {
     const tx: any = {
       investment_projects: {

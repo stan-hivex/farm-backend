@@ -72,9 +72,6 @@ describe('PaymentRequestsService - expiry processing', () => {
 
     // Two notifications should be attempted: requester and recipient
     expect(notifications.sendNotification).toHaveBeenCalled();
-    const calledWith = notifications.sendNotification.mock.calls.map(
-      (c: any[]) => c[0],
-    );
     // at least one call for requester_user_id and one for recipient_user_id
     const receivers = notifications.sendNotification.mock.calls.map(
       (c: any[]) => c[0],

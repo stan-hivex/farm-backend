@@ -2,7 +2,9 @@ import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 const dir = join(__dirname, '../../prisma/migrations');
-const names = readdirSync(dir).filter((n) => /^\d/.test(n)).sort();
+const names = readdirSync(dir)
+  .filter((n) => /^\d/.test(n))
+  .sort();
 
 describe('prisma migrations (fresh DB)', () => {
   it('creates transfer_requests before the performance indexes use it', () => {
@@ -21,7 +23,9 @@ describe('prisma migrations (fresh DB)', () => {
       '20261114090000_fresh_db_reconcile_and_otp_hash',
     ]) {
       const sql = readFileSync(join(dir, n, 'migration.sql'), 'utf8');
-      expect(sql).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|TYPE)|TRUNCATE|DELETE FROM|RENAME/i);
+      expect(sql).not.toMatch(
+        /\bDROP (TABLE|COLUMN|INDEX|TYPE)|TRUNCATE|DELETE FROM|RENAME/i,
+      );
       expect(sql).not.toMatch(/CREATE TABLE "(?!.*IF NOT EXISTS)/);
       expect(sql).not.toMatch(/CREATE (UNIQUE )?INDEX "/);
     }
