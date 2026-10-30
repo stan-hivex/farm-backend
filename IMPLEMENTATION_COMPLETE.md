@@ -1,3 +1,5 @@
+> **Stale (pre-V2).** See docs/CHANGELOG_V2.md and docs/V2_RUNBOOK.md for current status.
+
 # ✅ SECURITY HARDENING - IMPLEMENTATION COMPLETE
 
 **Status**: Ready for Production Deployment  

@@ -136,3 +136,8 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+## V2 documentation
+- [Environment variables](docs/ENV_VARS.md) · [Deploy runbook](docs/V2_RUNBOOK.md) · [Changelog](docs/CHANGELOG_V2.md)
+- [Didit KYB](docs/DIDIT_KYB.md) · [Password & email verification](docs/AUTH_PASSWORD_EMAIL.md) · [LiteAPI hotels](docs/LITEAPI_HOTELS.md)
+- IvoryPay is retired: [IVORYPAY_RETIREMENT](docs/IVORYPAY_RETIREMENT.md). Earlier IvoryPay sections in this README are historical.

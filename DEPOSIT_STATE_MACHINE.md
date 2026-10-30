@@ -1,3 +1,5 @@
+> Note: IvoryPay is retired — see docs/IVORYPAY_RETIREMENT.md.
+
 # Deposit State Machine & Security Hardening - Implementation Complete
 
 ## Executive Summary

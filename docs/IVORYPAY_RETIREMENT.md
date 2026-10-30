@@ -1,0 +1,2 @@
+# IvoryPay retirement
+IvoryPay is no longer used. Set `IVORYPAY_RETIRED=true` (recommended in all envs): IvoryPay deposit/withdraw initiation is refused and the app hides it. What remains: the module code, historical DB rows/columns (kept — migrations are additive), and the webhook endpoint so late callbacks for old transactions can still be reconciled. Deposits now go via Paystack/M-Pesa/NOWPayments. Mentions of IvoryPay in older docs (README, PRODUCTION_READINESS, DEPOSIT_STATE_MACHINE, BACKEND_HARDENING, docs/flutter/withdraw_network_integration) are historical.
