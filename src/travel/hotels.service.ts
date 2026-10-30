@@ -14,8 +14,25 @@ import type { HotelProvider } from './travel-provider';
 import {
   HOTEL_PROVIDER,
   HotelSearch,
+  ProviderRejectedError,
   ProviderUnknownError,
 } from './travel-provider';
+
+/** Provider rejections (e.g. "no availability") are client-facing 409s, not 500s. */
+function mapProviderError(what: string) {
+  return (e: unknown): never => {
+    if (e instanceof ProviderRejectedError)
+      throw new ConflictException(
+        /availability/i.test(e.message)
+          ? 'This room is no longer available. Please choose another.'
+          : e.message,
+      );
+    if (e instanceof Error && 'getStatus' in e) throw e;
+    throw new ServiceUnavailableException(
+      `Hotel ${what} is unavailable right now`,
+    );
+  };
+}
 import { TravelService } from './travel.service';
 
 export interface HotelBookDto {
@@ -123,7 +140,9 @@ export class HotelsService {
 
   async search(q: Partial<HotelSearch>) {
     this.ensure();
-    const offers = await this.hotels.searchHotels(this.normalize(q));
+    const offers = await this.hotels
+      .searchHotels(this.normalize(q))
+      .catch(mapProviderError('search'));
     return Promise.all(offers.map((o) => this.withPrice(o)));
   }
 
@@ -131,7 +150,9 @@ export class HotelsService {
     this.ensure();
     if (!/^[A-Za-z0-9_\-+/=.:]{5,4000}$/.test(String(offerId ?? '')))
       throw new BadRequestException('Invalid offer id');
-    return this.withPrice(await this.hotels.prebook(offerId));
+    return this.withPrice(
+      await this.hotels.prebook(offerId).catch(mapProviderError('prebook')),
+    );
   }
 
   async book(userId: string, dto: HotelBookDto, ip: string) {
@@ -163,7 +184,9 @@ export class HotelsService {
       throw new BadRequestException('Invalid prebook id');
 
     const pb = await this.withPrice(
-      await this.hotels.getPrebook(dto.prebook_id),
+      await this.hotels
+        .getPrebook(dto.prebook_id)
+        .catch(mapProviderError('prebook')),
     );
     if (!pb.bookable || pb.price_farm == null)
       throw new ServiceUnavailableException(
@@ -177,6 +200,10 @@ export class HotelsService {
         price_farm: pb.price_farm,
       });
     const total = pb.price_farm;
+    // Display-only hotel details for the bookings list. Never blocks booking.
+    const info = this.hotels.hotelInfo
+      ? await this.hotels.hotelInfo(pb.hotel_id).catch(() => null)
+      : null;
 
     const booking = await this.travel.holdAndCreate(userId, key, ip, {
       total,
@@ -198,6 +225,11 @@ export class HotelsService {
         live_mode: pb.live_mode,
         summary: {
           hotel_id: pb.hotel_id,
+          hotel_name: info?.name ?? null,
+          hotel_address: info?.address ?? null,
+          hotel_city: info?.city ?? null,
+          room_name: pb.room_name ?? null,
+          board: pb.board ?? null,
           checkin: pb.checkin,
           checkout: pb.checkout,
           refundable: pb.refundable,

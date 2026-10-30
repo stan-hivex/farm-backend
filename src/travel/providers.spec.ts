@@ -477,6 +477,7 @@ function mkHotels(prisma: any, h: any = {}) {
     svc: new HotelsService(prisma, auth as any, travel, prov),
     prov,
     auth,
+    travel,
   };
 }
 const guest = {
@@ -548,6 +549,48 @@ describe('HotelsService', () => {
       'PB1',
       expect.objectContaining({ first_name: 'Jane' }),
       'b1',
+    );
+  });
+  it('stores hotel name in the booking summary (best-effort)', async () => {
+    const prisma = mkPrisma();
+    const { svc, travel } = mkHotels(prisma, {
+      hotelInfo: jest.fn().mockResolvedValue({
+        name: 'Best Western Plus Meridian Hotel',
+        address: '6 Muranga Road',
+        city: 'Nairobi',
+        stars: 4,
+      }),
+    });
+    const spy = jest.spyOn(travel, 'holdAndCreate');
+    await svc.book('u1', bdto(), '');
+    const summary = JSON.stringify(spy.mock.calls[0]);
+    expect(summary).toContain(
+      '"hotel_name":"Best Western Plus Meridian Hotel"',
+    );
+    expect(summary).toContain('"hotel_city":"Nairobi"');
+  });
+  it('hotel info lookup failure does not block booking', async () => {
+    const prisma = mkPrisma();
+    const { svc } = mkHotels(prisma, {
+      hotelInfo: jest.fn().mockRejectedValue(new Error('down')),
+    });
+    const r = await svc.book('u1', bdto(), '');
+    expect(r.status).toBe('confirmed');
+  });
+  it('provider rejection on prebook -> 409, outage -> 503', async () => {
+    const { svc } = mkHotels(mkPrisma(), {
+      prebook: jest
+        .fn()
+        .mockRejectedValueOnce(
+          new ProviderRejectedError('LiteAPI 409: no availability found'),
+        )
+        .mockRejectedValueOnce(new Error('socket hang up')),
+    });
+    await expect(svc.prebook('offer-abc')).rejects.toThrow(
+      'This room is no longer available. Please choose another.',
+    );
+    await expect(svc.prebook('offer-abc')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
     );
   });
   it('price increase -> conflict, no hold', async () => {

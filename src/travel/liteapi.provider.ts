@@ -3,6 +3,7 @@ import {
   CancelPolicy,
   HotelCancel,
   HotelGuest,
+  HotelInfo,
   HotelOffer,
   HotelOrder,
   HotelPrebook,
@@ -179,7 +180,33 @@ export class LiteApiProvider implements HotelProvider {
       refundable: pol.refundable,
       cancel_policies: pol.list,
       live_mode: live,
+      room_name: rate.name ?? d.roomTypes?.[0]?.name ?? null,
+      board: rate.boardName ?? null,
     };
+  }
+
+  async hotelInfo(hotelId: string): Promise<HotelInfo | null> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(hotelId)) return null;
+    try {
+      const r = await this.call(
+        'GET',
+        `${this.api}/data/hotel?hotelId=${encodeURIComponent(hotelId)}&timeout=4`,
+        undefined,
+        8000,
+      );
+      const d = r.data ?? {};
+      if (typeof d.name !== 'string' || !d.name) return null;
+      return {
+        name: String(d.name).slice(0, 200),
+        address: typeof d.address === 'string' ? d.address.slice(0, 300) : null,
+        city: typeof d.city === 'string' ? d.city.slice(0, 100) : null,
+        stars: Number.isFinite(Number(d.starRating))
+          ? Number(d.starRating)
+          : null,
+      };
+    } catch {
+      return null;
+    }
   }
 
   async prebook(offerId: string): Promise<HotelPrebook> {

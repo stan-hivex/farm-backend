@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../database/prisma.service';
@@ -601,6 +602,19 @@ describe('AuthService', () => {
     expect(result.data.access_token).toBeUndefined();
     expect(result.data.refresh_token).toBeUndefined();
     expect(prisma.user_sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed login body with 400, not a crash', async () => {
+    for (const body of [
+      {},
+      { identifier: 'a@b.co' },
+      { password: 'x' },
+      { identifier: '  ', password: 'x' },
+    ]) {
+      await expect(
+        service.login(body as any, '127.0.0.1', 'jest'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
   });
 
   it('issues a session directly when phone verification is explicitly disabled', async () => {

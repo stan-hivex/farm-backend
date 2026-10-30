@@ -122,6 +122,14 @@ export interface HotelPrebook {
   refundable: boolean | null;
   cancel_policies: CancelPolicy[];
   live_mode: boolean;
+  room_name?: string | null;
+  board?: string | null;
+}
+export interface HotelInfo {
+  name: string;
+  address: string | null;
+  city: string | null;
+  stars: number | null;
 }
 export interface HotelGuest {
   first_name: string;
@@ -155,4 +163,6 @@ export interface HotelProvider {
     clientReference: string,
   ): Promise<HotelOrder>;
   cancel(bookingId: string): Promise<HotelCancel>;
+  /** Best-effort static hotel details for display; null when unavailable. */
+  hotelInfo?(hotelId: string): Promise<HotelInfo | null>;
 }

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
 import { BusinessOpsModule } from '../business-ops/business-ops.module';
 import { AdminPaymentsMonitorController } from './admin-payments-monitor.controller';
 import { X402Chain } from './x402-chain';
@@ -9,7 +10,7 @@ import {
 } from './x402.controller';
 
 @Module({
-  imports: [BusinessOpsModule],
+  imports: [AuthModule, BusinessOpsModule],
   controllers: [
     X402PublicController,
     BusinessX402Controller,

@@ -30,6 +30,11 @@ export class SafeInputValidationPipe implements PipeTransform {
     'paymentMethod',
     'payment_method',
     'method',
+    // Opaque provider tokens (LiteAPI offer ids are long base64url strings
+    // that can contain "--"). HotelsService validates them against a strict
+    // character allowlist before use.
+    'offer_id',
+    'prebook_id',
   ]);
 
   transform(value: unknown, metadata: { type?: string; data?: string }) {

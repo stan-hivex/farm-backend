@@ -358,6 +358,16 @@ export class AuthService implements OnModuleInit {
       await this.turnstile.verifyToken(turnstileToken, ip);
     }
 
+    // The controller body is a union type, so class-validator does not run;
+    // reject malformed bodies with 400 instead of crashing with a 500.
+    if (
+      typeof dto?.identifier !== 'string' ||
+      !dto.identifier.trim() ||
+      typeof dto?.password !== 'string' ||
+      !dto.password
+    ) {
+      throw new BadRequestException('identifier and password are required');
+    }
     const normalizedIdentifier = dto.identifier.trim();
     const normalizedPhone = this.normalizePhoneNumber(normalizedIdentifier);
 
