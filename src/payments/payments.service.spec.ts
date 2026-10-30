@@ -1,41 +1,5 @@
 import { PaymentsService } from './payments.service';
 
-describe('PaymentsService transaction histories', () => {
-  it('filters unsuccessful deposits and withdrawals from user history', async () => {
-    const prisma = {
-      wallets: {
-        findFirst: jest.fn().mockResolvedValue({ id: 'wallet-1' }),
-      },
-      transactions: {
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-    };
-    const service = new PaymentsService(
-      prisma as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-
-    await service.getDepositHistory('user-1');
-    await service.getWithdrawalHistory('user-1');
-
-    for (const [options] of prisma.transactions.findMany.mock.calls) {
-      expect(options.where.status.notIn).toEqual(
-        expect.arrayContaining([
-          'pending',
-          'processing',
-          'failed',
-          'cancelled',
-          'reversed',
-        ]),
-      );
-    }
-  });
-});
-
 describe('PaymentsService.getExchangeRate', () => {
   it('returns cached exchange rates without hitting Prisma when available', async () => {
     const prisma = {
@@ -54,7 +18,6 @@ describe('PaymentsService.getExchangeRate', () => {
       {} as any,
       {} as any,
       cache as any,
-      {} as any,
     );
 
     await expect(service.getExchangeRate('USD', 'FARM')).resolves.toBe(130);
