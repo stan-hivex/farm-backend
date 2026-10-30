@@ -34,7 +34,7 @@ export class AiAssistantController {
   @Post('chat') @ApiOperation({ summary: 'Send a message to Mkulima' })
   chat(@CurrentUser() u: any, @Body() dto: ChatDto) { return this.svc.chat(u.id, dto.message, dto.conversation_id); }
 
-  @Get('conversations') list(@CurrentUser() u: any) { return this.svc.listConversations(u.id); }
+  @Get('conversations') async list(@CurrentUser() u: any) { return { data: await this.svc.listConversations(u.id) }; }
   @Get('conversations/:id') get(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) { return this.svc.getConversation(u.id, id); }
   @Delete('conversations/:id') del(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) { return this.svc.deleteConversation(u.id, id); }
 
@@ -42,12 +42,12 @@ export class AiAssistantController {
   @Put('permissions') setPerms(@CurrentUser() u: any, @Body() dto: PermissionsDto) { return this.svc.updatePermissions(u.id, dto); }
   @Post('permissions/revoke') revoke(@CurrentUser() u: any) { return this.svc.revokePermissions(u.id); }
 
-  @Get('actions') actions(@CurrentUser() u: any, @Query('status') status?: string) { return this.svc.listActions(u.id, status); }
+  @Get('actions') async actions(@CurrentUser() u: any, @Query('status') status?: string) { return { data: await this.svc.listActions(u.id, status) }; }
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('actions/:id/confirm') confirm(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ConfirmDto, @Req() req: Request) {
     return this.svc.confirmAction(u.id, id, dto.pin, req.ip || '');
   }
   @Post('actions/:id/reject') reject(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) { return this.svc.rejectAction(u.id, id); }
 
-  @Get('audit') audit(@CurrentUser() u: any) { return this.svc.auditLog(u.id); }
+  @Get('audit') async audit(@CurrentUser() u: any) { return { data: await this.svc.auditLog(u.id) }; }
 }
