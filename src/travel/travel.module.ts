@@ -3,12 +3,12 @@ import { AuthModule } from '../auth/auth.module';
 import { RateService } from '../chain-wallet/rate.service';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { DuffelProvider } from './duffel.provider';
-import { TravelController } from './travel.controller';
+import { AdminTravelController, TravelController } from './travel.controller';
 import { TravelService } from './travel.service';
 
 @Module({
   imports: [AuthModule],
-  controllers: [TravelController],
+  controllers: [TravelController, AdminTravelController],
   providers: [
     RateService,
     KycGuard,

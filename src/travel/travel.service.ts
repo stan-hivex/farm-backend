@@ -335,4 +335,49 @@ export class TravelService {
     if (!b) throw new NotFoundException('Booking not found');
     return this.view(b);
   }
+  // ---- Admin review (needs_review / stuck bookings) ----
+  async adminList(status?: string) {
+    const rows = await this.prisma.travel_bookings.findMany({
+      where: status ? { status } : { status: { in: ['needs_review', 'payment_held', 'refunding'] } },
+      orderBy: { created_at: 'desc' },
+      take: 100,
+    });
+    return rows.map((b) => ({ ...this.view(b), user_id: b.user_id, provider_offer_id: b.provider_offer_id, provider_order_id: b.provider_order_id, updated_at: b.updated_at }));
+  }
+
+  /** Operator decision after checking the provider dashboard. Audited. */
+  async adminResolve(adminId: string, id: string, dto: { action: 'confirm' | 'refund'; booking_reference?: string; provider_order_id?: string; note: string }, ip?: string) {
+    const b = await this.prisma.travel_bookings.findUnique({ where: { id } });
+    if (!b) throw new NotFoundException('Booking not found');
+    if (!['needs_review', 'payment_held'].includes(b.status)) throw new ConflictException(`Booking is ${b.status}; nothing to resolve`);
+    const note = (dto.note ?? '').trim();
+    if (note.length < 3) throw new BadRequestException('Add a short note explaining the decision');
+    let out: { [k: string]: any };
+    if (dto.action === 'confirm') {
+      const ref = (dto.booking_reference ?? '').trim();
+      if (!/^[A-Z0-9]{5,8}$/i.test(ref)) throw new BadRequestException('Enter the airline/provider booking reference (PNR)');
+      out = await this.prisma.$transaction(async (tx) => {
+        const claim = await tx.travel_bookings.updateMany({
+          where: { id, status: { in: ['needs_review', 'payment_held'] } },
+          data: { status: 'confirmed', booking_reference: ref.toUpperCase(), provider_order_id: dto.provider_order_id?.trim() || b.provider_order_id, failure_reason: null },
+        });
+        if (claim.count !== 1) throw new ConflictException('Booking changed; reload');
+        await tx.transactions.update({ where: { id: b.transaction_id! }, data: { status: 'completed', processed_at: new Date() } });
+        if (b.ai_action_id) await tx.ai_action_requests.update({ where: { id: b.ai_action_id }, data: { status: 'executed', decided_at: new Date() } });
+        return tx.travel_bookings.findUnique({ where: { id } });
+      }) as { [k: string]: any };
+    } else if (dto.action === 'refund') {
+      out = await this.refund(id, `Refunded after review: ${note}`.slice(0, 200));
+    } else throw new BadRequestException('action must be confirm or refund');
+    await this.prisma.audit_logs.create({
+      data: {
+        user_id: adminId, action: `travel_review_${dto.action}`, entity_type: 'travel_booking', entity_id: id,
+        old_values: { status: b.status, booking_reference: b.booking_reference },
+        new_values: { status: out.status, booking_reference: out.booking_reference ?? null, note },
+        ip_address: ip ?? null,
+      },
+    });
+    return this.view(out);
+  }
+
 }

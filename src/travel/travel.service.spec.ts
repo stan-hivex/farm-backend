@@ -35,6 +35,7 @@ function mkPrisma() {
     ledger_entries: { create: jest.fn() },
     ai_action_requests: { update: jest.fn(), findFirst: jest.fn(), aggregate: jest.fn() },
     ai_spend_permissions: { findUnique: jest.fn() },
+    audit_logs: { create: jest.fn() },
   };
   p.$transaction = jest.fn((fn: any) => fn(p));
   return p;
@@ -141,5 +142,37 @@ describe('TravelService', () => {
     pr.ai_spend_permissions.findUnique.mockResolvedValue({ enabled: true, revoked_at: null, allowed_actions: ['book_flight'], per_tx_cap: 10000, daily_cap: 20000 });
     const { svc } = mk(pr);
     await expect(svc.book(U, dto({ ai_action_id: '00000000-0000-0000-0000-000000000001' }), '')).rejects.toThrow('per-payment cap');
+  });
+
+  describe('admin review', () => {
+    const held = { id: 'b1', user_id: U, status: 'needs_review', transaction_id: 't1', total_farm: 13260, booking_reference: null, ai_action_id: 'a1' };
+    it('confirm needs a PNR and a note, completes the hold, audits', async () => {
+      const pr = mkPrisma();
+      pr.travel_bookings.findUnique.mockResolvedValue({ ...held, status: 'needs_review' });
+      const { svc } = mk(pr);
+      await expect(svc.adminResolve('adm', 'b1', { action: 'confirm', note: 'checked duffel' })).rejects.toThrow('booking reference');
+      await expect(svc.adminResolve('adm', 'b1', { action: 'confirm', booking_reference: 'ABC123', note: '' })).rejects.toThrow('note');
+      pr.travel_bookings.findUnique.mockResolvedValueOnce(held).mockResolvedValueOnce({ ...held, status: 'confirmed', booking_reference: 'ABC123' });
+      const r = await svc.adminResolve('adm', 'b1', { action: 'confirm', booking_reference: 'abc123', note: 'Found in Duffel' }, '1.1.1.1');
+      expect(r.status).toBe('confirmed');
+      expect(pr.transactions.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'completed' }) }));
+      expect(pr.ai_action_requests.update).toHaveBeenCalled();
+      expect(pr.audit_logs.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'travel_review_confirm', user_id: 'adm' }) }));
+    });
+    it('refund returns the full amount and audits', async () => {
+      const pr = mkPrisma();
+      pr.travel_bookings.findUnique.mockResolvedValue(held);
+      const { svc } = mk(pr);
+      const r = await svc.adminResolve('adm', 'b1', { action: 'refund', note: 'Not in Duffel' });
+      expect(pr.wallets.update).toHaveBeenCalledWith({ where: { id: 'w1' }, data: { balance: { increment: 13260 } } });
+      expect(r.status).toBe('failed_refunded');
+      expect(pr.audit_logs.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'travel_review_refund' }) }));
+    });
+    it('refuses already-final bookings', async () => {
+      const pr = mkPrisma();
+      pr.travel_bookings.findUnique.mockResolvedValue({ ...held, status: 'confirmed' });
+      const { svc } = mk(pr);
+      await expect(svc.adminResolve('adm', 'b1', { action: 'refund', note: 'x x x' })).rejects.toBeInstanceOf(ConflictException);
+    });
   });
 });

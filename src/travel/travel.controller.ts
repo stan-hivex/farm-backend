@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../common/enums';
 import type { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -58,4 +61,27 @@ export class TravelController {
 
   @Get('bookings') async list(@CurrentUser() u: any) { return { data: await this.svc.list(u.id) }; }
   @Get('bookings/:id') get(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) { return this.svc.get(u.id, id); }
+}
+
+class ResolveDto {
+  @IsIn(['confirm', 'refund']) action!: 'confirm' | 'refund';
+  @IsOptional() @IsString() @Length(5, 8) booking_reference?: string;
+  @IsOptional() @IsString() @Length(1, 80) provider_order_id?: string;
+  @IsString() @Length(3, 500) note!: string;
+}
+
+@ApiTags('Admin - Travel')
+@ApiBearerAuth('JWT')
+@UseGuards(JwtGuard, RolesGuard)
+@Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+@Controller({ path: 'admin/travel', version: '1' })
+export class AdminTravelController {
+  constructor(private readonly svc: TravelService) {}
+
+  @Get('bookings') async list(@Query('status') status?: string) {
+    return { data: await this.svc.adminList(status) };
+  }
+  @Post('bookings/:id/resolve') resolve(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ResolveDto, @Req() req: Request) {
+    return this.svc.adminResolve(u.id, id, dto, req.ip);
+  }
 }

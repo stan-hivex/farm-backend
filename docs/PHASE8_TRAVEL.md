@@ -24,6 +24,17 @@ Travel is off by default. It turns on only when `TRAVEL_ENABLED=true` and a flig
    - **Provider rejected:** the user gets a **full refund**. The hold transaction becomes `reversed`, an `escrow_refund` credit transaction and ledger entry are written, and the booking becomes `failed_refunded`.
    - **Unknown outcome (timeout/5xx):** the booking becomes `needs_review` and the funds stay held. Nothing is refunded or rebooked automatically (this avoids double booking). An operator checks Duffel and then refunds or confirms.
 
+## Admin review (`/v1/admin/travel`, ADMIN/SUPER_ADMIN)
+- `GET bookings?status=` lists bookings. With no status it shows `needs_review`, `payment_held` and `refunding`.
+- `POST bookings/:id/resolve` takes `{action:'confirm'|'refund', booking_reference?, provider_order_id?, note}`:
+  - **confirm** needs the PNR (checked in the Duffel dashboard). The hold becomes `completed` and the booking becomes `confirmed`. A linked Mkulima request is marked executed.
+  - **refund** is a full refund through the same path as automatic refunds (hold `reversed`, plus an `escrow_refund` credit and ledger entry).
+  - Both need a note and write an `audit_logs` row (`travel_review_confirm` / `travel_review_refund`) with the admin id, old/new status and IP.
+  - Final bookings are refused (409).
+
+## Settlement (approved)
+Travel FARM settles to the platform, and the platform pays Duffel from its prepaid USD balance. USD fares carry a 2% FX markup (`TRAVEL_FX_MARKUP_BPS=200`), with no flat fee (`TRAVEL_SERVICE_FEE_FARM=0`). Hotels will use LiteAPI later (not built yet).
+
 ## Mkulima hooks
 - `search_flights` is read-only.
 - `propose_flight_booking` creates a **pending** `book_flight` AI request (payload `offer_id`). It needs `book_flight` in the user's AI allowlist, and the price must be within the per-payment and daily caps.
