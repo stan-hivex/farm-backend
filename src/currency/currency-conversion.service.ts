@@ -14,14 +14,20 @@ export class CurrencyConversionService {
     return Number(value.toFixed(digits));
   }
 
+  private currencyRatesTableReady = false;
+
   private async ensureCurrencyRatesTable(): Promise<void> {
+    if (this.currencyRatesTableReady) return;
     try {
-      const rows = await this.prisma.$queryRaw<Array<{ exists: string | number }>>`
-        SELECT to_regclass('public.currency_rates') AS exists;
+      // Cast regclass to text: Prisma can't deserialize the regclass type, which
+      // made this check throw (and log prisma:error) on every rate lookup.
+      const rows = await this.prisma.$queryRaw<Array<{ exists: string | null }>>`
+        SELECT to_regclass('public.currency_rates')::text AS exists;
       `;
       const exists = Boolean(rows?.[0]?.exists);
 
       if (exists) {
+        this.currencyRatesTableReady = true;
         return;
       }
 
@@ -46,6 +52,7 @@ export class CurrencyConversionService {
         CREATE INDEX IF NOT EXISTS "idx_currency_rates_active"
         ON "currency_rates" ("is_active");
       `;
+      this.currencyRatesTableReady = true;
     } catch {
       // The table may be absent only in a partially migrated environment. Remaining
       // errors are still surfaced by the actual Prisma query call below.

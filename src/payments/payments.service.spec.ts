@@ -172,7 +172,7 @@ describe('PaymentsService merchant QR mobile-money checkout', () => {
 });
 
 describe('PaymentsService crypto deposits', () => {
-  it('sends a UUID reference and the selected token to IvoryPay', async () => {
+  it('creates a NOWPayments invoice in USD for the selected coin', async () => {
     const prisma = {
       users: {
         findUnique: jest.fn().mockResolvedValue({
@@ -187,15 +187,11 @@ describe('PaymentsService crypto deposits', () => {
       audit_logs: { create: jest.fn().mockResolvedValue({}) },
       deposit: { create: jest.fn().mockResolvedValue({}) },
     };
-    const ivorypay = {
-      getProviderNetworks: jest.fn().mockReturnValue({
-        networks: ['BSC', 'POLYGON', 'SOL', 'BASE', 'STARKNET', 'ALGORAND'],
-      }),
-      createPayment: jest.fn().mockResolvedValue({
-        data: {
-          checkoutUrl: 'https://checkout.ivorypay.io/checkout/reference',
-        },
-        checkout_url: 'https://checkout.ivorypay.io/checkout/reference',
+    const nowpayments = {
+      getAvailableCurrencies: jest.fn().mockResolvedValue(['usdc', 'usdttrc20']),
+      createInvoice: jest.fn().mockResolvedValue({
+        invoice_id: 'inv-1',
+        invoice_url: 'https://nowpayments.io/payment/?iid=inv-1',
       }),
     };
     const cache = {
@@ -208,10 +204,11 @@ describe('PaymentsService crypto deposits', () => {
     const service = new PaymentsService(
       prisma as any,
       { get: jest.fn() } as any,
-      ivorypay as any,
+      {} as any,
       {} as any,
       cache as any,
       conversion as any,
+      nowpayments as any,
     );
     (service as any).assessFraudRisk = jest.fn().mockResolvedValue({
       block: false,
@@ -227,43 +224,25 @@ describe('PaymentsService crypto deposits', () => {
       crypto: 'USDC',
       callbackUrl: 'https://farmapp-e2145.web.app/merchant-payment/',
       merchantQrCheckout: true,
-    });
+    } as any);
 
-    const paymentOptions = ivorypay.createPayment.mock.calls[0][0];
-    expect(paymentOptions.reference).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-    );
-    expect(paymentOptions).toMatchObject({
-      email: 'customer@example.com',
-      crypto: 'USDC',
-      baseFiat: 'USD',
-    });
-    expect(paymentOptions.amount).toBe(1);
-    const callback = new URL(paymentOptions.redirect_url);
-    expect(callback.searchParams.get('reference')).toBe(
-      paymentOptions.reference,
-    );
-    expect(callback.searchParams.get('farm_reference')).toBe(
-      paymentOptions.reference,
-    );
+    const invoice = nowpayments.createInvoice.mock.calls[0][0];
+    expect(invoice).toMatchObject({ priceCurrency: 'usd', payCurrency: 'usdc' });
+    expect(invoice.priceAmount).toBeGreaterThan(0);
     expect(prisma.transactions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          transaction_reference: paymentOptions.reference,
+          transaction_reference: invoice.orderId,
           metadata: expect.objectContaining({
-            amount_usd: 1,
-            amount_fiat: 1,
-            crypto: 'USDC',
+            provider: 'nowpayments',
+            nowpayments_invoice_id: 'inv-1',
+            pay_currency: 'usdc',
           }),
         }),
       }),
     );
     expect(result).toMatchObject({
-      data: {
-        payment_link: 'https://checkout.ivorypay.io/checkout/reference',
-        checkout_url: 'https://checkout.ivorypay.io/checkout/reference',
-        checkoutUrl: 'https://checkout.ivorypay.io/checkout/reference',
-      },
+      data: { checkout_url: 'https://nowpayments.io/payment/?iid=inv-1' },
     });
   });
 });

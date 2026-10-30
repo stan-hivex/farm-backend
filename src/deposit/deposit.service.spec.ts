@@ -7,6 +7,7 @@ import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { CacheService } from '../common/cache/cache.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
+import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
 describe('DepositService', () => {
   let service: DepositService;
@@ -52,6 +53,7 @@ describe('DepositService', () => {
         { provide: CacheService, useValue: cache },
         { provide: NotificationsService, useValue: notifications },
         { provide: CurrencyConversionService, useValue: currencyConversion },
+        { provide: NowpaymentsService, useValue: {} },
       ],
     }).compile();
 
@@ -65,7 +67,7 @@ describe('DepositService', () => {
         paymentMethod: 'CRYPTO',
         email: 'user@example.com',
       }),
-    ).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    ).rejects.toThrow('NOWPayments endpoint /api/v1/wallet/deposit/crypto');
   });
 
   it('does not create a generic deposit for crypto requests', async () => {
@@ -75,7 +77,7 @@ describe('DepositService', () => {
         paymentMethod: 'CRYPTO',
         email: 'user2@example.com',
       }),
-    ).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    ).rejects.toThrow('NOWPayments endpoint /api/v1/wallet/deposit/crypto');
     expect(prisma.deposit.create).not.toHaveBeenCalled();
   });
 

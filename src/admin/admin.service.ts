@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
@@ -1742,6 +1743,16 @@ export class AdminService {
   async updateUser(userId: string, dto: any, adminId: string) {
     const user = await this.prisma.users.findUnique({ where: { id: userId } });
     if (!user || user.is_deleted) throw new NotFoundException('User not found');
+    // Staff accounts and staff roles are managed only via the SUPER_ADMIN
+    // admin-management routes; the ordinary user editor must not touch them
+    // (prevents changing a staff member's phone/email/role from here).
+    const staffRoles = ['admin', 'super_admin'];
+    if (
+      staffRoles.includes(String(user.role ?? '').toLowerCase()) ||
+      (dto.role !== undefined && staffRoles.includes(String(dto.role).toLowerCase()))
+    ) {
+      throw new ForbiddenException('Staff roles can only be managed by superadmins');
+    }
 
     const updateData: any = {};
     if (dto.first_name) updateData.first_name = dto.first_name;
