@@ -3,7 +3,6 @@ import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { type notification_type } from '@prisma/client';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
-import { CacheService } from '../common/cache/cache.service';
 import * as nodemailer from 'nodemailer';
 import Twilio from 'twilio';
 import { FirebaseService } from './firebase.service';
@@ -14,12 +13,7 @@ export class NotificationsService {
   private mailer: nodemailer.Transporter;
   private twilioClient: any;
 
-  constructor(
-    private prisma: PrismaService,
-    private cfg: ConfigService,
-    private firebase: FirebaseService,
-    private cache: CacheService,
-  ) {
+  constructor(private prisma: PrismaService, private cfg: ConfigService, private firebase: FirebaseService) {
     this.mailer = nodemailer.createTransport({
       host: cfg.get('SMTP_HOST'),
       port: cfg.get<number>('SMTP_PORT', 587),
@@ -89,20 +83,19 @@ export class NotificationsService {
   }
 
   async getSettings(userId: string) {
-    const cacheKey = `notifications-settings:${userId}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return { success: true, data: cached };
 
-    const settings = await this.prisma.user_settings.findUnique({
-      where: { user_id: userId },
-    }) as any;
+  const settings =
+    await this.prisma.user_settings.findUnique({
+      where: {
+        user_id: userId,
+      },
+    });
 
-    await this.cache.cacheSet(cacheKey, settings, 60);
-    return {
-      success: true,
-      data: settings,
-    };
-  }
+  return {
+    success: true,
+    data: settings,
+  };
+}
 
 async updateSettings(userId: string, body: any) {
 
@@ -128,16 +121,6 @@ async updateSettings(userId: string, body: any) {
 
         vibration_enabled:
           body.vibration_enabled,
-        receive_money_requests: body.receive_money_requests,
-        money_sent: body.money_sent,
-        money_received: body.money_received,
-        deposits: body.deposits,
-        withdrawals: body.withdrawals,
-        escrow: body.escrow,
-        merchant_payments: body.merchant_payments,
-        security_alerts: body.security_alerts,
-        promotions: body.promotions,
-        announcements: body.announcements,
       },
 
       create: {
@@ -158,16 +141,6 @@ async updateSettings(userId: string, body: any) {
 
         vibration_enabled:
           body.vibration_enabled,
-        receive_money_requests: body.receive_money_requests,
-        money_sent: body.money_sent,
-        money_received: body.money_received,
-        deposits: body.deposits,
-        withdrawals: body.withdrawals,
-        escrow: body.escrow,
-        merchant_payments: body.merchant_payments,
-        security_alerts: body.security_alerts,
-        promotions: body.promotions,
-        announcements: body.announcements,
       },
     });
 
@@ -177,27 +150,13 @@ async updateSettings(userId: string, body: any) {
   };
 }
 
-  private normalizeNotificationType(type: string | notification_type | undefined): notification_type {
-    const validTypes = new Set<string>([
-      'system', 'admin', 'transaction', 'transfer_received', 'transfer_sent', 'payment_request',
-      'request_completed', 'request_declined', 'deposit_completed', 'withdrawal_completed', 'merchant',
-      'system_announcement', 'kyc_update', 'security', 'escrow', 'investment', 'transfer_request',
-    ]);
-    const normalized = type?.toString().trim().toLowerCase();
-    if (!normalized) return 'system';
-    if (validTypes.has(normalized as notification_type)) return normalized as notification_type;
-    if (normalized.startsWith('merchant_payment')) return 'merchant';
-    return 'system';
-  }
-
   async createInApp(userId: string, dto: {
     type: notification_type | string; title: string; body: string; metadata?: any; entityId?: string;
   }) {
-    const type = this.normalizeNotificationType(dto.type);
-    const notification = await this.prisma.notifications.create({
+    return this.prisma.notifications.create({
       data: {
         user_id: userId,
-        type,
+        type: dto.type as notification_type,
         title: dto.title,
         body: dto.body,
         metadata: {
@@ -208,16 +167,10 @@ async updateSettings(userId: string, body: any) {
         },
       },
     });
-    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
-    return notification;
   }
 
   async getNotifications(userId: string, query: any) {
     const { skip, take, page, limit } = paginationParams(query.page, query.limit);
-    const cacheKey = `notifications-list:${userId}:${page}:${limit}`;
-    const cached = await this.cache.cacheGet<any>(cacheKey);
-    if (cached) return cached;
-
     const [items, total] = await Promise.all([
       this.prisma.notifications.findMany({
         where: { user_id: userId },
@@ -227,9 +180,7 @@ async updateSettings(userId: string, body: any) {
       }),
       this.prisma.notifications.count({ where: { user_id: userId } }),
     ]);
-    const payload = { data: items, meta: paginate(total, page, limit) };
-    await this.cache.cacheSet(cacheKey, payload, 30);
-    return payload;
+    return { data: items, meta: paginate(total, page, limit) };
   }
 
   async markRead(userId: string, id: string) {
@@ -237,7 +188,6 @@ async updateSettings(userId: string, body: any) {
       where: { id, user_id: userId },
       data: { is_read: true },
     });
-    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
     return { message: 'Notification marked as read' };
   }
 
@@ -246,24 +196,22 @@ async updateSettings(userId: string, body: any) {
       where: { user_id: userId, is_read: false },
       data: { is_read: true },
     });
-    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
     return { message: 'All notifications marked as read' };
   }
 
   async deleteNotification(userId: string, id: string) {
-    await this.prisma.notifications.deleteMany({
+    const result = await this.prisma.notifications.deleteMany({
       where: { id, user_id: userId },
     });
-    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
+    if (result.count === 0) throw new Error('Notification not found');
     return { message: 'Notification deleted' };
   }
 
   async deleteAllNotifications(userId: string) {
-    await this.prisma.notifications.deleteMany({
+    const result = await this.prisma.notifications.deleteMany({
       where: { user_id: userId },
     });
-    await this.cache.cacheInvalidatePattern(`notifications-list:${userId}:*`);
-    return { message: 'All notifications deleted' };
+    return { message: 'All notifications deleted', deletedCount: result.count };
   }
 
   async sendEmail(to: string, subject: string, html: string) {
@@ -298,26 +246,9 @@ async updateSettings(userId: string, body: any) {
       this.logger.debug('FirebaseService not available; skipping push send');
       return false;
     }
-
-    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } }) as any;
-    const pushEnabled = settings?.push_notifications ?? true;
-    const type = (data?.type as string | undefined)?.toLowerCase() ?? '';
-    const isSecurity = type.includes('security') || type.includes('kyc') || title.toLowerCase().includes('security');
-    const categoryAllowed = (() => {
-      if (type.includes('payment_request') || type.includes('request_') || type.includes('request')) return settings?.receive_money_requests ?? true;
-      if (type.includes('transfer_sent') || type.includes('transfer')) return settings?.money_sent ?? true;
-      if (type.includes('transfer_received') || type.includes('money_received')) return settings?.money_received ?? true;
-      if (type.includes('deposit')) return settings?.deposits ?? true;
-      if (type.includes('withdraw')) return settings?.withdrawals ?? true;
-      if (type.includes('escrow')) return settings?.escrow ?? true;
-      if (type.includes('merchant')) return settings?.merchant_payments ?? true;
-      if (isSecurity) return settings?.security_alerts ?? true;
-      if (type.includes('announcement') || type.includes('promotion')) return settings?.announcements ?? true;
-      return true;
-    })();
-
-    if (!pushEnabled || !categoryAllowed) {
-      this.logger.debug(`Push blocked for user ${userId} by preferences`);
+    const messaging = this.firebase.messaging;
+    if (!messaging) {
+      this.logger.debug('Firebase messaging not available; skipping push send');
       return false;
     }
     try {
@@ -335,11 +266,7 @@ async updateSettings(userId: string, body: any) {
         data: payloadData,
         tokens,
       };
-      if (!this.firebase.messaging) {
-        this.logger.warn('Firebase messaging unavailable; skipping push notification');
-        return false;
-      }
-      const resp = await this.firebase.messaging.sendEachForMulticast(payload as any);
+      const resp = await messaging.sendEachForMulticast(payload as any);
       const invalidTokens = resp.responses
         .map((result, index) => ({ result, token: tokens[index] }))
         .filter(({ result }) => {
@@ -363,39 +290,25 @@ async updateSettings(userId: string, body: any) {
   }
 
   async notifyTransfer(senderId: string, receiverId: string, amount: number, reference: string) {
-    const [sender, receiver, receiverWallet] = await Promise.all([
-      (this.prisma as any).users.findUnique({ where: { id: senderId }, select: { first_name: true, last_name: true, username: true } }),
-      (this.prisma as any).users.findUnique({ where: { id: receiverId }, select: { first_name: true, last_name: true, username: true } }),
-      (this.prisma as any).wallets.findFirst({ where: { user_id: receiverId }, select: { balance: true } }),
-    ]);
-
-    const senderName = [sender?.first_name, sender?.last_name].filter(Boolean).join(' ').trim() || sender?.username || 'Someone';
-    const receiverName = [receiver?.first_name, receiver?.last_name].filter(Boolean).join(' ').trim() || receiver?.username || 'you';
-    const balance = receiverWallet ? Number(receiverWallet.balance ?? 0) : 0;
-
     await Promise.all([
       this.sendNotification(senderId, {
-        type: 'transfer_sent', entityId: reference, title: 'Transfer Sent',
-        body: `You sent ${amount} FARM to ${receiverName}.`,
+        type: 'transfer_sent', entityId: reference, title: 'Transfer Successful',
+        body: `You sent ${amount} FARM.`,
       }),
       this.sendNotification(receiverId, {
         type: 'transfer_received', entityId: reference, title: 'Money Received',
-        body: `${senderName} sent you ${amount} FARM. Your balance is ${balance} FARM. Tap to view.`,
+        body: `You received ${amount} FARM.`,
       }),
     ]);
   }
 
-  async sendNotification(userId: string | null, dto: {
+  async sendNotification(userId: string, dto: {
     type: notification_type | string;
     title: string;
     body: string;
     entityId?: string;
     metadata?: Record<string, any>;
   }) {
-    if (!userId) {
-      return null;
-    }
-
     const timestamp = new Date().toISOString();
     const metadata = {
       ...(dto.metadata ?? {}),
@@ -407,13 +320,6 @@ async updateSettings(userId: string, body: any) {
       ...dto,
       metadata,
     });
-    const settings = await this.prisma.user_settings.findUnique({ where: { user_id: userId } });
-    const isSecurity = dto.type.toString().toLowerCase().includes('security') || dto.title.toLowerCase().includes('security');
-    const shouldStoreInApp = isSecurity || settings?.push_notifications !== false || true;
-    if (!shouldStoreInApp) {
-      await this.prisma.notifications.delete({ where: { id: notification.id } });
-      return notification;
-    }
     await this.sendPush(userId, dto.title, dto.body, {
       type: dto.type,
       entityId: dto.entityId ?? '',
