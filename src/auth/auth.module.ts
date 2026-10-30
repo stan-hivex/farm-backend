@@ -14,14 +14,14 @@ import { requireJwtAccessSecret } from './jwt-secret';
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
-  inject: [ConfigService],
-  useFactory: (cfg: ConfigService) => ({
-    secret: requireJwtAccessSecret(cfg),
-    signOptions: {
-      expiresIn: '15m' as const,
-    },
-  }),
-}),
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        secret: requireJwtAccessSecret(cfg),
+        signOptions: {
+          expiresIn: '15m' as const,
+        },
+      }),
+    }),
     NotificationsModule,
   ],
   controllers: [AuthController],

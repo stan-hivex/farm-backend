@@ -48,9 +48,13 @@ describe('AuthController', () => {
 
     const req = { ip: '127.0.0.1', headers: { 'user-agent': 'jest' } } as any;
 
-    await controller.register({ supabase_token: 'token-123' } as any, req);
+    await controller.register({ supabase_token: 'token-123' }, req);
 
-    expect(authService.supabaseLogin).toHaveBeenCalledWith('token-123', '127.0.0.1', 'jest');
+    expect(authService.supabaseLogin).toHaveBeenCalledWith(
+      'token-123',
+      '127.0.0.1',
+      'jest',
+    );
   });
 
   it('checks username, email, and phone availability for registration', async () => {
@@ -87,7 +91,7 @@ describe('AuthController', () => {
     const req = { ip: '127.0.0.1', headers: { 'user-agent': 'jest' } } as any;
     const body = { identifier: 'user@example.com', password: 'secret' };
 
-    await controller.login(body as any, req);
+    await controller.login(body, req);
 
     expect(authService.login).toHaveBeenCalledWith(body, '127.0.0.1', 'jest');
     expect(authService.supabaseLogin).not.toHaveBeenCalled();

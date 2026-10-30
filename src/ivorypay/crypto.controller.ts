@@ -15,7 +15,9 @@ import { IvorypayDepositService } from './ivorypay-deposit.service';
 
 @Controller({ path: 'crypto', version: '1' })
 export class CryptoController {
-  constructor(private readonly ivorypayDepositService: IvorypayDepositService) {}
+  constructor(
+    private readonly ivorypayDepositService: IvorypayDepositService,
+  ) {}
 
   @Get('payment-options')
   @UseGuards(JwtAuthGuard)

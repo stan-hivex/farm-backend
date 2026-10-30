@@ -2,12 +2,17 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class VerifyPhoneDto {
-  @ApiProperty({ description: 'Firebase ID token returned by the client after phone verification' })
+  @ApiProperty({
+    description:
+      'Firebase ID token returned by the client after phone verification',
+  })
   @IsNotEmpty()
   @IsString()
   firebaseIdToken!: string;
 
-  @ApiProperty({ description: 'Server-issued pending password-login identifier' })
+  @ApiProperty({
+    description: 'Server-issued pending password-login identifier',
+  })
   @IsNotEmpty()
   @IsString()
   pendingLoginId!: string;

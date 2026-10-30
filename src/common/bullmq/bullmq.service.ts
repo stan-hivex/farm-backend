@@ -1,5 +1,11 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { Queue, Worker, QueueOptions, WorkerOptions, ConnectionOptions } from 'bullmq';
+import {
+  Queue,
+  Worker,
+  QueueOptions,
+  WorkerOptions,
+  ConnectionOptions,
+} from 'bullmq';
 import { RedisService } from '../redis/redis.service';
 
 @Injectable()
@@ -10,14 +16,18 @@ export class BullmqService implements OnModuleDestroy {
 
   constructor(private readonly redis: RedisService) {}
 
-  private getRedisConnection(opts?: Omit<QueueOptions, 'connection'> | Omit<WorkerOptions, 'connection'>): ConnectionOptions {
+  private getRedisConnection(
+    opts?: Omit<QueueOptions, 'connection'> | Omit<WorkerOptions, 'connection'>,
+  ): ConnectionOptions {
     if (opts && 'connection' in opts && opts.connection) {
       return opts.connection;
     }
 
     const client = this.redis.getClient();
     if (!client) {
-      throw new Error('Redis client is not initialized. Ensure REDIS_URL is configured and reachable.');
+      throw new Error(
+        'Redis client is not initialized. Ensure REDIS_URL is configured and reachable.',
+      );
     }
 
     return client;
@@ -31,7 +41,11 @@ export class BullmqService implements OnModuleDestroy {
     return q;
   }
 
-  createWorker(name: string, processor: any, opts?: Omit<WorkerOptions, 'connection'>) {
+  createWorker(
+    name: string,
+    processor: any,
+    opts?: Omit<WorkerOptions, 'connection'>,
+  ) {
     const connection = this.getRedisConnection(opts);
     const w = new Worker(name, processor, { ...opts, connection });
     this.workers.set(name, w);
@@ -49,7 +63,7 @@ export class BullmqService implements OnModuleDestroy {
         await w.close();
         this.logger.log(`Closed worker ${name}`);
       } catch (e) {
-        this.logger.warn(`Error closing worker ${name}`, e as any);
+        this.logger.warn(`Error closing worker ${name}`, e);
       }
     }
 
@@ -58,7 +72,7 @@ export class BullmqService implements OnModuleDestroy {
         await q.close();
         this.logger.log(`Closed queue ${name}`);
       } catch (e) {
-        this.logger.warn(`Error closing queue ${name}`, e as any);
+        this.logger.warn(`Error closing queue ${name}`, e);
       }
     }
   }

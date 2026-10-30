@@ -1,6 +1,9 @@
 import {
-  CanActivate, ExecutionContext, Injectable,
-  UnauthorizedException, SetMetadata,
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+  SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../database/prisma.service';
@@ -11,12 +14,16 @@ export const RequireApiKey = () => SetMetadata(REQUIRE_API_KEY, true);
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
-  constructor(private reflector: Reflector, private prisma: PrismaService) {}
+  constructor(
+    private reflector: Reflector,
+    private prisma: PrismaService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const requireApiKey = this.reflector.getAllAndOverride<boolean>(REQUIRE_API_KEY, [
-      context.getHandler(), context.getClass(),
-    ]);
+    const requireApiKey = this.reflector.getAllAndOverride<boolean>(
+      REQUIRE_API_KEY,
+      [context.getHandler(), context.getClass()],
+    );
     if (!requireApiKey) return true;
 
     const request = context.switchToHttp().getRequest();
@@ -37,7 +44,10 @@ export class ApiKeyGuard implements CanActivate {
     }
 
     // Compare incoming key hash with stored hash
-    const isValid = await ApiKeyHashService.compareKeys(apiKey, key.api_key_hash);
+    const isValid = await ApiKeyHashService.compareKeys(
+      apiKey,
+      key.api_key_hash,
+    );
     if (!isValid) {
       throw new UnauthorizedException('Invalid or expired API key');
     }

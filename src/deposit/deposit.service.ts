@@ -124,8 +124,7 @@ export class DepositService {
         'The selected cryptocurrency is not currently available',
       );
     }
-    const minimum =
-      await this.nowpayments.getMinimumPaymentAmount(payCurrency);
+    const minimum = await this.nowpayments.getMinimumPaymentAmount(payCurrency);
     const estimatedCryptoAmount = await this.nowpayments.estimateAmount(
       priceAmount,
       'usd',
@@ -145,7 +144,9 @@ export class DepositService {
     }
     const amountFarm = await this.currencyConversion.usdToFarm(priceAmount);
     if (!Number.isFinite(amountFarm) || amountFarm <= 0) {
-      throw new BadRequestException('The USD/FARM exchange rate is unavailable');
+      throw new BadRequestException(
+        'The USD/FARM exchange rate is unavailable',
+      );
     }
 
     const reference = uuidv4();
@@ -341,11 +342,17 @@ export class DepositService {
     ) {
       await this.prisma.$transaction([
         this.prisma.deposit.updateMany({
-          where: { reference: transaction.transaction_reference, status: 'PENDING' },
+          where: {
+            reference: transaction.transaction_reference,
+            status: 'PENDING',
+          },
           data: { status: 'FAILED' },
         }),
         this.prisma.transactions.updateMany({
-          where: { id: transaction.id, status: { in: ['pending', 'processing'] } },
+          where: {
+            id: transaction.id,
+            status: { in: ['pending', 'processing'] },
+          },
           data: { status: 'failed', processed_at: new Date() },
         }),
       ]);
@@ -742,7 +749,7 @@ export class DepositService {
         } catch (e) {
           this.logger.warn(
             `finalizeSuccessfulDeposit: paystack verify failed for ${reference} - aborting credit`,
-            e as any,
+            e,
           );
           return false;
         }
@@ -759,7 +766,9 @@ export class DepositService {
             verified.order_id?.toString() !== reference ||
             verified.price_currency?.toString().toLowerCase() !== 'usd' ||
             verified.pay_currency?.toString().toLowerCase() !==
-              String(metadata.pay_currency ?? metadata.crypto ?? '').toLowerCase() ||
+              String(
+                metadata.pay_currency ?? metadata.crypto ?? '',
+              ).toLowerCase() ||
             !Number.isFinite(expectedUsd) ||
             !Number.isFinite(actualUsd) ||
             Math.abs(expectedUsd - actualUsd) > 0.01
@@ -787,7 +796,7 @@ export class DepositService {
       }
       this.logger.debug(
         'finalizeSuccessfulDeposit: provider verification skipped due to error',
-        e as any,
+        e,
       );
     }
 
@@ -795,10 +804,11 @@ export class DepositService {
       const metadata = transaction.metadata as any;
       const userId = metadata?.user_id;
       const metadataProvider = metadata?.provider?.toString()?.toLowerCase();
-      const paymentMethod =
-        ['ivorypay', 'nowpayments'].includes(metadataProvider)
-          ? 'CRYPTO'
-          : 'CARD';
+      const paymentMethod = ['ivorypay', 'nowpayments'].includes(
+        metadataProvider,
+      )
+        ? 'CRYPTO'
+        : 'CARD';
       if (!userId) {
         this.logger.warn(
           `Deposit missing for reference ${reference} but transaction metadata.user_id is unavailable`,
@@ -1177,7 +1187,7 @@ export class DepositService {
     } catch (e) {
       this.logger.debug(
         'Failed to emit websocket update for failed deposit',
-        e as any,
+        e,
       );
     }
 

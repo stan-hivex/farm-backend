@@ -105,10 +105,12 @@ describe('🔒 Security Hardening Tests (Production)', () => {
 
     it('should prevent PIN rainbow table attacks', async () => {
       // Generate hashes for all 4-digit PINs (10,000 combinations)
-      const pinsToHash = Array.from({ length: 100 }, (_, i) => String(i).padStart(4, '0'));
-      
+      const pinsToHash = Array.from({ length: 100 }, (_, i) =>
+        String(i).padStart(4, '0'),
+      );
+
       const hashes = await Promise.all(
-        pinsToHash.map(pin => bcrypt.hash(pin, 12))
+        pinsToHash.map((pin) => bcrypt.hash(pin, 12)),
       );
 
       // Each hash should be unique (different salts)
@@ -160,7 +162,7 @@ describe('🔒 Security Hardening Tests (Production)', () => {
 
       // Time multiple comparisons
       const start = Date.now();
-      
+
       // Correct key
       await ApiKeyHashService.compareKeys(raw_key, key_hash);
       const correctTime = Date.now() - start;
@@ -342,8 +344,7 @@ describe('🔒 Security Hardening Tests (Production)', () => {
   describe('🔐 Transport Security', () => {
     it('should redirect HTTP to HTTPS in production', async () => {
       if (process.env.NODE_ENV === 'production') {
-        const response = await request(app.getHttpServer())
-          .get('/api/health');
+        const response = await request(app.getHttpServer()).get('/api/health');
 
         // Should redirect to HTTPS
         expect(response.status).toBe(301);
@@ -365,7 +366,9 @@ describe('🔒 Security Hardening Tests (Production)', () => {
         const response = await request(app.getHttpServer()).get('/api/health');
 
         expect(response.headers['strict-transport-security']).toBeDefined();
-        expect(response.headers['strict-transport-security']).toMatch('max-age=');
+        expect(response.headers['strict-transport-security']).toMatch(
+          'max-age=',
+        );
       }
     });
   });

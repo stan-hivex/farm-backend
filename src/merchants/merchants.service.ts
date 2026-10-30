@@ -1,5 +1,8 @@
 import {
-  Injectable, NotFoundException, BadRequestException, ForbiddenException,
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { QrService } from '../qr/qr.service';
@@ -15,15 +18,25 @@ export class MerchantsService {
     private cache: CacheService,
   ) {}
 
-  async apply(userId: string, dto: {
-    business_name: string; business_type?: string;
-    business_email?: string; business_phone?: string;
-    country?: string; city?: string;
-  }) {
-    const existing = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
+  async apply(
+    userId: string,
+    dto: {
+      business_name: string;
+      business_type?: string;
+      business_email?: string;
+      business_phone?: string;
+      country?: string;
+      city?: string;
+    },
+  ) {
+    const existing = await this.prisma.merchants.findFirst({
+      where: { user_id: userId },
+    });
     if (existing) {
       if (existing.status !== 'rejected') {
-        throw new BadRequestException('You already have a merchant application');
+        throw new BadRequestException(
+          'You already have a merchant application',
+        );
       }
 
       const merchant = await this.prisma.merchants.update({
@@ -36,27 +49,37 @@ export class MerchantsService {
         },
       });
       await this.invalidateMerchantCaches(userId);
-      return { data: merchant, message: 'Application resubmitted. Pending review.' };
+      return {
+        data: merchant,
+        message: 'Application resubmitted. Pending review.',
+      };
     }
 
     const merchant = await this.prisma.merchants.create({
       data: {
-        user_id: userId, ...dto,
+        user_id: userId,
+        ...dto,
         qr_secret: randomBytes(32).toString('hex'),
         status: 'pending',
       },
     });
     await this.invalidateMerchantCaches(userId);
-    return { data: merchant, message: 'Application submitted. Pending review.' };
+    return {
+      data: merchant,
+      message: 'Application submitted. Pending review.',
+    };
   }
 
   async getDashboard(userId: string) {
-    const merchant = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
+    const merchant = await this.prisma.merchants.findFirst({
+      where: { user_id: userId },
+    });
     if (!merchant) {
       return {
         data: {
           application_status: 'not_submitted',
-          message: 'Welcome to the Merchant Portal. Submit your business details to get started.',
+          message:
+            'Welcome to the Merchant Portal. Submit your business details to get started.',
         },
       };
     }
@@ -66,9 +89,10 @@ export class MerchantsService {
         data: {
           application_status: merchant.status ?? 'pending',
           merchant,
-          message: merchant.status === 'rejected'
-            ? 'Your merchant application was not approved. Please review your details and submit again.'
-            : 'Your merchant details are being reviewed. Please wait for an admin decision.',
+          message:
+            merchant.status === 'rejected'
+              ? 'Your merchant application was not approved. Please review your details and submit again.'
+              : 'Your merchant details are being reviewed. Please wait for an admin decision.',
         },
       };
     }
@@ -77,8 +101,14 @@ export class MerchantsService {
       where: { id: userId },
       select: { kyc_status: true, kyc_level: true },
     });
-    if (!user || user.kyc_status !== 'verified' || Number(user.kyc_level || 0) < 3) {
-      throw new ForbiddenException('Full KYC verification is required to access the merchant dashboard');
+    if (
+      !user ||
+      user.kyc_status !== 'verified' ||
+      Number(user.kyc_level || 0) < 3
+    ) {
+      throw new ForbiddenException(
+        'Full KYC verification is required to access the merchant dashboard',
+      );
     }
 
     const cacheKey = `merchant-dashboard:${userId}`;
@@ -88,17 +118,37 @@ export class MerchantsService {
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const qrData = await this.qrService.getMerchantQr(merchant.id);
 
-    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-    const previousMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const currentMonthStart = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      1,
+    );
+    const nextMonthStart = new Date(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      1,
+    );
+    const previousMonthStart = new Date(
+      today.getFullYear(),
+      today.getMonth() - 1,
+      1,
+    );
 
     const weekStart = new Date(today);
     weekStart.setDate(weekStart.getDate() - 6);
 
-    const [salesToday, totalRevenue, currentMonthRevenue, previousMonthRevenue, weeklySales, recentTxns] = await Promise.all([
+    const [
+      salesToday,
+      totalRevenue,
+      currentMonthRevenue,
+      previousMonthRevenue,
+      weeklySales,
+      recentTxns,
+    ] = await Promise.all([
       this.prisma.transactions.aggregate({
         where: {
           receiver_wallet_id: wallet?.id,
@@ -106,7 +156,8 @@ export class MerchantsService {
           status: 'completed',
           created_at: { gte: today },
         },
-        _sum: { amount: true }, _count: true,
+        _sum: { amount: true },
+        _count: true,
       }),
       this.prisma.transactions.aggregate({
         where: {
@@ -114,7 +165,8 @@ export class MerchantsService {
           transaction_type: 'merchant_payment',
           status: 'completed',
         },
-        _sum: { amount: true }, _count: true,
+        _sum: { amount: true },
+        _count: true,
       }),
       this.prisma.transactions.aggregate({
         where: {
@@ -145,16 +197,33 @@ export class MerchantsService {
         orderBy: { created_at: 'asc' },
       }),
       this.prisma.transactions.findMany({
-        where: { receiver_wallet_id: wallet?.id, transaction_type: 'merchant_payment' },
-        orderBy: { created_at: 'desc' }, take: 10,
+        where: {
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'merchant_payment',
+        },
+        orderBy: { created_at: 'desc' },
+        take: 10,
       }),
     ]);
 
-    const currentMonthRevenueValue = Number(currentMonthRevenue._sum.amount || 0);
-    const previousMonthRevenueValue = Number(previousMonthRevenue._sum.amount || 0);
-    const monthlyGrowth = previousMonthRevenueValue === 0
-      ? (currentMonthRevenueValue === 0 ? 0 : 100)
-      : Number((((currentMonthRevenueValue - previousMonthRevenueValue) / previousMonthRevenueValue) * 100).toFixed(2));
+    const currentMonthRevenueValue = Number(
+      currentMonthRevenue._sum.amount || 0,
+    );
+    const previousMonthRevenueValue = Number(
+      previousMonthRevenue._sum.amount || 0,
+    );
+    const monthlyGrowth =
+      previousMonthRevenueValue === 0
+        ? currentMonthRevenueValue === 0
+          ? 0
+          : 100
+        : Number(
+            (
+              ((currentMonthRevenueValue - previousMonthRevenueValue) /
+                previousMonthRevenueValue) *
+              100
+            ).toFixed(2),
+          );
 
     const weeklyPerformance = Array.from({ length: 7 }, (_, index) => {
       const date = new Date(weekStart);
@@ -168,7 +237,9 @@ export class MerchantsService {
     for (const sale of weeklySales) {
       const saleDate = sale.created_at;
       if (!saleDate) continue;
-      const dayIndex = Math.floor((new Date(saleDate).getTime() - weekStart.getTime()) / 86400000);
+      const dayIndex = Math.floor(
+        (new Date(saleDate).getTime() - weekStart.getTime()) / 86400000,
+      );
       if (dayIndex >= 0 && dayIndex < weeklyPerformance.length) {
         weeklyPerformance[dayIndex].amount += Number(sale.amount ?? 0);
         weeklyPerformance[dayIndex].count += 1;
@@ -176,62 +247,72 @@ export class MerchantsService {
     }
 
     // Enrich recent transactions with customer username where possible
-    const enrichedRecent = await Promise.all(recentTxns.map(async (t: any) => {
-      const txn: any = { ...t };
-      txn.amount = Number(txn.amount || 0);
+    const enrichedRecent = await Promise.all(
+      recentTxns.map(async (t: any) => {
+        const txn: any = { ...t };
+        txn.amount = Number(txn.amount || 0);
 
-      // Try to find a direct customer_id on the transaction or in metadata
-      let customerId: string | undefined;
-      if (txn.customer_id) customerId = txn.customer_id;
-      if (!customerId && txn.metadata && typeof txn.metadata === 'object') {
-        customerId = (txn.metadata as any).user_id || (txn.metadata as any).customer_id;
-      }
-
-      let customerName = '@user';
-      let merchantBusinessName = '';
-
-      if (customerId) {
-        const u = await this.prisma.users.findUnique({ where: { id: customerId } });
-        if (u && u.username) customerName = `@${u.username}`;
-      } else if (txn.sender_wallet_id) {
-        // Fallback: fetch sender wallet and its user
-        const senderWallet = await this.prisma.wallets.findUnique({
-          where: { id: txn.sender_wallet_id },
-          include: { users: true },
-        });
-        const u = senderWallet?.users as any | undefined;
-        if (u && u.username) customerName = `@${u.username}`;
-      }
-
-      if (txn.metadata && typeof txn.metadata === 'object') {
-        const merchantId = (txn.metadata as any).merchant_id || (txn.metadata as any).merchantId;
-        if (merchantId) {
-          const merchant = await this.prisma.merchants.findUnique({
-            where: { id: merchantId },
-            select: { business_name: true },
-          });
-          if (merchant?.business_name) merchantBusinessName = merchant.business_name;
+        // Try to find a direct customer_id on the transaction or in metadata
+        let customerId: string | undefined;
+        if (txn.customer_id) customerId = txn.customer_id;
+        if (!customerId && txn.metadata && typeof txn.metadata === 'object') {
+          customerId = txn.metadata.user_id || txn.metadata.customer_id;
         }
-      }
 
-      txn.customer_name = customerName;
-      txn.merchant_business_name = merchantBusinessName;
-      if (typeof txn.metadata?.guest_email === 'string') {
-        txn.payer_email = txn.metadata.guest_email;
-      }
-      return txn;
-    }));
+        let customerName = '@user';
+        let merchantBusinessName = '';
+
+        if (customerId) {
+          const u = await this.prisma.users.findUnique({
+            where: { id: customerId },
+          });
+          if (u && u.username) customerName = `@${u.username}`;
+        } else if (txn.sender_wallet_id) {
+          // Fallback: fetch sender wallet and its user
+          const senderWallet = await this.prisma.wallets.findUnique({
+            where: { id: txn.sender_wallet_id },
+            include: { users: true },
+          });
+          const u = senderWallet?.users as any | undefined;
+          if (u && u.username) customerName = `@${u.username}`;
+        }
+
+        if (txn.metadata && typeof txn.metadata === 'object') {
+          const merchantId =
+            txn.metadata.merchant_id || txn.metadata.merchantId;
+          if (merchantId) {
+            const merchant = await this.prisma.merchants.findUnique({
+              where: { id: merchantId },
+              select: { business_name: true },
+            });
+            if (merchant?.business_name)
+              merchantBusinessName = merchant.business_name;
+          }
+        }
+
+        txn.customer_name = customerName;
+        txn.merchant_business_name = merchantBusinessName;
+        if (typeof txn.metadata?.guest_email === 'string') {
+          txn.payer_email = txn.metadata.guest_email;
+        }
+        return txn;
+      }),
+    );
 
     const payload = {
       data: {
         merchant: {
-          id: merchant.id, business_name: merchant.business_name,
-          status: merchant.status, qr_code: merchant.qr_code,
+          id: merchant.id,
+          business_name: merchant.business_name,
+          status: merchant.status,
+          qr_code: merchant.qr_code,
           qr_payload: qrData?.data?.qr_payload ?? merchant.qr_code,
           qr_image_base64: qrData?.data?.qr_image_base64,
-          qr_image_data_url: qrData?.data?.qr_image_data_url ?? qrData?.data?.qr_image_base64,
+          qr_image_data_url:
+            qrData?.data?.qr_image_data_url ?? qrData?.data?.qr_image_base64,
           qrImageBase64: qrData?.data?.qr_image_base64,
-          qrImageDataUrl: qrData?.data?.qr_image_data_url ?? qrData?.data?.qr_image_base64,
+          qrImageDataUrl:
+            qrData?.data?.qr_image_data_url ?? qrData?.data?.qr_image_base64,
         },
         stats: {
           sales_today: Number(salesToday._sum.amount || 0),
@@ -267,19 +348,32 @@ export class MerchantsService {
     if (merchant.status !== 'approved') {
       throw new ForbiddenException('Merchant application is pending approval');
     }
-    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const { skip, take, page, limit } = paginationParams(
+      query.page,
+      query.limit,
+    );
     const cacheKey = `merchant-transactions:${userId}:${page}:${limit}`;
     const cached = await this.cache.cacheGet<any>(cacheKey);
     if (cached) return cached;
 
-    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId },
+    });
     const [items, total] = await Promise.all([
       this.prisma.transactions.findMany({
-        where: { receiver_wallet_id: wallet?.id, transaction_type: 'merchant_payment' },
-        skip, take, orderBy: { created_at: 'desc' },
+        where: {
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'merchant_payment',
+        },
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
       }),
       this.prisma.transactions.count({
-        where: { receiver_wallet_id: wallet?.id, transaction_type: 'merchant_payment' },
+        where: {
+          receiver_wallet_id: wallet?.id,
+          transaction_type: 'merchant_payment',
+        },
       }),
     ]);
     const payload = {
@@ -307,20 +401,33 @@ export class MerchantsService {
     return payload;
   }
 
-  async requestPayout(userId: string, dto: {
-    amount: number; payout_method: string;
-    account_name: string; account_number: string;
-  }) {
+  async requestPayout(
+    userId: string,
+    dto: {
+      amount: number;
+      payout_method: string;
+      account_name: string;
+      account_number: string;
+    },
+  ) {
     const merchant = await this.getMerchantByUser(userId);
-    if (merchant.status !== 'approved') throw new ForbiddenException('Merchant not approved');
-    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
-    const available = Number(wallet?.balance || 0) - Number(wallet?.locked_balance || 0);
-    if (available < dto.amount) throw new BadRequestException('Insufficient balance');
+    if (merchant.status !== 'approved')
+      throw new ForbiddenException('Merchant not approved');
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId },
+    });
+    const available =
+      Number(wallet?.balance || 0) - Number(wallet?.locked_balance || 0);
+    if (available < dto.amount)
+      throw new BadRequestException('Insufficient balance');
     const payout = await this.prisma.merchant_payouts.create({
       data: {
-        merchant_id: merchant.id, amount: dto.amount,
-        payout_method: dto.payout_method, account_name: dto.account_name,
-        account_number: dto.account_number, status: 'pending',
+        merchant_id: merchant.id,
+        amount: dto.amount,
+        payout_method: dto.payout_method,
+        account_name: dto.account_name,
+        account_number: dto.account_number,
+        status: 'pending',
       },
     });
     await this.invalidateMerchantCaches(userId);
@@ -332,16 +439,24 @@ export class MerchantsService {
     if (merchant.status !== 'approved') {
       throw new ForbiddenException('Merchant application is pending approval');
     }
-    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const { skip, take, page, limit } = paginationParams(
+      query.page,
+      query.limit,
+    );
     const cacheKey = `merchant-payouts:${userId}:${page}:${limit}`;
     const cached = await this.cache.cacheGet<any>(cacheKey);
     if (cached) return cached;
 
     const [items, total] = await Promise.all([
       this.prisma.merchant_payouts.findMany({
-        where: { merchant_id: merchant.id }, skip, take, orderBy: { created_at: 'desc' },
+        where: { merchant_id: merchant.id },
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
       }),
-      this.prisma.merchant_payouts.count({ where: { merchant_id: merchant.id } }),
+      this.prisma.merchant_payouts.count({
+        where: { merchant_id: merchant.id },
+      }),
     ]);
     const payload = {
       data: items.map((p) => ({ ...p, amount: Number(p.amount) })),
@@ -380,8 +495,13 @@ export class MerchantsService {
   }
 
   private async getMerchantByUser(userId: string) {
-    const m = await this.prisma.merchants.findFirst({ where: { user_id: userId } });
-    if (!m) throw new BadRequestException('Merchant account not found. Please apply first.');
+    const m = await this.prisma.merchants.findFirst({
+      where: { user_id: userId },
+    });
+    if (!m)
+      throw new BadRequestException(
+        'Merchant account not found. Please apply first.',
+      );
     return m;
   }
 

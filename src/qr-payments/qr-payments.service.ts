@@ -326,7 +326,7 @@ export class QrPaymentsService {
           metadata: {
             ...metadata,
             ...providerMetadata,
-          } as Prisma.InputJsonObject,
+          },
         },
       });
 
@@ -426,9 +426,7 @@ export class QrPaymentsService {
           const status = verified.payment_status?.toString().toLowerCase();
           if (['finished', 'confirmed'].includes(status ?? '')) {
             await this.complete(internalReference, 'nowpayments', verified);
-          } else if (
-            ['failed', 'refunded', 'expired'].includes(status ?? '')
-          ) {
+          } else if (['failed', 'refunded', 'expired'].includes(status ?? '')) {
             await this.markFailed(
               internalReference,
               'NOWPayments reported payment failure',
@@ -595,11 +593,7 @@ export class QrPaymentsService {
       const verifiedCurrency = verifiedPayment.pay_currency
         ?.toString()
         .toLowerCase();
-      const expectedCurrency = (
-        metadata.crypto ??
-        metadata.pay_currency ??
-        ''
-      )
+      const expectedCurrency = (metadata.crypto ?? metadata.pay_currency ?? '')
         .toString()
         .toLowerCase();
       const expectedUsd = Number(metadata.amount_usd);
@@ -608,7 +602,8 @@ export class QrPaymentsService {
         !['finished', 'confirmed'].includes(status ?? '') ||
         verifiedReference !== reference ||
         !/^[a-z0-9]{2,20}$/.test(verifiedCurrency ?? '') ||
-        (expectedCurrency.length > 0 && verifiedCurrency !== expectedCurrency) ||
+        (expectedCurrency.length > 0 &&
+          verifiedCurrency !== expectedCurrency) ||
         verifiedPayment.price_currency?.toString().toLowerCase() !== 'usd' ||
         !Number.isFinite(expectedUsd) ||
         !Number.isFinite(verifiedUsd) ||

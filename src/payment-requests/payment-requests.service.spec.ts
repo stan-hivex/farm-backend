@@ -31,7 +31,13 @@ describe('PaymentRequestsService - expiry processing', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AuthService, useValue: {} },
         { provide: NotificationsService, useValue: notifications },
-        { provide: WebsocketGateway, useValue: { emitBalanceUpdate: jest.fn(), emitTransactionUpdate: jest.fn() } },
+        {
+          provide: WebsocketGateway,
+          useValue: {
+            emitBalanceUpdate: jest.fn(),
+            emitTransactionUpdate: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -51,18 +57,28 @@ describe('PaymentRequestsService - expiry processing', () => {
     };
 
     prisma.payment_requests.findMany.mockResolvedValue([expiredReq]);
-    prisma.payment_requests.update.mockResolvedValue({ ...expiredReq, status: 'expired' });
+    prisma.payment_requests.update.mockResolvedValue({
+      ...expiredReq,
+      status: 'expired',
+    });
 
     const processed = await service.processExpiredRequests();
 
     expect(processed).toBe(1);
-    expect(prisma.payment_requests.update).toHaveBeenCalledWith({ where: { id: expiredReq.id }, data: { status: 'expired' } });
+    expect(prisma.payment_requests.update).toHaveBeenCalledWith({
+      where: { id: expiredReq.id },
+      data: { status: 'expired' },
+    });
 
     // Two notifications should be attempted: requester and recipient
     expect(notifications.sendNotification).toHaveBeenCalled();
-    const calledWith = notifications.sendNotification.mock.calls.map((c: any[]) => c[0]);
+    const calledWith = notifications.sendNotification.mock.calls.map(
+      (c: any[]) => c[0],
+    );
     // at least one call for requester_user_id and one for recipient_user_id
-    const receivers = notifications.sendNotification.mock.calls.map((c: any[]) => c[0]);
-    expect(receivers).toEqual(expect.arrayContaining(['user-A','user-B']));
+    const receivers = notifications.sendNotification.mock.calls.map(
+      (c: any[]) => c[0],
+    );
+    expect(receivers).toEqual(expect.arrayContaining(['user-A', 'user-B']));
   });
 });

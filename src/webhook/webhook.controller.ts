@@ -11,8 +11,14 @@ export class WebhookController {
   constructor(private readonly webhookService: WebhookService) {}
 
   private getWebhookJobId(provider: string, payload: any) {
-    const eventId = payload.id ?? payload.data?.id ?? payload.data?.reference ?? payload.reference;
-    return eventId ? `${provider}:${eventId}` : `${provider}:anonymous:${Date.now()}`;
+    const eventId =
+      payload.id ??
+      payload.data?.id ??
+      payload.data?.reference ??
+      payload.reference;
+    return eventId
+      ? `${provider}:${eventId}`
+      : `${provider}:anonymous:${Date.now()}`;
   }
 
   @UseGuards(WebhookSignatureGuard)
@@ -23,10 +29,10 @@ export class WebhookController {
     },
   })
   @Post('paystack')
-async paystack(@Body() body: any) {
-  await this.webhookService.handlePaystackWebhook(body, true);
-  return { received: true };
-}
+  async paystack(@Body() body: any) {
+    await this.webhookService.handlePaystackWebhook(body, true);
+    return { received: true };
+  }
 
   @UseGuards(WebhookSignatureGuard)
   @Throttle({

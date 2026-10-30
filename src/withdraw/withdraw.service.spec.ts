@@ -123,9 +123,11 @@ describe('WithdrawService', () => {
     jest
       .spyOn(service as any, 'processWithdrawal')
       .mockResolvedValue(undefined);
-    (service as any).currencyConversionService.getCurrentRate.mockResolvedValue({
-      farm_usd_rate: 1,
-    });
+    (service as any).currencyConversionService.getCurrentRate.mockResolvedValue(
+      {
+        farm_usd_rate: 1,
+      },
+    );
     prisma.wallets.findFirst.mockResolvedValue({
       id: 'wallet-1',
       balance: 100,
@@ -186,7 +188,9 @@ describe('WithdrawService', () => {
             }),
           },
           withdrawal: {
-            aggregate: jest.fn().mockResolvedValue({ _count: { _all: 0 }, _sum: { amount: 0 } }),
+            aggregate: jest
+              .fn()
+              .mockResolvedValue({ _count: { _all: 0 }, _sum: { amount: 0 } }),
             create: jest.fn().mockResolvedValue({
               id: 'withdrawal-1',
               reference: 'ref-1',

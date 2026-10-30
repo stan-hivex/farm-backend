@@ -155,7 +155,7 @@ describe('NotificationsService.notifyTransfer', () => {
           } as any,
           {} as any,
         );
-        const post = jest.spyOn(axios, 'post').mockResolvedValue({} as never);
+        const post = jest.spyOn(axios, 'post').mockResolvedValue({});
 
         await service.sendReceiptEmailOrThrow({
           to: 'merchant@example.com',
@@ -227,7 +227,7 @@ describe('NotificationsService.notifyTransfer', () => {
 
     it('sends reset email through the Resend HTTPS API', async () => {
       const service = createService();
-      const post = jest.spyOn(axios, 'post').mockResolvedValue({} as never);
+      const post = jest.spyOn(axios, 'post').mockResolvedValue({});
 
       await service.sendEmailOrThrow(
         'person@example.com',

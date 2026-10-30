@@ -203,13 +203,18 @@ describe('IvorypayDepositService', () => {
       metadata: { provider: 'ivorypay' },
     });
 
-    const result = await service.handleWebhook({
-      reference: 'ref-1',
-      event: 'payment.success',
-      data: { status: 'completed' },
-    }, true);
+    const result = await service.handleWebhook(
+      {
+        reference: 'ref-1',
+        event: 'payment.success',
+        data: { status: 'completed' },
+      },
+      true,
+    );
 
-    expect(result).toEqual(expect.objectContaining({ processed: true, duplicate: true }));
+    expect(result).toEqual(
+      expect.objectContaining({ processed: true, duplicate: true }),
+    );
     expect(prisma.wallets.update).not.toHaveBeenCalled();
   });
 
@@ -350,11 +355,9 @@ describe('IvorypayDepositService', () => {
       data: { reference: 'ref-1', status: 'SUCCESS' },
     });
 
-    expect(verifyTransaction).toHaveBeenCalledWith(
+    expect(verifyTransaction).toHaveBeenCalledWith('ref-1', 'provider-ref-1', [
       'ref-1',
-      'provider-ref-1',
-      ['ref-1'],
-    );
+    ]);
     expect(handleWebhook).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'cryptoCollection.success',

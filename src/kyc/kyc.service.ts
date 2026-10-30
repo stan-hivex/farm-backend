@@ -193,7 +193,6 @@ export class KycService {
       if (dto.selfie_image)
         selfieUrl = await cloud.uploadBase64(dto.selfie_image, 'kyc');
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error(
         'KYC Cloudinary upload failed:',
         e instanceof Error ? e.stack || e.message : String(e),
@@ -236,7 +235,6 @@ export class KycService {
         });
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error(
         'Prisma save kyc_documents failed:',
         err instanceof Error ? err.stack || err.message : String(err),

@@ -32,7 +32,9 @@ export class IvorypayDepositService {
   async createDeposit(userId: string, dto: any) {
     const amount = Number(dto.amount_fiat);
     if (!Number.isFinite(amount) || amount < 10) {
-      throw new BadRequestException(`Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`);
+      throw new BadRequestException(
+        `Invalid deposit amount. Minimum deposit is 10 ${dto.currency || 'KES'}`,
+      );
     }
 
     const requestedToken =
@@ -125,8 +127,15 @@ export class IvorypayDepositService {
       throw error;
     }
 
-    const providerRef = init.providerReference ?? init.data?.id ?? init.data?.reference ?? reference;
-    await this.prisma.deposit.update({ where: { id: deposit.id }, data: { providerRef } });
+    const providerRef =
+      init.providerReference ??
+      init.data?.id ??
+      init.data?.reference ??
+      reference;
+    await this.prisma.deposit.update({
+      where: { id: deposit.id },
+      data: { providerRef },
+    });
 
     await this.prisma.transactions.create({
       data: {
@@ -153,25 +162,34 @@ export class IvorypayDepositService {
       },
     });
 
-    this.logger.log(`IvoryPay deposit created: reference=${reference} user=${userId}`);
+    this.logger.log(
+      `IvoryPay deposit created: reference=${reference} user=${userId}`,
+    );
 
     return {
       success: true,
       data: {
         reference,
-        payment_url: init.data?.payment_link || init.payment_link || init.checkout_url,
-        authorization_url: init.data?.payment_link || init.payment_link || init.checkout_url,
+        payment_url:
+          init.data?.payment_link || init.payment_link || init.checkout_url,
+        authorization_url:
+          init.data?.payment_link || init.payment_link || init.checkout_url,
       },
       message: 'Crypto deposit initiated via IvoryPay',
     };
   }
 
   async getStatus(reference: string) {
-    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
+    const deposit = await this.prisma.deposit.findFirst({
+      where: { reference },
+    });
     if (!deposit) {
       throw new BadRequestException('Deposit not found');
     }
-    return { success: true, data: { reference, status: deposit.status, provider: deposit.provider } };
+    return {
+      success: true,
+      data: { reference, status: deposit.status, provider: deposit.provider },
+    };
   }
 
   async verifyDeposit(userId: string, reference: string) {
@@ -205,11 +223,7 @@ export class IvorypayDepositService {
       [reference],
     );
     const verifiedData = verified?.data ?? verified;
-    const verifiedStatus = (
-      verifiedData?.status ??
-      verified?.status ??
-      ''
-    )
+    const verifiedStatus = (verifiedData?.status ?? verified?.status ?? '')
       .toString()
       .toLowerCase();
 
@@ -264,17 +278,27 @@ export class IvorypayDepositService {
       throw new BadRequestException('Missing IvoryPay reference');
     }
 
-    this.logger.log(`IvoryPay webhook received: reference=${reference} event=${payload.event ?? payload.status}`);
+    this.logger.log(
+      `IvoryPay webhook received: reference=${reference} event=${payload.event ?? payload.status}`,
+    );
     if (!verified) {
-      this.logger.warn(`IvoryPay webhook verification skipped for ${reference}`);
+      this.logger.warn(
+        `IvoryPay webhook verification skipped for ${reference}`,
+      );
       throw new BadRequestException('Signature verification required');
     }
 
-    const deposit = await this.prisma.deposit.findFirst({ where: { reference } });
-    const transaction = await this.prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const deposit = await this.prisma.deposit.findFirst({
+      where: { reference },
+    });
+    const transaction = await this.prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
 
     if (!deposit || !transaction) {
-      this.logger.warn(`IvoryPay webhook ignored: deposit/transaction not found for ${reference}`);
+      this.logger.warn(
+        `IvoryPay webhook ignored: deposit/transaction not found for ${reference}`,
+      );
       return { processed: false, reason: 'not_found' };
     }
 
@@ -282,21 +306,37 @@ export class IvorypayDepositService {
     // so subsequent verification or stuck-deposit fixes use the provider's id
     // rather than our internal reference.
     try {
-      const providerId = payload?.id || payload?.data?.id || payload?.data?.transaction_id || payload?.data?.payment_id || null;
+      const providerId =
+        payload?.id ||
+        payload?.data?.id ||
+        payload?.data?.transaction_id ||
+        payload?.data?.payment_id ||
+        null;
       if (providerId && deposit.providerRef !== providerId) {
         const metadata = (transaction.metadata as any) ?? {};
         const updatedMetadata = { ...metadata, provider_ref: providerId };
         await this.prisma.$transaction(async (tx) => {
-          await tx.deposit.update({ where: { id: deposit.id }, data: { providerRef: providerId } });
-          await tx.transactions.update({ where: { id: transaction.id }, data: { metadata: updatedMetadata } });
+          await tx.deposit.update({
+            where: { id: deposit.id },
+            data: { providerRef: providerId },
+          });
+          await tx.transactions.update({
+            where: { id: transaction.id },
+            data: { metadata: updatedMetadata },
+          });
         });
         // refresh local variables to reflect persisted change
         deposit.providerRef = providerId;
         transaction.metadata = updatedMetadata;
-        this.logger.log(`IvoryPay webhook: synced provider id ${providerId} into deposit and transaction for ${reference}`);
+        this.logger.log(
+          `IvoryPay webhook: synced provider id ${providerId} into deposit and transaction for ${reference}`,
+        );
       }
     } catch (e) {
-      this.logger.debug(`IvoryPay webhook: failed to sync provider id for ${reference}`, e as any);
+      this.logger.debug(
+        `IvoryPay webhook: failed to sync provider id for ${reference}`,
+        e,
+      );
     }
 
     const depositStatus = deposit.status?.toString().toUpperCase();
@@ -310,14 +350,24 @@ export class IvorypayDepositService {
     }
 
     if (!isSuccess && !isFailure) {
-      this.logger.log(`IvoryPay webhook ignored for ${reference}: unsupported event`);
+      this.logger.log(
+        `IvoryPay webhook ignored for ${reference}: unsupported event`,
+      );
       return { processed: false, reason: 'unsupported_event' };
     }
 
     if (isFailure) {
-      await this.prisma.deposit.update({ where: { id: deposit.id }, data: { status: 'FAILED' } });
-      await this.prisma.transactions.update({ where: { id: transaction.id }, data: { status: 'failed' } });
-      this.logger.warn(`IvoryPay deposit marked failed: reference=${reference}`);
+      await this.prisma.deposit.update({
+        where: { id: deposit.id },
+        data: { status: 'FAILED' },
+      });
+      await this.prisma.transactions.update({
+        where: { id: transaction.id },
+        data: { status: 'failed' },
+      });
+      this.logger.warn(
+        `IvoryPay deposit marked failed: reference=${reference}`,
+      );
       return { processed: true, reference, status: 'failed' };
     }
 
@@ -340,7 +390,11 @@ export class IvorypayDepositService {
       this.logger.warn(
         `IvoryPay success webhook not confirmed by status check: reference=${reference} status=${confirmedStatus || 'missing'}`,
       );
-      return { processed: false, reason: 'provider_status_not_success', reference };
+      return {
+        processed: false,
+        reason: 'provider_status_not_success',
+        reference,
+      };
     }
 
     if (
@@ -393,9 +447,13 @@ export class IvorypayDepositService {
     }
 
     const result = await this.prisma.$transaction(async (tx: any) => {
-      const currentDeposit = await tx.deposit.findFirst({ where: { reference } });
+      const currentDeposit = await tx.deposit.findFirst({
+        where: { reference },
+      });
       if (!currentDeposit) {
-        throw new BadRequestException('Deposit missing during IvoryPay processing');
+        throw new BadRequestException(
+          'Deposit missing during IvoryPay processing',
+        );
       }
       if (currentDeposit.status !== 'PENDING') {
         return { alreadyProcessed: true };
@@ -409,7 +467,9 @@ export class IvorypayDepositService {
         return { alreadyProcessed: true };
       }
 
-      let wallet = await tx.wallets.findFirst({ where: { user_id: currentDeposit.userId, is_active: true } });
+      let wallet = await tx.wallets.findFirst({
+        where: { user_id: currentDeposit.userId, is_active: true },
+      });
       if (!wallet) {
         wallet = await tx.wallets.create({
           data: {
@@ -423,13 +483,22 @@ export class IvorypayDepositService {
       }
 
       const previousBalance = Number(wallet.balance ?? 0);
-      const creditAmount = Number(currentDeposit.amount ?? transaction.amount ?? 0);
+      const creditAmount = Number(
+        currentDeposit.amount ?? transaction.amount ?? 0,
+      );
 
       const updatedWallet = await tx.wallets.update({
         where: { id: wallet.id },
         data: { balance: { increment: creditAmount } },
       });
-      await tx.transactions.update({ where: { id: transaction.id }, data: { status: 'completed', receiver_wallet_id: wallet.id, processed_at: new Date() } });
+      await tx.transactions.update({
+        where: { id: transaction.id },
+        data: {
+          status: 'completed',
+          receiver_wallet_id: wallet.id,
+          processed_at: new Date(),
+        },
+      });
       await tx.ledger_entries.create({
         data: {
           transaction_id: transaction.id,
@@ -453,7 +522,9 @@ export class IvorypayDepositService {
 
       return {
         alreadyProcessed: false,
-        balance: Number(updatedWallet.balance ?? previousBalance + creditAmount),
+        balance: Number(
+          updatedWallet.balance ?? previousBalance + creditAmount,
+        ),
         previousBalance,
         creditAmount,
       };
@@ -471,7 +542,10 @@ export class IvorypayDepositService {
     ]);
 
     this.websocket.emitBalanceUpdate(deposit.userId, (result as any).balance);
-    this.websocket.emitTransactionUpdate(deposit.userId, { reference, status: 'SUCCESS' });
+    this.websocket.emitTransactionUpdate(deposit.userId, {
+      reference,
+      status: 'SUCCESS',
+    });
 
     await this.notificationsService.sendNotification(deposit.userId, {
       type: 'deposit_completed',
@@ -481,24 +555,68 @@ export class IvorypayDepositService {
       metadata: { provider: 'ivorypay', reference },
     });
 
-    this.logger.log(`IvoryPay wallet credited: reference=${reference} amount=${(result as any).creditAmount}`);
+    this.logger.log(
+      `IvoryPay wallet credited: reference=${reference} amount=${(result as any).creditAmount}`,
+    );
     return { processed: true, reference, status: 'completed' };
   }
 
   private resolveReference(payload: any): string | null {
-    const value = payload?.reference || payload?.data?.reference || payload?.data?.tx_ref || payload?.data?.trxref || payload?.data?.transaction_reference || payload?.id;
+    const value =
+      payload?.reference ||
+      payload?.data?.reference ||
+      payload?.data?.tx_ref ||
+      payload?.data?.trxref ||
+      payload?.data?.transaction_reference ||
+      payload?.id;
     return typeof value === 'string' && value.trim() ? value.trim() : null;
   }
 
   private isSuccess(payload: any) {
     const event = payload?.event?.toString().toLowerCase() || '';
-    const status = payload?.status?.toString().toLowerCase() || payload?.data?.status?.toString().toLowerCase() || '';
-    return ['cryptocollection.success', 'payment.success', 'transaction.completed', 'success', 'completed'].includes(event) || ['success', 'completed'].includes(status);
+    const status =
+      payload?.status?.toString().toLowerCase() ||
+      payload?.data?.status?.toString().toLowerCase() ||
+      '';
+    return (
+      [
+        'cryptocollection.success',
+        'payment.success',
+        'transaction.completed',
+        'success',
+        'completed',
+      ].includes(event) || ['success', 'completed'].includes(status)
+    );
   }
 
   private isFailure(payload: any) {
     const event = payload?.event?.toString().toLowerCase() || '';
-    const status = payload?.status?.toString().toLowerCase() || payload?.data?.status?.toString().toLowerCase() || '';
-    return ['cryptocollection.failed', 'payment.failed', 'transaction.failed', 'failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'].includes(event) || ['failed', 'cancelled', 'expired', 'abandoned', 'declined', 'reversed', 'incomplete'].includes(status);
+    const status =
+      payload?.status?.toString().toLowerCase() ||
+      payload?.data?.status?.toString().toLowerCase() ||
+      '';
+    return (
+      [
+        'cryptocollection.failed',
+        'payment.failed',
+        'transaction.failed',
+        'failed',
+        'cancelled',
+        'expired',
+        'abandoned',
+        'declined',
+        'reversed',
+        'incomplete',
+      ].includes(event) ||
+      [
+        'failed',
+        'cancelled',
+        'expired',
+        'abandoned',
+        'declined',
+        'reversed',
+        'incomplete',
+      ].includes(status)
+    );
   }
 }

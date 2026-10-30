@@ -1,4 +1,10 @@
-import { CanActivate, ExecutionContext, Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { TurnstileService } from '../services/turnstile.service';
 
 /**
@@ -21,14 +27,16 @@ export class TurnstileGuard implements CanActivate {
     const token = body.cf_turnstile_response || body.turnstile_token;
 
     if (!token) {
-      this.logger.warn(`Turnstile token missing from ${request.method} ${request.path} IP=${ip}`);
+      this.logger.warn(
+        `Turnstile token missing from ${request.method} ${request.path} IP=${ip}`,
+      );
       throw new BadRequestException('Turnstile token required');
     }
 
     try {
       const verification = await this.turnstile.verifyToken(token, ip);
       // Attach to request for logging/audit
-      (request as any).turnstileVerification = verification;
+      request.turnstileVerification = verification;
       return true;
     } catch (error) {
       if (error instanceof BadRequestException) throw error;

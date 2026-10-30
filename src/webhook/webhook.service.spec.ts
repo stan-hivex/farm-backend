@@ -62,7 +62,8 @@ describe('WebhookService Paystack deposit processing', () => {
   };
 
   it('credits immediately from a signed success event after reference and amount validation', async () => {
-    const { service, finalizeSuccessfulDeposit, verifyTransaction } = createService();
+    const { service, finalizeSuccessfulDeposit, verifyTransaction } =
+      createService();
 
     await service.handlePaystackWebhookProcessing({
       event: 'charge.success',
@@ -182,7 +183,7 @@ describe('WebhookService NOWPayments deposits', () => {
         pay_currency: 'btc',
       },
     };
-    const service = Object.create(WebhookService.prototype) as any;
+    const service = Object.create(WebhookService.prototype);
     service.prisma = {
       transactions: {
         findFirst: jest.fn().mockResolvedValue(transaction),
@@ -213,9 +214,7 @@ describe('WebhookService NOWPayments deposits', () => {
     });
 
     expect(service.nowpayments.getPayment).toHaveBeenCalledWith('12345');
-    expect(finalizeSuccessfulDeposit).toHaveBeenCalledWith(
-      'deposit-reference',
-    );
+    expect(finalizeSuccessfulDeposit).toHaveBeenCalledWith('deposit-reference');
   });
 });
 
@@ -261,16 +260,22 @@ describe('WebhookService IvoryPay webhook processing', () => {
       {} as any,
     );
 
-    jest.spyOn(service as any, 'resolveIvorypayInternalReference').mockResolvedValue('withdrawal-reference');
-    jest.spyOn(service as any, 'resolveIvorypayDepositAndTransaction').mockResolvedValue({
-      transaction,
-      deposit: null,
-      resolvedReference: 'withdrawal-reference',
-      matchedReference: 'withdrawal-reference',
-    });
+    jest
+      .spyOn(service as any, 'resolveIvorypayInternalReference')
+      .mockResolvedValue('withdrawal-reference');
+    jest
+      .spyOn(service as any, 'resolveIvorypayDepositAndTransaction')
+      .mockResolvedValue({
+        transaction,
+        deposit: null,
+        resolvedReference: 'withdrawal-reference',
+        matchedReference: 'withdrawal-reference',
+      });
     jest.spyOn(service as any, 'acquireLock').mockResolvedValue(true);
     jest.spyOn(service as any, 'releaseLock').mockResolvedValue(undefined);
-    jest.spyOn(service as any, 'emitWithdrawalUpdate').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'emitWithdrawalUpdate')
+      .mockResolvedValue(undefined);
 
     await service.handleIvorypayWebhookProcessing({
       event: 'cryptoPayout.failed',

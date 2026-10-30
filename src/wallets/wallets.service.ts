@@ -1,4 +1,10 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -54,29 +60,51 @@ export class WalletsService {
 
   async sendFunds(
     senderId: string,
-    dto: { recipient_identifier: string; amount: number; pin?: string; description?: string; biometric_auth?: boolean; device_fingerprint?: string },
+    dto: {
+      recipient_identifier: string;
+      amount: number;
+      pin?: string;
+      description?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
+    },
     ip: string,
   ) {
-    if (dto.amount <= 0) throw new BadRequestException('Amount must be greater than zero');
+    if (dto.amount <= 0)
+      throw new BadRequestException('Amount must be greater than zero');
     // Support biometric-authenticated transactions: when `biometric_auth` is true,
     // verify the device fingerprint server-side via SecurityService and skip PIN verification.
     if (dto.biometric_auth) {
-      const deviceFingerprint = dto.device_fingerprint || (dto as any).deviceFingerprint;
+      const deviceFingerprint =
+        dto.device_fingerprint || (dto as any).deviceFingerprint;
       if (!deviceFingerprint) {
-        throw new BadRequestException('Device fingerprint required for biometric authorization');
+        throw new BadRequestException(
+          'Device fingerprint required for biometric authorization',
+        );
       }
-      const verified = await this.securityService.verifyDevice(senderId, deviceFingerprint);
-      if (!verified || !('trusted' in verified) || (verified as any).trusted !== true) {
+      const verified = await this.securityService.verifyDevice(
+        senderId,
+        deviceFingerprint,
+      );
+      if (
+        !verified ||
+        !('trusted' in verified) ||
+        (verified as any).trusted !== true
+      ) {
         throw new ForbiddenException('Biometric device verification failed');
       }
     } else {
-      if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
+      if (!dto.pin)
+        throw new BadRequestException('Transaction PIN is required');
       await this.authService.verifyPin(senderId, dto.pin);
     }
 
     const receiverUser = await this.prisma.users.findFirst({
       where: {
-        OR: [{ username: dto.recipient_identifier }, { phone: dto.recipient_identifier }],
+        OR: [
+          { username: dto.recipient_identifier },
+          { phone: dto.recipient_identifier },
+        ],
         is_deleted: false,
         is_active: true,
       },
@@ -100,12 +128,15 @@ export class WalletsService {
         where: { user_id: senderId, is_active: true },
       });
       if (!senderWallet) throw new NotFoundException('Sender wallet not found');
-      if (senderWallet.is_frozen) throw new ForbiddenException('Your wallet is frozen. Contact support.');
+      if (senderWallet.is_frozen)
+        throw new ForbiddenException('Your wallet is frozen. Contact support.');
 
       // Single transfer ceiling
       const MAX_SINGLE_TX = 100_000; // FARM
       if (dto.amount > MAX_SINGLE_TX) {
-        throw new BadRequestException(`Single transfer limit is ${MAX_SINGLE_TX} FARM`);
+        throw new BadRequestException(
+          `Single transfer limit is ${MAX_SINGLE_TX} FARM`,
+        );
       }
 
       // Daily velocity check
@@ -145,9 +176,12 @@ export class WalletsService {
         );
       const totalOut = dto.amount + fee;
 
-      const available = Number(senderWallet.balance) - Number(senderWallet.locked_balance);
+      const available =
+        Number(senderWallet.balance) - Number(senderWallet.locked_balance);
       if (available < totalOut) {
-        throw new BadRequestException(`Insufficient balance. Available: ${available.toFixed(2)} FARM`);
+        throw new BadRequestException(
+          `Insufficient balance. Available: ${available.toFixed(2)} FARM`,
+        );
       }
 
       const cooldownWindow = new Date(Date.now() - 60_000);
@@ -163,7 +197,9 @@ export class WalletsService {
       });
 
       if (recentDuplicate) {
-        throw new BadRequestException('You can only resend the same amount after 1 minute.');
+        throw new BadRequestException(
+          'You can only resend the same amount after 1 minute.',
+        );
       }
 
       const reference = generateTxReference();
@@ -178,14 +214,18 @@ export class WalletsService {
           fee,
           net_amount: dto.amount - fee,
           currency: 'FARM',
-          description: dto.description || `Transfer to ${dto.recipient_identifier}`,
+          description:
+            dto.description || `Transfer to ${dto.recipient_identifier}`,
           ip_address: ip,
           metadata: { user_id: senderId },
         },
       });
 
-      const recvWallet = await tx.wallets.findUnique({ where: { id: receiverWalletId } });
-      if (!recvWallet) throw new NotFoundException('Recipient wallet not found');
+      const recvWallet = await tx.wallets.findUnique({
+        where: { id: receiverWalletId },
+      });
+      if (!recvWallet)
+        throw new NotFoundException('Recipient wallet not found');
 
       const updatedSenderWallet = await tx.wallets.update({
         where: { id: senderWallet.id },
@@ -226,7 +266,12 @@ export class WalletsService {
       });
 
       return {
-        data: { transaction_reference: reference, amount: dto.amount, fee, status: 'completed' },
+        data: {
+          transaction_reference: reference,
+          amount: dto.amount,
+          fee,
+          status: 'completed',
+        },
         message: 'Transfer successful',
         senderBalance: Number(updatedSenderWallet.balance),
         receiverBalance: Number(updatedReceiverWallet.balance),
@@ -240,37 +285,64 @@ export class WalletsService {
         status: 'SUCCESS',
       });
       if (receiverUserId) {
-        this.websocket.emitBalanceUpdate(receiverUserId, result.receiverBalance);
+        this.websocket.emitBalanceUpdate(
+          receiverUserId,
+          result.receiverBalance,
+        );
         this.websocket.emitTransactionUpdate(receiverUserId, {
           reference: result.data.transaction_reference,
           status: 'SUCCESS',
         });
       }
     } catch (error) {
-      this.logger.warn(`Transfer realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Transfer realtime update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     if (receiverUserId) {
       this.notificationsService
-        .notifyTransfer(senderId, receiverUserId, dto.amount, result.data.transaction_reference)
-        .catch((error) => this.logger.error('Transfer notification failed', error));
+        .notifyTransfer(
+          senderId,
+          receiverUserId,
+          dto.amount,
+          result.data.transaction_reference,
+        )
+        .catch((error) =>
+          this.logger.error('Transfer notification failed', error),
+        );
     }
 
     await Promise.all([
       this.cache.cacheDelete(`wallet:${senderId}:balance`),
-      ...(receiverUserId ? [this.cache.cacheDelete(`wallet:${receiverUserId}:balance`)] : []),
+      ...(receiverUserId
+        ? [this.cache.cacheDelete(`wallet:${receiverUserId}:balance`)]
+        : []),
       this.cache.cacheDelete(`dashboard:${senderId}`),
-      ...(receiverUserId ? [this.cache.cacheDelete(`dashboard:${receiverUserId}`)] : []),
+      ...(receiverUserId
+        ? [this.cache.cacheDelete(`dashboard:${receiverUserId}`)]
+        : []),
       this.cache.cacheInvalidatePattern(`transactions:${senderId}:*`),
-      ...(receiverUserId ? [this.cache.cacheInvalidatePattern(`transactions:${receiverUserId}:*`)] : []),
+      ...(receiverUserId
+        ? [
+            this.cache.cacheInvalidatePattern(
+              `transactions:${receiverUserId}:*`,
+            ),
+          ]
+        : []),
     ]);
 
     return { data: result.data, message: result.message };
   }
 
   async getTransactions(userId: string, query: any) {
-    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
-    const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
+    const { skip, take, page, limit } = paginationParams(
+      query.page,
+      query.limit,
+    );
+    const wallet = await this.prisma.wallets.findFirst({
+      where: { user_id: userId },
+    });
     if (!wallet) throw new NotFoundException('Wallet not found');
 
     // Unsuccessful/in-flight transactions stay hidden from user history

@@ -1048,7 +1048,7 @@ export class AdminService {
       await Promise.all(
         users
           .filter((u) => u.phone)
-          .map((user) => this.notifications.sendSms(user.phone!, dto.body)),
+          .map((user) => this.notifications.sendSms(user.phone, dto.body)),
       );
     }
 
@@ -1766,9 +1766,12 @@ export class AdminService {
     const staffRoles = ['admin', 'super_admin'];
     if (
       staffRoles.includes(String(user.role ?? '').toLowerCase()) ||
-      (dto.role !== undefined && staffRoles.includes(String(dto.role).toLowerCase()))
+      (dto.role !== undefined &&
+        staffRoles.includes(String(dto.role).toLowerCase()))
     ) {
-      throw new ForbiddenException('Staff roles can only be managed by superadmins');
+      throw new ForbiddenException(
+        'Staff roles can only be managed by superadmins',
+      );
     }
 
     const updateData: any = {};
@@ -1793,7 +1796,7 @@ export class AdminService {
         action: 'UPDATE_USER',
         entity_type: 'users',
         entity_id: userId,
-        new_values: updateData as any,
+        new_values: updateData,
       },
     });
     return { data: updated, message: 'User updated successfully' };
@@ -1915,7 +1918,7 @@ export class AdminService {
         action: 'UPDATE_SUPERADMIN',
         entity_type: 'users',
         entity_id: id,
-        new_values: updateData as any,
+        new_values: updateData,
       },
     });
 

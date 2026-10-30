@@ -27,9 +27,7 @@ import { TransferWithdrawDto } from './dto/transfer-withdraw.dto';
   version: '1',
 })
 export class WithdrawController {
-  constructor(
-    private readonly withdrawService: WithdrawService,
-  ) {}
+  constructor(private readonly withdrawService: WithdrawService) {}
 
   @Permissions('withdraw:write')
   @UseGuards(JwtAuthGuard, KycGuard)
@@ -40,14 +38,8 @@ export class WithdrawController {
     },
   })
   @Post('create')
-  async create(
-    @Req() req,
-    @Body() dto: CreateWithdrawDto,
-  ) {
-    return this.withdrawService.createWithdrawal(
-      req.user.id,
-      dto,
-    );
+  async create(@Req() req, @Body() dto: CreateWithdrawDto) {
+    return this.withdrawService.createWithdrawal(req.user.id, dto);
   }
 
   @Permissions('withdraw:write')
@@ -77,15 +69,16 @@ export class WithdrawController {
   @UseGuards(JwtAuthGuard)
   @Get('history')
   async history(@Req() req) {
-    return this.withdrawService.getUserWithdrawals(
-      req.user.id,
-    );
+    return this.withdrawService.getUserWithdrawals(req.user.id);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('status/:reference')
   async getStatus(@Req() req, @Param('reference') reference: string) {
-    const status = await this.withdrawService.getWithdrawalStatus(reference, req.user.id);
+    const status = await this.withdrawService.getWithdrawalStatus(
+      reference,
+      req.user.id,
+    );
     if (!status) {
       return { success: false, message: 'Withdrawal not found' };
     }

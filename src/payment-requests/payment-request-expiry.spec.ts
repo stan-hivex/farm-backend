@@ -1,4 +1,7 @@
-import { PAYMENT_REQUEST_EXPIRY_HOURS, PAYMENT_REQUEST_EXPIRY_MS } from './payment-request-expiry';
+import {
+  PAYMENT_REQUEST_EXPIRY_HOURS,
+  PAYMENT_REQUEST_EXPIRY_MS,
+} from './payment-request-expiry';
 
 describe('payment request expiry', () => {
   it('uses a 12 hour expiry window', () => {

@@ -1,4 +1,3 @@
-
 import {
   Controller,
   Post,
@@ -16,11 +15,7 @@ import {
   ExecutionContext,
 } from '@nestjs/common';
 
-import {
-  ApiTags,
-  ApiOperation,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 
 import type { Request } from 'express';
 
@@ -66,9 +61,7 @@ import { Permissions } from '../common/decorators/permissions.decorator';
   version: '1',
 })
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-  ) {}
+  constructor(private readonly authService: AuthService) {}
 
   @Post('admin/create')
   @UseGuards(JwtGuard, RolesGuard)
@@ -108,7 +101,8 @@ export class AuthController {
     },
   })
   @ApiOperation({
-    summary: 'Check whether a registration username, email, or phone is available',
+    summary:
+      'Check whether a registration username, email, or phone is available',
   })
   async registrationAvailability(
     @Query('username') username?: string,
@@ -134,10 +128,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Register new user',
   })
-  register(
-    @Body() body: RegisterDto | SupabaseAuthDto,
-    @Req() req: Request,
-  ) {
+  register(@Body() body: RegisterDto | SupabaseAuthDto, @Req() req: Request) {
     if (this.isSupabaseAuthBody(body)) {
       return this.authService.supabaseLogin(
         body.supabase_token,
@@ -146,7 +137,7 @@ export class AuthController {
       );
     }
 
-    return this.authService.register(body as RegisterDto, req.ip || '');
+    return this.authService.register(body, req.ip || '');
   }
 
   /**
@@ -164,14 +155,8 @@ export class AuthController {
   @ApiOperation({
     summary: 'Verify OTP',
   })
-  verifyOtp(
-    @Body() dto: VerifyOtpDto,
-  ) {
-    return this.authService.verifyOtp(
-      dto.phone,
-      dto.otp_code,
-      dto.purpose,
-    );
+  verifyOtp(@Body() dto: VerifyOtpDto) {
+    return this.authService.verifyOtp(dto.phone, dto.otp_code, dto.purpose);
   }
 
   /**
@@ -189,26 +174,18 @@ export class AuthController {
   @ApiOperation({
     summary: 'Resend OTP',
   })
-  async resendOtp(
-    @Body() body: ResendOtpDto,
-  ) {
-    
-    const user =
-      await (this.authService as any).prisma.users.findUnique({
-        where: {
-          phone: body.phone,
-        },
-      });
+  async resendOtp(@Body() body: ResendOtpDto) {
+    const user = await (this.authService as any).prisma.users.findUnique({
+      where: {
+        phone: body.phone,
+      },
+    });
 
     if (!user) {
       return { message: 'If the phone number exists, an OTP was sent.' };
     }
 
-    await this.authService.sendOtp(
-      user.id,
-      body.phone,
-      'phone_verification',
-    );
+    await this.authService.sendOtp(user.id, body.phone, 'phone_verification');
     return { message: 'If the phone number exists, an OTP was sent.' };
   }
 
@@ -226,10 +203,7 @@ export class AuthController {
     },
   })
   @ApiOperation({ summary: 'Request a password reset link by email' })
-  forgotPassword(
-    @Body() dto: ForgotPasswordDto,
-    @Req() req: Request,
-  ) {
+  forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
     return this.authService.sendPasswordResetOtp(dto.email, req.ip || '');
   }
 
@@ -282,9 +256,7 @@ export class AuthController {
     },
   })
   @ApiOperation({ summary: 'Reset password using OTP' })
-  resetPassword(
-    @Body() dto: ResetPasswordDto,
-  ) {
+  resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
   }
 
@@ -301,9 +273,7 @@ export class AuthController {
     },
   })
   @ApiOperation({ summary: 'Resend email verification link' })
-  resendEmailVerification(
-    @Body() body: ResendEmailVerificationDto,
-  ) {
+  resendEmailVerification(@Body() body: ResendEmailVerificationDto) {
     return this.authService.resendEmailVerification(body.email);
   }
 
@@ -337,10 +307,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Login',
   })
-  login(
-    @Body() body: LoginDto | SupabaseAuthDto,
-    @Req() req: Request,
-  ) {
+  login(@Body() body: LoginDto | SupabaseAuthDto, @Req() req: Request) {
     if (this.isSupabaseAuthBody(body)) {
       return this.authService.supabaseLogin(
         body.supabase_token,
@@ -350,7 +317,7 @@ export class AuthController {
     }
 
     return this.authService.login(
-      body as LoginDto,
+      body,
       req.ip || '',
       req.headers['user-agent'] || '',
     );
@@ -367,10 +334,7 @@ export class AuthController {
     },
   })
   @ApiOperation({ summary: 'Complete login with a verified Firebase ID token' })
-  firebaseLogin(
-    @Body() dto: FirebaseLoginDto,
-    @Req() req: Request,
-  ) {
+  firebaseLogin(@Body() dto: FirebaseLoginDto, @Req() req: Request) {
     return this.authService.firebaseLogin(
       {
         ...dto,
@@ -391,10 +355,10 @@ export class AuthController {
       ttl: 60_000,
     },
   })
-  @ApiOperation({ summary: 'Resolve a FARM phone or username to its login email' })
-  resolveLoginEmail(
-    @Body() body: ResolveLoginEmailDto,
-  ) {
+  @ApiOperation({
+    summary: 'Resolve a FARM phone or username to its login email',
+  })
+  resolveLoginEmail(@Body() body: ResolveLoginEmailDto) {
     return this.authService.resolveLoginEmail(body.identifier);
   }
 
@@ -406,10 +370,7 @@ export class AuthController {
   @Post('verify-phone')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify phone using Firebase ID token' })
-  async verifyPhone(
-    @Body() dto: VerifyPhoneDto,
-    @Req() req: Request,
-  ) {
+  async verifyPhone(@Body() dto: VerifyPhoneDto, @Req() req: Request) {
     return this.authService.verifyPhone(
       dto.firebaseIdToken,
       dto.pendingLoginId,
@@ -431,10 +392,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Login or register with a Supabase access token',
   })
-  supabaseAuth(
-    @Body() dto: SupabaseAuthDto,
-    @Req() req: Request,
-  ) {
+  supabaseAuth(@Body() dto: SupabaseAuthDto, @Req() req: Request) {
     return this.authService.supabaseLogin(
       dto.supabase_token,
       req.ip || '',
@@ -443,16 +401,19 @@ export class AuthController {
   }
 
   private isSupabaseAuthBody(body: unknown): body is SupabaseAuthDto {
-    return typeof body === 'object' && body !== null && typeof (body as SupabaseAuthDto).supabase_token === 'string' && (body as SupabaseAuthDto).supabase_token.trim().length > 0;
+    return (
+      typeof body === 'object' &&
+      body !== null &&
+      typeof (body as SupabaseAuthDto).supabase_token === 'string' &&
+      (body as SupabaseAuthDto).supabase_token.trim().length > 0
+    );
   }
 
   @Public()
   @Get('admin/portal')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Honeypot admin portal access' })
-  async honeypot(
-    @Req() req: Request,
-  ) {
+  async honeypot(@Req() req: Request) {
     return this.authService.triggerHoneypot(
       '/api/v1/auth/admin/portal',
       req.ip || '',
@@ -464,9 +425,7 @@ export class AuthController {
   @Get('admin/console')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Honeypot admin console access' })
-  async honeypotConsole(
-    @Req() req: Request,
-  ) {
+  async honeypotConsole(@Req() req: Request) {
     return this.authService.triggerHoneypot(
       '/api/v1/auth/admin/console',
       req.ip || '',
@@ -489,18 +448,11 @@ export class AuthController {
   @ApiOperation({
     summary: 'Refresh token',
   })
-  refresh(
-    @Body() dto: RefreshTokenDto,
-    @Req() req: Request,
-  ) {
-    const decoded = decodeJwtPayload(
-      dto.refresh_token,
-    );
+  refresh(@Body() dto: RefreshTokenDto, @Req() req: Request) {
+    const decoded = decodeJwtPayload(dto.refresh_token);
 
     if (!decoded?.sub) {
-      throw new UnauthorizedException(
-        'Invalid refresh token',
-      );
+      throw new UnauthorizedException('Invalid refresh token');
     }
 
     return this.authService.refresh(
@@ -523,7 +475,11 @@ export class AuthController {
     @CurrentUser() user: any,
     @Body() body: DeviceTokenDto,
   ) {
-    return this.authService.registerDeviceToken(user.id, body.token, body.platform);
+    return this.authService.registerDeviceToken(
+      user.id,
+      body.token,
+      body.platform,
+    );
   }
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -540,13 +496,8 @@ export class AuthController {
   @ApiOperation({
     summary: 'Logout',
   })
-  logout(
-    @CurrentUser() user: any,
-  ) {
-    return this.authService.logout(
-      user.id,
-      user.jti,
-    );
+  logout(@CurrentUser() user: any) {
+    return this.authService.logout(user.id, user.jti);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -555,10 +506,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Change password and revoke all other sessions' })
-  changePassword(
-    @CurrentUser() user: any,
-    @Body() dto: ChangePasswordDto,
-  ) {
+  changePassword(@CurrentUser() user: any, @Body() dto: ChangePasswordDto) {
     return this.authService.changePassword(user.id, dto);
   }
 
@@ -567,11 +515,10 @@ export class AuthController {
   @Permissions('auth:write')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('JWT')
-  @ApiOperation({ summary: 'Delete the current account and revoke all sessions' })
-  deleteAccount(
-    @CurrentUser() user: any,
-    @Body() dto: DeleteAccountDto,
-  ) {
+  @ApiOperation({
+    summary: 'Delete the current account and revoke all sessions',
+  })
+  deleteAccount(@CurrentUser() user: any, @Body() dto: DeleteAccountDto) {
     return this.authService.deleteAccount(user.id, dto);
   }
 
@@ -580,9 +527,7 @@ export class AuthController {
   @Get('sessions')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'List active sessions for the current user' })
-  getSessions(
-    @CurrentUser() user: any,
-  ) {
+  getSessions(@CurrentUser() user: any) {
     return this.authService.getSessions(user.id);
   }
 
@@ -591,14 +536,8 @@ export class AuthController {
   @Post('sessions/:id/revoke')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke a session by ID for the current user' })
-  revokeSession(
-    @CurrentUser() user: any,
-    @Param('id') sessionId: string,
-  ) {
-    return this.authService.revokeSession(
-      user.id,
-      sessionId,
-    );
+  revokeSession(@CurrentUser() user: any, @Param('id') sessionId: string) {
+    return this.authService.revokeSession(user.id, sessionId);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -606,13 +545,8 @@ export class AuthController {
   @Post('sessions/revoke-others')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke all other sessions for the current user' })
-  revokeOtherSessions(
-    @CurrentUser() user: any,
-  ) {
-    return this.authService.revokeOtherSessions(
-      user.id,
-      user.jti,
-    );
+  revokeOtherSessions(@CurrentUser() user: any) {
+    return this.authService.revokeOtherSessions(user.id, user.jti);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -620,14 +554,8 @@ export class AuthController {
   @Post('sessions/revoke-all')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke all active sessions for the current user' })
-  revokeAllSessions(
-    @CurrentUser() user: any,
-  ) {
-    return this.authService.logout(
-      user.id,
-      undefined,
-      true,
-    );
+  revokeAllSessions(@CurrentUser() user: any) {
+    return this.authService.logout(user.id, undefined, true);
   }
 
   /**
@@ -640,14 +568,8 @@ export class AuthController {
     summary: 'Set PIN',
   })
   @Permissions('auth:write')
-  setPin(
-    @CurrentUser() user: any,
-    @Body() dto: SetPinDto,
-  ) {
-    return this.authService.setPin(
-      user.id,
-      dto,
-    );
+  setPin(@CurrentUser() user: any, @Body() dto: SetPinDto) {
+    return this.authService.setPin(user.id, dto);
   }
 
   /**
@@ -660,14 +582,8 @@ export class AuthController {
     summary: 'Change PIN',
   })
   @Permissions('auth:write')
-  changePin(
-    @CurrentUser() user: any,
-    @Body() dto: ChangePinDto,
-  ) {
-    return this.authService.changePin(
-      user.id,
-      dto,
-    );
+  changePin(@CurrentUser() user: any, @Body() dto: ChangePinDto) {
+    return this.authService.changePin(user.id, dto);
   }
 
   /**
@@ -687,29 +603,18 @@ export class AuthController {
     summary: 'Reset forgotten PIN',
   })
   @Permissions('auth:write')
-  forgotPin(
-    @CurrentUser() user: any,
-    @Body() dto: ResetPinDto,
-  ) {
-    return this.authService.resetForgottenPin(
-      user.id,
-      dto,
-    );
+  forgotPin(@CurrentUser() user: any, @Body() dto: ResetPinDto) {
+    return this.authService.resetForgottenPin(user.id, dto);
   }
 }
 
 /**
  * ================= JWT DECODE =================
  */
-function decodeJwtPayload(
-  token: string,
-): any {
+function decodeJwtPayload(token: string): any {
   try {
     return JSON.parse(
-      Buffer.from(
-        token.split('.')[1],
-        'base64url',
-      ).toString('utf8'),
+      Buffer.from(token.split('.')[1], 'base64url').toString('utf8'),
     );
   } catch {
     return null;
@@ -721,10 +626,15 @@ function authThrottleKey(context: ExecutionContext): string {
   const ip = request.ip || 'unknown-ip';
   const body: Record<string, any> = request.body || {};
   const identifier = (
-    body.identifier || body.email || body.phone || body.supabase_token || ''
-  ).toString().trim().toLowerCase();
+    body.identifier ||
+    body.email ||
+    body.phone ||
+    body.supabase_token ||
+    ''
+  )
+    .toString()
+    .trim()
+    .toLowerCase();
 
-  return identifier.length > 0
-    ? `${ip}:${identifier}`
-    : `${ip}:anonymous`;
+  return identifier.length > 0 ? `${ip}:${identifier}` : `${ip}:anonymous`;
 }

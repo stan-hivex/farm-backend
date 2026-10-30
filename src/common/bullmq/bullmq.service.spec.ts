@@ -3,7 +3,11 @@ jest.mock('bullmq', () => {
   return {
     ...actual,
     Queue: jest.fn().mockImplementation((name, opts) => ({ name, opts })),
-    Worker: jest.fn().mockImplementation((name, processor, opts) => ({ name, processor, opts })),
+    Worker: jest.fn().mockImplementation((name, processor, opts) => ({
+      name,
+      processor,
+      opts,
+    })),
   };
 });
 
@@ -32,7 +36,10 @@ describe('BullmqService', () => {
     const queue = service.createQueue('webhook');
 
     expect(mockRedisService.getClient).toHaveBeenCalled();
-    expect(QueueMock).toHaveBeenCalledWith('webhook', expect.objectContaining({ connection: mockRedisClient }));
+    expect(QueueMock).toHaveBeenCalledWith(
+      'webhook',
+      expect.objectContaining({ connection: mockRedisClient }),
+    );
     expect(queue).toEqual({ name: 'webhook', opts: expect.any(Object) });
   });
 
@@ -41,14 +48,25 @@ describe('BullmqService', () => {
     const worker = service.createWorker('webhook', processor);
 
     expect(mockRedisService.getClient).toHaveBeenCalled();
-    expect(WorkerMock).toHaveBeenCalledWith('webhook', processor, expect.objectContaining({ connection: mockRedisClient }));
-    expect(worker).toEqual({ name: 'webhook', processor, opts: expect.any(Object) });
+    expect(WorkerMock).toHaveBeenCalledWith(
+      'webhook',
+      processor,
+      expect.objectContaining({ connection: mockRedisClient }),
+    );
+    expect(worker).toEqual({
+      name: 'webhook',
+      processor,
+      opts: expect.any(Object),
+    });
   });
 
   it('preserves an explicit connection option when provided', () => {
     const connection = { custom: true };
     service.createQueue('webhook', { connection } as any);
 
-    expect(QueueMock).toHaveBeenCalledWith('webhook', expect.objectContaining({ connection }));
+    expect(QueueMock).toHaveBeenCalledWith(
+      'webhook',
+      expect.objectContaining({ connection }),
+    );
   });
 });

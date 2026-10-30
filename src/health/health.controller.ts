@@ -11,5 +11,7 @@ export class HealthController {
   @Public()
   @Get()
   @ApiOperation({ summary: 'Health check' })
-  check() { return this.svc.check(); }
+  check() {
+    return this.svc.check();
+  }
 }

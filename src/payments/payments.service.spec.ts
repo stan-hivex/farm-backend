@@ -151,7 +151,9 @@ describe('PaymentsService crypto deposits', () => {
       deposit: { create: jest.fn().mockResolvedValue({}) },
     };
     const nowpayments = {
-      getAvailableCurrencies: jest.fn().mockResolvedValue(['usdc', 'usdttrc20']),
+      getAvailableCurrencies: jest
+        .fn()
+        .mockResolvedValue(['usdc', 'usdttrc20']),
       createInvoice: jest.fn().mockResolvedValue({
         invoice_id: 'inv-1',
         invoice_url: 'https://nowpayments.io/payment/?iid=inv-1',
@@ -190,7 +192,10 @@ describe('PaymentsService crypto deposits', () => {
     } as any);
 
     const invoice = nowpayments.createInvoice.mock.calls[0][0];
-    expect(invoice).toMatchObject({ priceCurrency: 'usd', payCurrency: 'usdc' });
+    expect(invoice).toMatchObject({
+      priceCurrency: 'usd',
+      payCurrency: 'usdc',
+    });
     expect(invoice.priceAmount).toBeGreaterThan(0);
     expect(prisma.transactions.create).toHaveBeenCalledWith(
       expect.objectContaining({

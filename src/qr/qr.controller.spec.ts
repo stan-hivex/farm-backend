@@ -10,6 +10,8 @@ describe('MerchantPayDto', () => {
 
     const errors = await validate(dto);
 
-    expect(errors.some((error) => error.property === 'biometric_auth')).toBe(true);
+    expect(errors.some((error) => error.property === 'biometric_auth')).toBe(
+      true,
+    );
   });
 });

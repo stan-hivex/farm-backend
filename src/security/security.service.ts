@@ -1,4 +1,9 @@
-import { Injectable, Logger, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import * as crypto from 'crypto';
 
@@ -54,9 +59,15 @@ export class SecurityService {
     };
   }
 
-  async enableBiometrics(userId: string, deviceFingerprint: string, biometricType?: string) {
+  async enableBiometrics(
+    userId: string,
+    deviceFingerprint: string,
+    biometricType?: string,
+  ) {
     if (!userId || !deviceFingerprint) {
-      throw new BadRequestException('User ID and device fingerprint are required');
+      throw new BadRequestException(
+        'User ID and device fingerprint are required',
+      );
     }
 
     const existingSettings = await this.prisma.biometric_settings.findUnique({
@@ -90,7 +101,9 @@ export class SecurityService {
       },
     });
 
-    this.logger.log(`Biometrics enabled for user=${userId}, device=${deviceId}`);
+    this.logger.log(
+      `Biometrics enabled for user=${userId}, device=${deviceId}`,
+    );
 
     return {
       success: true,
@@ -154,7 +167,8 @@ export class SecurityService {
       return {
         trusted: false,
         requiresReauth: true,
-        message: 'Device fingerprint verification failed - potential tampering detected',
+        message:
+          'Device fingerprint verification failed - potential tampering detected',
       };
     }
 

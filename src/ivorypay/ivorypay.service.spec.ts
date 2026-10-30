@@ -32,7 +32,7 @@ describe('IvorypayService', () => {
             'https://checkout.ivorypay.io/checkout/550e8400-e29b-41d4-a716-446655440000',
         },
       },
-    } as any);
+    });
 
     const result = await service.createPayment({
       amount: 2.5,
@@ -98,7 +98,7 @@ describe('IvorypayService', () => {
           checkoutUrl: 'https://checkout.ivorypay.io/checkout/reference',
         },
       },
-    } as any);
+    });
 
     await configuredService.createPayment({
       amount: 10,
@@ -125,7 +125,7 @@ describe('IvorypayService', () => {
           Polygon: [{ token: 'usdc', blockchain: 'POLYGON', isActive: true }],
         },
       },
-    } as any);
+    });
 
     await expect(service.getSupportedPaymentOptions()).resolves.toEqual([
       { token: 'USDC', network: 'POLYGON', networkName: 'Polygon' },
@@ -145,7 +145,7 @@ describe('IvorypayService', () => {
           Polygon: [{ token: 'usdc', blockchain: 'POLYGON', isActive: true }],
         },
       },
-    } as any);
+    });
     await expect(service.getSupportedPaymentTokens()).resolves.toEqual([
       'USDC',
       'USDT',
@@ -180,7 +180,7 @@ describe('IvorypayService', () => {
           { token: 'USDT', network: 'SOLANA', isSupported: false },
         ],
       },
-    } as any);
+    });
 
     await expect(payoutService.getCryptoTransferOptions()).resolves.toEqual([
       { token: 'USDC', network: 'POLYGON', networkName: 'POLYGON' },
@@ -201,7 +201,7 @@ describe('IvorypayService', () => {
         success: true,
         data: [{ token: 'USDC', network: 'POLYGON', isSupported: true }],
       },
-    } as any);
+    });
 
     await expect(service.getCryptoTransferOptions()).resolves.toEqual([
       { token: 'USDC', network: 'POLYGON', networkName: 'POLYGON' },
@@ -269,7 +269,7 @@ describe('IvorypayService', () => {
         success: true,
         data: [{ token: 'USDC', network: 'POLYGON', isSupported: true }],
       },
-    } as any);
+    });
     mockedAxios.post.mockResolvedValueOnce({
       data: {
         success: true,
@@ -279,7 +279,7 @@ describe('IvorypayService', () => {
           status: 'PENDING',
         },
       },
-    } as any);
+    });
 
     await expect(
       payoutService.createWithdrawal({
@@ -327,7 +327,7 @@ describe('IvorypayService', () => {
         success: true,
         data: { Polygon: [{ token: 'USDT', isActive: true }] },
       },
-    } as any);
+    });
 
     await hostOnlyService.getSupportedPaymentTokens();
 
@@ -410,7 +410,7 @@ describe('IvorypayService', () => {
         success: true,
         data: [{ token: 'USDC', network: 'POLYGON', isSupported: true }],
       },
-    } as any);
+    });
     mockedAxios.post.mockRejectedValueOnce({
       response: {
         status: 400,
@@ -453,7 +453,7 @@ describe('IvorypayService', () => {
         success: true,
         data: [{ token: 'USDC', network: 'POLYGON', isSupported: true }],
       },
-    } as any);
+    });
     mockedAxios.post.mockRejectedValueOnce({
       response: {
         status: 400,

@@ -73,13 +73,13 @@ export class PaymentsController {
     let deviceRisk = 0;
     const token = (req.headers['x-device-token'] as string) || '';
     if (token) {
-      const p = verifyDeviceToken(token) as any;
+      const p = verifyDeviceToken(token);
       if (p && typeof p.deviceRisk !== 'undefined')
         deviceRisk = Number(p.deviceRisk) || 0;
     } else {
       const header =
         req.headers['x-device-risk'] || req.headers['x-device-risk-score'];
-      deviceRisk = header ? Number(header as string) || 0 : 0;
+      deviceRisk = header ? Number(header) || 0 : 0;
     }
     return this.svc.initiateDeposit(u.id, dto, {
       deviceRisk,

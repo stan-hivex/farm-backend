@@ -90,7 +90,9 @@ describe('Firebase phone verification flow', () => {
       },
     };
     const firebase = {
-      verifyIdToken: jest.fn().mockResolvedValue({ phone_number: '+254711999999' }),
+      verifyIdToken: jest
+        .fn()
+        .mockResolvedValue({ phone_number: '+254711999999' }),
     };
     const service = new AuthService(
       prisma as any,
@@ -102,7 +104,12 @@ describe('Firebase phone verification flow', () => {
     );
 
     await expect(
-      service.verifyPhone('firebase-id-token', 'pending-1', '127.0.0.1', 'jest'),
+      service.verifyPhone(
+        'firebase-id-token',
+        'pending-1',
+        '127.0.0.1',
+        'jest',
+      ),
     ).rejects.toThrow('Phone verification does not match this account.');
     expect(prisma.pending_login_verifications.update).toHaveBeenCalled();
   });

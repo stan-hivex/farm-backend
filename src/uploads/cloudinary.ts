@@ -2,8 +2,7 @@ import { v2 as cloudinary } from 'cloudinary';
 
 export function configureCloudinary(): void {
   const cloudName =
-    process.env.CLOUDINARY_CLOUD_NAME?.trim() ||
-    process.env.CLOUD_NAME?.trim();
+    process.env.CLOUDINARY_CLOUD_NAME?.trim() || process.env.CLOUD_NAME?.trim();
   const apiKey =
     process.env.CLOUDINARY_API_KEY?.trim() || process.env.CLOUD_KEY?.trim();
   const apiSecret =

@@ -10,7 +10,14 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsString, IsNumber, IsPositive, IsOptional } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsString,
+  IsNumber,
+  IsPositive,
+  IsOptional,
+} from 'class-validator';
 import { MerchantsService } from './merchants.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -42,27 +49,49 @@ class PayoutDto {
 export class MerchantsController {
   constructor(private readonly svc: MerchantsService) {}
 
-  @Post('apply')           apply(@CurrentUser() u: any, @Body() dto: ApplyDto) { return this.svc.apply(u.id, dto); }
+  @Post('apply') apply(@CurrentUser() u: any, @Body() dto: ApplyDto) {
+    return this.svc.apply(u.id, dto);
+  }
 
-  @Get()                   get(@CurrentUser() u: any) { return this.svc.getMyMerchant(u.id); }
-
-  @Permissions('merchant:read')
-  @Get('dashboard')        dashboard(@CurrentUser() u: any) { return this.svc.getDashboard(u.id); }
-
-  @Permissions('merchant:read')
-  @Get('qr')               getQr(@CurrentUser() u: any) { return this.svc.getMerchantQr(u.id); }
+  @Get() get(@CurrentUser() u: any) {
+    return this.svc.getMyMerchant(u.id);
+  }
 
   @Permissions('merchant:read')
-  @Get('transactions')     transactions(@CurrentUser() u: any, @Query() q: any) { return this.svc.getTransactions(u.id, q); }
+  @Get('dashboard')
+  dashboard(@CurrentUser() u: any) {
+    return this.svc.getDashboard(u.id);
+  }
+
+  @Permissions('merchant:read')
+  @Get('qr')
+  getQr(@CurrentUser() u: any) {
+    return this.svc.getMerchantQr(u.id);
+  }
+
+  @Permissions('merchant:read')
+  @Get('transactions')
+  transactions(@CurrentUser() u: any, @Query() q: any) {
+    return this.svc.getTransactions(u.id, q);
+  }
 
   @Permissions('merchant:write')
-  @Post('payout')          payout(@CurrentUser() u: any, @Body() dto: PayoutDto) { return this.svc.requestPayout(u.id, dto); }
+  @Post('payout')
+  payout(@CurrentUser() u: any, @Body() dto: PayoutDto) {
+    return this.svc.requestPayout(u.id, dto);
+  }
 
   @Permissions('merchant:read')
-  @Get('payouts')          payouts(@CurrentUser() u: any, @Query() q: any) { return this.svc.getPayouts(u.id, q); }
+  @Get('payouts')
+  payouts(@CurrentUser() u: any, @Query() q: any) {
+    return this.svc.getPayouts(u.id, q);
+  }
 
   @Permissions('merchant:write')
-  @Post('qr/regenerate')   regenQr(@CurrentUser() u: any) { return this.svc.regenerateQr(u.id); }
+  @Post('qr/regenerate')
+  regenQr(@CurrentUser() u: any) {
+    return this.svc.regenerateQr(u.id);
+  }
 }
 
 @ApiTags('Merchants')

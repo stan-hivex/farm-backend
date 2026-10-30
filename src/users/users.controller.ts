@@ -11,17 +11,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
-import {
-  ApiTags,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
-import {
-  IsOptional,
-  IsString,
-  IsNotEmpty,
-  IsEmail,
-} from 'class-validator';
+import { IsOptional, IsString, IsNotEmpty, IsEmail } from 'class-validator';
 
 import { UsersService } from './users.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
@@ -79,9 +71,7 @@ class AddContactDto {
   version: '1',
 })
 export class UsersController {
-  constructor(
-    private readonly svc: UsersService,
-  ) {}
+  constructor(private readonly svc: UsersService) {}
 
   @Permissions('profile:read')
   @Get('me')
@@ -91,26 +81,17 @@ export class UsersController {
 
   @Permissions('profile:write')
   @Put('me')
-  updateMe(
-    @CurrentUser() u: any,
-    @Body() dto: UpdateProfileDto,
-  ) {
+  updateMe(@CurrentUser() u: any, @Body() dto: UpdateProfileDto) {
     return this.svc.updateProfile(u.id, dto);
   }
 
   @Patch('me/email')
-  changeEmail(
-    @CurrentUser() u: any,
-    @Body() dto: ChangeEmailDto,
-  ) {
+  changeEmail(@CurrentUser() u: any, @Body() dto: ChangeEmailDto) {
     return this.svc.changeEmail(u.id, dto);
   }
 
   @Patch('me/phone')
-  changePhone(
-    @CurrentUser() u: any,
-    @Body() dto: ChangePhoneDto,
-  ) {
+  changePhone(@CurrentUser() u: any, @Body() dto: ChangePhoneDto) {
     return this.svc.changePhone(u.id, dto);
   }
 
@@ -125,38 +106,22 @@ export class UsersController {
   }
 
   @Post('contacts')
-  addContact(
-    @CurrentUser() u: any,
-    @Body() dto: AddContactDto,
-  ) {
-    return this.svc.addContact(
-      u.id,
-      dto.identifier,
-      dto.nickname,
-    );
+  addContact(@CurrentUser() u: any, @Body() dto: AddContactDto) {
+    return this.svc.addContact(u.id, dto.identifier, dto.nickname);
   }
 
   @Delete('contacts/:id')
-  removeContact(
-    @CurrentUser() u: any,
-    @Param('id') id: string,
-  ) {
+  removeContact(@CurrentUser() u: any, @Param('id') id: string) {
     return this.svc.removeContact(u.id, id);
   }
 
   @Get('notifications')
-  notifications(
-    @CurrentUser() u: any,
-    @Query() q: any,
-  ) {
+  notifications(@CurrentUser() u: any, @Query() q: any) {
     return this.svc.getNotifications(u.id, q);
   }
 
   @Put('notifications/:id/read')
-  markRead(
-    @CurrentUser() u: any,
-    @Param('id') id: string,
-  ) {
+  markRead(@CurrentUser() u: any, @Param('id') id: string) {
     return this.svc.markNotificationRead(u.id, id);
   }
 
@@ -166,10 +131,7 @@ export class UsersController {
   }
 
   @Delete('notifications/:id')
-  deleteNotification(
-    @CurrentUser() u: any,
-    @Param('id') id: string,
-  ) {
+  deleteNotification(@CurrentUser() u: any, @Param('id') id: string) {
     return this.svc.deleteNotification(u.id, id);
   }
 

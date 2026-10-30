@@ -6,6 +6,8 @@ import { Injectable, Logger } from '@nestjs/common';
 export class ExpiryTasksService {
   private readonly logger = new Logger(ExpiryTasksService.name);
   constructor() {
-    this.logger.log('ExpiryTasksService initialized (noop - using Bull repeatable job)');
+    this.logger.log(
+      'ExpiryTasksService initialized (noop - using Bull repeatable job)',
+    );
   }
 }

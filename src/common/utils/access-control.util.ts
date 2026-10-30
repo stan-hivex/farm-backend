@@ -10,6 +10,8 @@ export function assertResourceAccess(
   }
 
   if (!ownerId || ownerId !== currentUserId) {
-    throw new ForbiddenException(`You do not have permission to access this ${resourceName}`);
+    throw new ForbiddenException(
+      `You do not have permission to access this ${resourceName}`,
+    );
   }
 }
