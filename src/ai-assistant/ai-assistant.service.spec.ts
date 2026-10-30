@@ -79,7 +79,7 @@ function mk(
   env = ON,
   provider?: any,
   wallets?: any,
-  travel: any = { search: jest.fn(), offer: jest.fn() },
+  travel: any = { search: jest.fn(), offer: jest.fn(), enabled: () => true },
   agent: any = {
     payIntent: jest.fn(),
     publicIntent: jest.fn(),
@@ -465,7 +465,7 @@ describe('Mkulima spending categories & activity (gap fix)', () => {
       findMany: jest.fn().mockResolvedValue([
         {
           ai_action_id: 'a2',
-          provider: 'duffel',
+          provider: 'pkfare',
           total_farm: 950,
           booking_reference: 'ABC123',
           status: 'failed_refunded',
@@ -479,7 +479,7 @@ describe('Mkulima spending categories & activity (gap fix)', () => {
       'Cancelled',
     ]);
     expect(a[1]).toMatchObject({
-      provider: 'duffel',
+      provider: 'pkfare',
       amount: 950,
       booking_ref: 'ABC123',
       confirmation: 'TX1',
@@ -487,5 +487,275 @@ describe('Mkulima spending categories & activity (gap fix)', () => {
       payment_method: 'FARM wallet',
       category: 'Flights',
     });
+  });
+});
+
+describe('Mkulima hotel booking + flights availability', () => {
+  const PERM_H = {
+    ...PERM,
+    per_tx_cap: 20000,
+    daily_cap: 50000,
+    allowed_actions: ['send_farm', 'book_hotel'],
+  };
+  const hotels = (over: any = {}) => ({
+    enabled: () => true,
+    status: () => ({ enabled: true, provider: 'liteapi', sandbox: true }),
+    search: jest.fn().mockResolvedValue([
+      {
+        id: 'off-2',
+        hotel_name: 'B',
+        room_name: 'R',
+        refundable: true,
+        price_farm: 9000,
+        bookable: true,
+      },
+      {
+        id: 'off-1',
+        hotel_name: 'A',
+        room_name: 'R',
+        refundable: false,
+        price_farm: 7000,
+        bookable: true,
+      },
+      {
+        id: 'off-x',
+        hotel_name: 'X',
+        room_name: 'R',
+        price_farm: null,
+        bookable: false,
+      },
+    ]),
+    prebook: jest.fn().mockResolvedValue({
+      prebook_id: 'pb_123',
+      hotel_id: 'h1',
+      checkin: '2026-12-10',
+      checkout: '2026-12-12',
+      price_farm: 7000,
+      bookable: true,
+      refundable: false,
+      live_mode: false,
+    }),
+    info: jest.fn().mockResolvedValue({ name: 'Nairobi Test Hotel' }),
+    book: jest
+      .fn()
+      .mockResolvedValue({ status: 'confirmed', booking_reference: 'CONF1' }),
+    ...over,
+  });
+  function mkH(prisma: any, h: any, travel: any = { enabled: () => true }) {
+    return new AiAssistantService(
+      prisma,
+      new AiProvider(cfg(ON)),
+      new AiToolsService(prisma),
+      { sendFunds: jest.fn() } as any,
+      cfg(ON),
+      travel,
+      {
+        payIntent: jest.fn(),
+        publicIntent: jest.fn(),
+        myRequests: jest.fn(),
+      } as any,
+      h,
+    );
+  }
+
+  it('search returns only priced offers, cheapest first, with real prices', async () => {
+    const s = mkH(mkPrisma(PERM_H), hotels());
+    const r: any = await s.searchHotels({
+      city_name: 'Nairobi',
+      country_code: 'KE',
+      checkin: '2026-12-10',
+      checkout: '2026-12-12',
+      adults: 1,
+    });
+    expect(r.offers.map((o: any) => o.offer_id)).toEqual(['off-1', 'off-2']);
+    expect(r.offers[0].price_farm).toBe(7000);
+  });
+  it('search says not available when hotels are off, and handles empty results', async () => {
+    const off = mkH(mkPrisma(PERM_H), hotels({ enabled: () => false }));
+    expect(await off.searchHotels({})).toEqual({
+      available: false,
+      message: 'Hotels are not available yet.',
+    });
+    const empty = mkH(
+      mkPrisma(PERM_H),
+      hotels({ search: jest.fn().mockResolvedValue([]) }),
+    );
+    expect(((await empty.searchHotels({})) as any).offers).toEqual([]);
+  });
+  it('proposal prebooks, checks caps/permission and creates a pending book_hotel', async () => {
+    const prisma = mkPrisma(PERM_H);
+    const req: any = await mkH(prisma, hotels()).proposeHotel(
+      U,
+      { offer_id: 'off-1' },
+      'c1',
+    );
+    expect(req.action).toBe('book_hotel');
+    expect(req.amount).toBe(7000);
+    expect(req.payload.prebook_id).toBe('pb_123');
+    await expect(
+      mkH(
+        mkPrisma({ ...PERM_H, allowed_actions: ['send_farm'] }),
+        hotels(),
+      ).proposeHotel(U, { offer_id: 'off-1' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      mkH(
+        mkPrisma({ ...PERM_H, spend_categories: ['Flights'] }),
+        hotels(),
+      ).proposeHotel(U, { offer_id: 'off-1' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+  it('confirm books with PIN, profile guest and idempotency key; requires a PIN', async () => {
+    const prisma = mkPrisma(PERM_H);
+    prisma.users = {
+      findUnique: jest.fn().mockResolvedValue({
+        first_name: 'Jane',
+        last_name: 'Doe',
+        email: 'j@example.com',
+        phone: '+254700000000',
+      }),
+    };
+    prisma.store.req = {
+      id: 'req-1',
+      user_id: U,
+      status: 'pending',
+      action: 'book_hotel',
+      amount: 7000,
+      payload: { prebook_id: 'pb_123' },
+      created_at: new Date(),
+      expires_at: new Date(Date.now() + 60000),
+    };
+    const h = hotels();
+    const s = mkH(prisma, h);
+    await expect(s.confirmAction(U, 'req-1', '', 'ip')).rejects.toThrow('PIN');
+    const r: any = await s.confirmAction(U, 'req-1', '1234', 'ip');
+    expect(r.status).toBe('executed');
+    expect(r.transaction_ref).toBe('CONF1');
+    expect(h.book).toHaveBeenCalledWith(
+      U,
+      expect.objectContaining({
+        prebook_id: 'pb_123',
+        expected_total_farm: 7000,
+        idempotency_key: 'ai-req-1',
+        pin: '1234',
+        ai_action_id: 'req-1',
+        guest: expect.objectContaining({
+          first_name: 'Jane',
+          email: 'j@example.com',
+        }),
+      }),
+      'ip',
+    );
+  });
+  it('cleans profile names for the provider (accents, digits)', async () => {
+    const prisma = mkPrisma(PERM_H);
+    prisma.users = {
+      findUnique: jest.fn().mockResolvedValue({
+        first_name: 'Wanjirũ2',
+        last_name: "O'Neil",
+        email: 'j@example.com',
+        phone: '+254700000000',
+      }),
+    };
+    prisma.store.req = {
+      id: 'req-1',
+      user_id: U,
+      status: 'pending',
+      action: 'book_hotel',
+      amount: 7000,
+      payload: { prebook_id: 'pb_123' },
+      created_at: new Date(),
+      expires_at: new Date(Date.now() + 60000),
+    };
+    const h = hotels();
+    await mkH(prisma, h).confirmAction(U, 'req-1', '1234', 'ip');
+    expect(h.book.mock.calls[0][1].guest).toEqual(
+      expect.objectContaining({ first_name: 'Wanjiru', last_name: "O'Neil" }),
+    );
+  });
+  it('a refused booking (refunded) marks the action failed, not pending', async () => {
+    const prisma = mkPrisma(PERM_H);
+    prisma.users = {
+      findUnique: jest.fn().mockResolvedValue({
+        first_name: 'J',
+        last_name: 'D',
+        email: 'j@example.com',
+        phone: '+254700000000',
+      }),
+    };
+    prisma.store.req = {
+      id: 'req-1',
+      user_id: U,
+      status: 'pending',
+      action: 'book_hotel',
+      amount: 7000,
+      payload: { prebook_id: 'pb_123' },
+      created_at: new Date(),
+      expires_at: new Date(Date.now() + 60000),
+    };
+    const s = mkH(
+      prisma,
+      hotels({
+        book: jest.fn().mockResolvedValue({
+          status: 'failed_refunded',
+          failure_reason: 'sold out',
+        }),
+      }),
+    );
+    const r: any = await s.confirmAction(U, 'req-1', '1234', 'ip');
+    expect(r.status).toBe('failed');
+    expect(prisma.ai_action_requests.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'failed' }),
+      }),
+    );
+  });
+  it('search_flights tool says flights are not available when no provider is configured', async () => {
+    const prisma = mkPrisma(PERM_H);
+    const provider: any = {
+      isConfigured: () => true,
+      complete: jest
+        .fn()
+        .mockResolvedValueOnce({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 't1',
+              type: 'function',
+              function: {
+                name: 'search_flights',
+                arguments:
+                  '{"origin":"NBO","destination":"MBA","departure_date":"2026-12-10","adults":1}',
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          role: 'assistant',
+          content: 'Flights are not available yet.',
+        }),
+    };
+    const travel = { enabled: () => false, search: jest.fn() };
+    const s = new AiAssistantService(
+      prisma,
+      provider,
+      new AiToolsService(prisma),
+      {} as any,
+      cfg(ON),
+      travel as any,
+      {} as any,
+      hotels(),
+    );
+    const r = await s.chat(U, 'flight to Mombasa');
+    expect(travel.search).not.toHaveBeenCalled();
+    const toolMsg = provider.complete.mock.calls[1][0].find(
+      (m: any) => m.role === 'tool',
+    );
+    expect(JSON.parse(toolMsg.content)).toEqual({
+      available: false,
+      message: 'Flights are not available yet.',
+    });
+    expect(r.message.content).toContain('not available');
   });
 });

@@ -9,11 +9,17 @@ import { LiteApiProvider } from './liteapi.provider';
 import { HotelsService } from './hotels.service';
 import { FLIGHT_PROVIDER, HOTEL_PROVIDER } from './travel-provider';
 
-/** TRAVEL_FLIGHT_PROVIDER=duffel (default) | pkfare */
+/**
+ * TRAVEL_FLIGHT_PROVIDER (or FLIGHT_PROVIDER) = pkfare (default) | duffel (optional legacy adapter).
+ * Without credentials the provider reports isConfigured() = false and flights stay off.
+ */
 export function selectFlightProvider(env: NodeJS.ProcessEnv) {
-  return (env.TRAVEL_FLIGHT_PROVIDER ?? 'duffel').toLowerCase() === 'pkfare'
-    ? new PkfareProvider(env)
-    : new DuffelProvider(env);
+  const name = (
+    env.TRAVEL_FLIGHT_PROVIDER ??
+    env.FLIGHT_PROVIDER ??
+    'pkfare'
+  ).toLowerCase();
+  return name === 'duffel' ? new DuffelProvider(env) : new PkfareProvider(env);
 }
 import { AdminTravelController, TravelController } from './travel.controller';
 import { TravelService } from './travel.service';
@@ -35,6 +41,6 @@ import { TravelService } from './travel.service';
     TravelService,
     HotelsService,
   ],
-  exports: [TravelService],
+  exports: [TravelService, HotelsService],
 })
 export class TravelModule {}

@@ -55,7 +55,7 @@ Generated from a scan of `process.env` / ConfigService usage in `src/`. **Never 
 | `FIREBASE_PROJECT_ID` | notifications | optional | — |  |
 | `FIREBASE_SERVICE_ACCOUNT_PATH` | notifications | optional | — |  |
 | `FIREBASE_STORAGE_BUCKET` | receipts | optional | — |  |
-| `FLIGHT_PROVIDER` | travel | optional | 'duffel' |  |
+| `FLIGHT_PROVIDER` | travel | optional | pkfare |  |
 | `FRAUD_MAX_WEBHOOK_AMOUNT` | webhook | optional | 5000000 |  |
 | `FRONTEND_URL` | main.ts | optional | — |  |
 | `HOTEL_PROVIDER` | travel | optional | — |  |
@@ -112,7 +112,7 @@ Generated from a scan of `process.env` / ConfigService usage in `src/`. **Never 
 | `STK_PUSH_SHORTCODE` | stk | optional | '' |  |
 | `STK_PUSH_TRANSACTION_TYPE` | stk | optional | 'CustomerPayBillOnline', |  |
 | `STUCK_DEPOSIT_LOOKBACK_HOURS` | webhook | optional | — |  |
-| `TRAVEL_FLIGHT_PROVIDER` | travel | optional | 'duffel' |  |
+| `TRAVEL_FLIGHT_PROVIDER` | travel | optional | pkfare |  |
 | `TURNSTILE_SECRET_KEY` | common, config | **prod** | — (secret) | secret — store in Render env only |
 | `TWILIO_ACCOUNT_SID` | notifications | optional | — |  |
 | `TWILIO_AUTH_TOKEN` | notifications | optional | — (secret) | secret — store in Render env only |
@@ -130,6 +130,7 @@ Generated from a scan of `process.env` / ConfigService usage in `src/`. **Never 
 | `X402_MAX_TIMEOUT_SECONDS` | x402 | optional | 120 |  |
 
 ## Feature flags (all default off)
+- `TRAVEL_FLIGHT_PROVIDER` / `FLIGHT_PROVIDER`: `pkfare` (default) or `duffel` (optional legacy adapter). No TBO adapter exists yet.
 - `AI_ASSISTANT_ENABLED` + `AI_API_KEY` (xAI; `AI_BASE_URL` default `https://api.x.ai/v1`, `AI_MODEL` default `grok-4.3`)
 - `AGENT_PAYMENTS_ENABLED`, `X402_ENABLED`, `TRAVEL_ENABLED`, `HOTELS_ENABLED`
 - `IVORYPAY_RETIRED=true` disables IvoryPay paths

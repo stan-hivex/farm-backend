@@ -110,6 +110,49 @@ export class AiToolsService {
       {
         type: 'function',
         function: {
+          name: 'search_hotels',
+          description:
+            'Search real hotel room offers (LiteAPI, prices in FARM). Use city_name plus 2-letter country_code (e.g. Nairobi, KE). Dates are YYYY-MM-DD.',
+          parameters: {
+            type: 'object',
+            properties: {
+              city_name: { type: 'string' },
+              country_code: {
+                type: 'string',
+                description: 'ISO 2-letter, e.g. KE',
+              },
+              checkin: { type: 'string', description: 'YYYY-MM-DD' },
+              checkout: { type: 'string', description: 'YYYY-MM-DD' },
+              adults: { type: 'integer', minimum: 1, maximum: 6 },
+            },
+            required: [
+              'city_name',
+              'country_code',
+              'checkin',
+              'checkout',
+              'adults',
+            ],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'propose_hotel_booking',
+          description:
+            'Propose booking a hotel offer from search_hotels (locks the live price). Only creates a pending request; the user confirms it in the chat with their PIN. Never claim it is booked.',
+          parameters: {
+            type: 'object',
+            properties: { offer_id: { type: 'string' } },
+            required: ['offer_id'],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'propose_intent_payment',
           description:
             'Propose paying a business payment request (payment_intent_id shared by the business). Only creates a pending request; the user confirms with their PIN. The amount is set by the business.',

@@ -8,3 +8,5 @@
 - Auth: change password, email verification (Resend), hashed OTPs. Kenya default country.
 - IvoryPay retired behind `IVORYPAY_RETIRED`.
 - E2E fixes: Prisma exception filter (bad ids → 400/404 not 500); user-specific GETs no longer cached; prose fields no longer rejected by safe-input pipe; failed payouts keep amount/method; Paystack no longer mock-verifies without explicit local flag (prevented crediting unpaid deposits).
+- Mkulima: `search_hotels` + `propose_hotel_booking` tools (LiteAPI). New AI action `book_hotel` (category Hotels); the user confirms in chat with their PIN, guest details come from the profile, FARM is held and the sandbox/live booking is created via the normal hotel flow. Users must allow `book_hotel` in Assistant settings.
+- Flights: default provider is now PKFARE (`TRAVEL_FLIGHT_PROVIDER`/`FLIGHT_PROVIDER`, default `pkfare`); Duffel is an optional legacy adapter. With no credentials flights report not configured and Mkulima replies that flights are not available yet.

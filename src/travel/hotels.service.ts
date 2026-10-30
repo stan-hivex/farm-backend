@@ -40,6 +40,8 @@ export interface HotelBookDto {
   expected_total_farm: number;
   idempotency_key: string;
   pin: string;
+  /** Set when the booking comes from a Mkulima proposal (links it in AI activity). */
+  ai_action_id?: string;
   guest: {
     first_name: string;
     last_name: string;
@@ -92,6 +94,12 @@ export class HotelsService {
       service_fee_farm: p?.fee ?? null,
       bookable: !!p,
     };
+  }
+
+  /** Display-only hotel details (name/address); null when the provider can't say. */
+  async info(hotelId: string) {
+    if (!this.hotels.hotelInfo) return null;
+    return this.hotels.hotelInfo(hotelId);
   }
 
   normalize(q: Partial<HotelSearch>): HotelSearch {
@@ -238,6 +246,7 @@ export class HotelsService {
       },
       booking: {
         kind: 'hotel',
+        ...(dto.ai_action_id ? { ai_action_id: dto.ai_action_id } : {}),
         provider: this.hotels.name,
         provider_offer_id: pb.prebook_id,
         offer_currency: pb.total_currency,

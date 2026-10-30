@@ -82,11 +82,18 @@ const decodeParam = (url: string) =>
   );
 
 describe('provider selection', () => {
-  it('defaults to duffel, pkfare when selected', () => {
-    expect(selectFlightProvider({})).toBeInstanceOf(DuffelProvider);
+  it('defaults to pkfare; duffel only when explicitly selected', () => {
+    expect(selectFlightProvider({})).toBeInstanceOf(PkfareProvider);
+    expect(selectFlightProvider({ FLIGHT_PROVIDER: 'pkfare' })).toBeInstanceOf(
+      PkfareProvider,
+    );
     expect(
-      selectFlightProvider({ TRAVEL_FLIGHT_PROVIDER: 'pkfare' }),
-    ).toBeInstanceOf(PkfareProvider);
+      selectFlightProvider({ TRAVEL_FLIGHT_PROVIDER: 'duffel' }),
+    ).toBeInstanceOf(DuffelProvider);
+  });
+  it('reports not configured cleanly without credentials', () => {
+    const p = selectFlightProvider({});
+    expect(p.isConfigured()).toBe(false);
   });
 });
 
@@ -471,7 +478,7 @@ function mkHotels(prisma: any, h: any = {}) {
     prisma,
     auth as any,
     rates as any,
-    { name: 'duffel', isConfigured: () => false, isSandbox: () => true } as any,
+    { name: 'pkfare', isConfigured: () => false, isSandbox: () => true } as any,
   );
   return {
     svc: new HotelsService(prisma, auth as any, travel, prov),

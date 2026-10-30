@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
@@ -14,8 +15,14 @@ import { AiProvider, ChatMessage } from './ai-provider';
 import { AiToolsService } from './ai-tools.service';
 import { TravelService } from '../travel/travel.service';
 import { AgentPaymentsService } from '../agent-payments/agent-payments.service';
+import { HotelsService } from '../travel/hotels.service';
 
-export const AI_ACTIONS = ['send_farm', 'book_flight', 'pay_intent'] as const;
+export const AI_ACTIONS = [
+  'send_farm',
+  'book_flight',
+  'book_hotel',
+  'pay_intent',
+] as const;
 export const SPEND_CATEGORIES = [
   'Hotels',
   'Flights',
@@ -29,6 +36,7 @@ export const SPEND_CATEGORIES = [
 /** Category each AI action spends in. Sending FARM to a person is a transfer, governed by allowed_actions only. */
 const ACTION_CATEGORY: Record<string, string | undefined> = {
   book_flight: 'Flights',
+  book_hotel: 'Hotels',
   pay_intent: 'Services',
 };
 const ACTIVITY_STATUS: Record<string, string> = {
@@ -55,6 +63,7 @@ const HISTORY = 20;
 const SYSTEM_PROMPT = `You are Mkulima, the assistant inside the FARM app (Kenya). FARM is the in-app currency, 1 FARM = 1 KSh.
 Answer only from tool results; never invent balances, transactions, investments, invoices or projects. If data is missing say so.
 You cannot approve businesses or projects, change limits, or move money yourself. For payments use propose_payment (or propose_intent_payment for a business payment request id): it only creates a pending request the user must confirm in the app with their PIN. Never say money was sent.
+For hotels use search_hotels then propose_hotel_booking (the user confirms in chat with their PIN; guest details come from their profile). If a tool says flights or hotels are not available yet, tell the user plainly that the service is not available yet.
 Give general information, not personalised financial advice. Be brief and clear.`;
 
 const startOfDay = () => {
@@ -79,6 +88,7 @@ export class AiAssistantService {
     private readonly config: ConfigService,
     private readonly travel: TravelService,
     private readonly agentPayments: AgentPaymentsService,
+    @Optional() private readonly hotels?: HotelsService,
   ) {}
 
   status() {
@@ -252,6 +262,26 @@ export class AiAssistantService {
                 expires_at: r.expires_at,
               })),
               note: 'The user approves these in Payments > Agent requests with their PIN.',
+            };
+          } else if (call.function.name === 'search_hotels') {
+            result = await this.searchHotels(args);
+          } else if (call.function.name === 'propose_hotel_booking') {
+            const req = await this.proposeHotel(userId, args, conv.id);
+            proposed.push(req);
+            result = {
+              status: 'pending_user_confirmation',
+              request_id: req.id,
+              price_farm: Number(req.amount),
+              hotel: req.recipient_identifier,
+              note: 'The user confirms this booking in the chat with their PIN. Guest details come from their profile.',
+            };
+          } else if (
+            call.function.name === 'search_flights' &&
+            !this.travel.enabled()
+          ) {
+            result = {
+              available: false,
+              message: 'Flights are not available yet.',
             };
           } else if (call.function.name === 'search_flights') {
             const offers = await this.travel.search(args as any);
@@ -437,7 +467,7 @@ export class AiAssistantService {
       );
     if (!p.allowed_actions.includes(action))
       throw new ForbiddenException(
-        `${({ book_flight: 'Booking flights', pay_intent: 'Paying businesses' } as Record<string, string>)[action] ?? 'Sending FARM'} is not an allowed AI action`,
+        `${({ book_flight: 'Booking flights', book_hotel: 'Booking hotels', pay_intent: 'Paying businesses' } as Record<string, string>)[action] ?? 'Sending FARM'} is not an allowed AI action`,
       );
     const cat = ACTION_CATEGORY[action];
     if (cat && !(p.spend_categories ?? []).includes(cat))
@@ -530,6 +560,111 @@ export class AiAssistantService {
       recipient: route,
     });
     return req;
+  }
+
+  async searchHotels(args: Record<string, unknown>) {
+    if (!this.hotels?.enabled())
+      return { available: false, message: 'Hotels are not available yet.' };
+    const offers = await this.hotels.search({
+      city_name: argStr(args.city_name),
+      country_code: argStr(args.country_code),
+      checkin: argStr(args.checkin),
+      checkout: argStr(args.checkout),
+      adults: Number(args.adults ?? 1),
+    });
+    const priced = offers
+      .filter((o) => o.bookable && o.price_farm != null)
+      .sort((a, b) => a.price_farm! - b.price_farm!);
+    if (!priced.length)
+      return { offers: [], message: 'No rooms found for those dates.' };
+    return {
+      offers: priced.slice(0, 5).map((o) => ({
+        offer_id: o.id,
+        hotel: o.hotel_name,
+        stars: o.stars ?? null,
+        room: o.room_name,
+        board: o.board ?? null,
+        refundable: o.refundable,
+        price_farm: o.price_farm,
+      })),
+      sandbox: this.hotels.status().sandbox,
+    };
+  }
+
+  async proposeHotel(
+    userId: string,
+    args: Record<string, unknown>,
+    conversationId?: string,
+  ) {
+    if (!this.hotels?.enabled())
+      throw new BadRequestException('Hotels are not available yet');
+    const pb = await this.hotels.prebook(argStr(args.offer_id));
+    if (!pb.bookable || pb.price_farm == null)
+      throw new BadRequestException(
+        'This room cannot be priced in FARM right now',
+      );
+    await this.checkCaps(userId, pb.price_farm, undefined, 'book_hotel');
+    const info = await this.hotels.info(pb.hotel_id).catch(() => null);
+    const name = info?.name ?? 'Hotel';
+    const req = await this.prisma.ai_action_requests.create({
+      data: {
+        user_id: userId,
+        conversation_id: conversationId ?? null,
+        action: 'book_hotel',
+        recipient_identifier: name.slice(0, 120),
+        amount: pb.price_farm,
+        description: `${name} ${pb.checkin} to ${pb.checkout}`.slice(0, 140),
+        payload: {
+          prebook_id: pb.prebook_id,
+          hotel_id: pb.hotel_id,
+          checkin: pb.checkin,
+          checkout: pb.checkout,
+          room_name: pb.room_name ?? null,
+          refundable: pb.refundable,
+          sandbox: !pb.live_mode,
+        },
+        expires_at: new Date(Date.now() + ACTION_TTL_MS),
+      },
+    });
+    await this.audit(userId, 'action_proposed', {
+      request_id: req.id,
+      action: 'book_hotel',
+      amount: pb.price_farm,
+      recipient: name,
+    });
+    return req;
+  }
+
+  private async guestFromProfile(userId: string) {
+    const u = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { first_name: true, last_name: true, email: true, phone: true },
+    });
+    if (!u?.email)
+      throw new BadRequestException(
+        'Add an email address to your profile to book hotels',
+      );
+    // Hotel providers accept plain Latin names only: drop accents and other characters.
+    const clean = (v: string) =>
+      String(v ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^A-Za-z' -]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 40);
+    const first = clean(u.first_name);
+    const last = clean(u.last_name);
+    if (!first || !last)
+      throw new BadRequestException(
+        'Your profile name cannot be used for a hotel booking. Update your first and last name, or book from Travel.',
+      );
+    return {
+      first_name: first,
+      last_name: last,
+      email: u.email,
+      phone: u.phone,
+    };
   }
 
   async proposeIntent(
@@ -629,7 +764,45 @@ export class AiAssistantService {
       throw new BadRequestException('Request already being processed');
     try {
       let ref: string | null;
-      if (req.action === 'pay_intent') {
+      let booking: unknown;
+      if (req.action === 'book_hotel') {
+        if (!this.hotels)
+          throw new BadRequestException('Hotels are not available yet');
+        const pl = (req.payload ?? {}) as { prebook_id?: string };
+        // HotelsService verifies the PIN, re-prices, holds FARM and books.
+        const b = (await this.hotels.book(
+          userId,
+          {
+            prebook_id: String(pl.prebook_id ?? ''),
+            expected_total_farm: Number(req.amount),
+            idempotency_key: `ai-${id}`,
+            pin,
+            ai_action_id: id,
+            guest: await this.guestFromProfile(userId),
+          },
+          ip,
+        )) as {
+          status?: string;
+          booking_reference?: string | null;
+          failure_reason?: string | null;
+        };
+        booking = b;
+        if (b.status === 'failed_refunded') {
+          // Terminal: the provider refused and FARM was returned. Don't reopen.
+          const reason = (b.failure_reason ?? 'provider error').slice(0, 200);
+          await this.prisma.ai_action_requests.update({
+            where: { id },
+            data: {
+              status: 'failed',
+              decided_at: new Date(),
+              failure_reason: reason,
+            },
+          });
+          await this.audit(userId, 'action_failed', { request_id: id, reason });
+          return { id, status: 'failed', failure_reason: reason, booking: b };
+        }
+        ref = b.booking_reference ?? null;
+      } else if (req.action === 'pay_intent') {
         // Pays the business intent; amount comes from the intent, never from the model.
         const intentId = String(
           (req.payload as { payment_intent_id?: string } | null)
@@ -665,6 +838,7 @@ export class AiAssistantService {
           status: 'executed',
           decided_at: new Date(),
           transaction_ref: ref,
+          failure_reason: null,
         },
       });
       await this.audit(userId, 'action_executed', {
@@ -673,7 +847,12 @@ export class AiAssistantService {
         recipient: req.recipient_identifier,
         transaction_ref: ref,
       });
-      return { id, status: 'executed', transaction_ref: ref };
+      return {
+        id,
+        status: 'executed',
+        transaction_ref: ref,
+        ...(booking ? { booking } : {}),
+      };
     } catch (e) {
       const reason = (e as Error).message?.slice(0, 200) ?? 'failed';
       // Wrong PIN etc.: return to pending so the user can retry until expiry.
@@ -712,6 +891,7 @@ export class AiAssistantService {
     const label: Record<string, string> = {
       send_farm: 'Send FARM',
       book_flight: 'Book flight',
+      book_hotel: 'Book hotel',
       pay_intent: 'Pay business',
     };
     return reqs.map((r) => {
