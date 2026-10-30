@@ -47,6 +47,7 @@ import { DiditModule } from './didit/didit.module';
 import { BusinessModule } from './business/business.module';
 import { BusinessOpsModule } from './business-ops/business-ops.module';
 import { BusinessApiModule } from './business-api/business-api.module';
+import { AiAssistantModule } from './ai-assistant/ai-assistant.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 @Module({
@@ -123,6 +124,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     BusinessModule,
     BusinessOpsModule,
     BusinessApiModule,
+    AiAssistantModule,
     SettingsModule,
     StkPushModule,
     TransactionsModule,
