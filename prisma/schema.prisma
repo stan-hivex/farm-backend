@@ -247,6 +247,10 @@ model investment_projects {
   reviewed_by        String?              @db.Uuid
   /// Funds released to the business so far (milestone by milestone)
   released_amount    Decimal              @default(0) @db.Decimal(30, 8)
+  consolidation_fee    Decimal            @default(0) @db.Decimal(30, 8)
+  consolidation_fee_at DateTime?          @db.Timestamptz(6)
+  consolidation_refunded Decimal          @default(0) @db.Decimal(30, 8)
+  consolidation_released Decimal          @default(0) @db.Decimal(30, 8)
   milestones         project_milestones[]
   token              project_tokens?
   business           businesses?          @relation("business_projects", fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -308,6 +312,7 @@ model ledger_entries {
   balance_before Decimal?      @db.Decimal(30, 8)
   balance_after  Decimal?      @db.Decimal(30, 8)
   description    String?
+  category       String?       @db.VarChar(40)
   created_at     DateTime?     @default(now()) @db.Timestamp(6)
   transactions   transactions? @relation(fields: [transaction_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   wallets        wallets?      @relation(fields: [wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)

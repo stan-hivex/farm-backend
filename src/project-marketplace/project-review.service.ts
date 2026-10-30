@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Optional,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,12 +10,30 @@ import { generateTxReference } from '../common/utils/reference.util';
 import { paginate, paginationParams } from '../common/utils/pagination.util';
 import { ADMIN_TRANSITIONS, RELEASABLE } from './project-rules';
 import { presentProject } from './marketplace.service';
+import { FeesService } from '../fees/fees.service';
+import {
+  chargeConsolidationInTx,
+  heldFunds,
+  payFromReserveInTx,
+  releaseReserveToFarmInTx,
+  reserveLeft,
+} from './consolidation';
 
 /** Admin-only project review. Nothing here runs automatically. */
 @Injectable()
 export class ProjectReviewService {
   private readonly logger = new Logger(ProjectReviewService.name);
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly fees?: FeesService,
+  ) {}
+
+  /** Round close: take the consolidation fund fee once (no-op if already taken). */
+  private closeRound(projectId: string, by: string) {
+    return this.prisma.$transaction((tx) =>
+      chargeConsolidationInTx(tx, this.fees, projectId, by),
+    );
+  }
 
   async list(q: { status?: string; page?: any; limit?: any }) {
     const { skip, take, page, limit } = paginationParams(q.page, q.limit);
@@ -126,81 +145,271 @@ export class ProjectReviewService {
         snapshot: JSON.parse(JSON.stringify(presentProject(p))),
       },
     });
+    let consolidation_fee: number | null = null;
+    if (action === 'close')
+      consolidation_fee = await this.closeRound(id, adminId);
     let refunds: { refunded: number; amount: number; share: number } | null =
       null;
     if (action === 'cancel') refunds = await this.refundAll(adminId, id);
-    return { data: { id, status: rule.to, refunds } };
+    return { data: { id, status: rule.to, refunds, consolidation_fee } };
   }
 
   /**
-   * Cancelled project: return the unreleased share of each investment.
-   * Nothing released yet -> full refund; after some milestones -> pro-rata.
+   * Cancelled project: each investor gets back their pro-rata share of
+   * (a) the funds still held (not yet released to the business) and
+   * (b) what is left of THIS project's consolidation reserve (refundable).
+   * The 3% investment fee is never refunded.
    */
   private async refundAll(adminId: string, projectId: string) {
     const p = await this.prisma.investment_projects.findUnique({
       where: { id: projectId },
-      select: { raised_amount: true, released_amount: true },
+      select: {
+        raised_amount: true,
+        released_amount: true,
+        consolidation_fee: true,
+        consolidation_refunded: true,
+        consolidation_released: true,
+      },
     });
     const raised = Number(p?.raised_amount ?? 0);
-    const released = Number(p?.released_amount ?? 0);
-    const share = raised > 0 ? Math.max(0, (raised - released) / raised) : 1;
+    const heldShare = raised > 0 ? Math.min(1, heldFunds(p ?? {}) / raised) : 1;
+    const reserveShare = raised > 0 ? reserveLeft(p ?? {}) / raised : 0;
+    const share = Math.min(1, heldShare + reserveShare);
     const rows = await this.prisma.user_investments.findMany({
       where: { project_id: projectId, status: { in: ['committed', 'active'] } },
     });
     let done = 0;
     let total = 0;
+    let fromReserve = 0;
     for (const inv of rows) {
-      const refund = Math.floor(Number(inv.amount ?? 0) * share * 100) / 100;
+      const amt = Number(inv.amount ?? 0);
+      const heldPart = Math.floor(amt * heldShare * 100) / 100;
+      const reservePart = Math.floor(amt * reserveShare * 100) / 100;
+      const refund = Number((heldPart + reservePart).toFixed(2));
       await this.prisma.$transaction(async (tx) => {
         const claim = await tx.user_investments.updateMany({
           where: { id: inv.id, status: inv.status },
           data: { status: share >= 1 ? 'refunded' : 'partially_refunded' },
         });
         if (!claim.count || refund <= 0) return;
-        const w = await tx.wallets.findFirst({
-          where: { user_id: inv.user_id!, is_active: true },
+        const t = await this.creditInvestor(tx, inv, refund, projectId, {
+          reason: 'cancelled',
+          held_part: heldPart,
+          reserve_part: reservePart,
+          by: adminId,
         });
-        if (!w)
-          throw new BadRequestException(
-            `Investor wallet missing for ${inv.id}`,
-          );
-        await tx.wallets.update({
-          where: { id: w.id },
-          data: { balance: { increment: refund } },
-        });
-        const t = await tx.transactions.create({
-          data: {
-            transaction_reference: generateTxReference(),
-            receiver_wallet_id: w.id,
-            transaction_type: 'investment_refund',
-            status: 'completed',
-            amount: refund,
-            fee: 0,
-            net_amount: refund,
-            description: 'Investment refund (project cancelled)',
-            metadata: {
-              investment_id: inv.id,
-              project_id: projectId,
-              share,
-              by: adminId,
-            },
-            processed_at: new Date(),
-          },
-        });
-        await tx.ledger_entries.create({
-          data: {
-            transaction_id: t.id,
-            wallet_id: w.id,
-            entry_type: 'credit',
-            amount: refund,
-            description: 'Investment refund',
-          },
-        });
+        await payFromReserveInTx(tx, projectId, reservePart, t);
         done++;
         total += refund;
+        fromReserve += reservePart;
       });
     }
-    return { refunded: done, amount: total, share };
+    return {
+      refunded: done,
+      amount: Number(total.toFixed(2)),
+      from_reserve: Number(fromReserve.toFixed(2)),
+      share,
+    };
+  }
+
+  /**
+   * Project made a loss (admin-declared, notes required): pay what is left of
+   * this project's consolidation reserve to its investors, pro-rata to what
+   * each invested. One time per project, all-or-nothing.
+   */
+  async refundReserveForLoss(
+    adminId: string,
+    projectId: string,
+    notes?: string,
+  ) {
+    if (!notes?.trim())
+      throw new BadRequestException('Notes are required (describe the loss)');
+    const p = await this.prisma.investment_projects.findUnique({
+      where: { id: projectId },
+      select: {
+        raised_amount: true,
+        consolidation_fee: true,
+        consolidation_refunded: true,
+        consolidation_released: true,
+        consolidation_fee_at: true,
+        status: true,
+      },
+    });
+    if (!p) throw new NotFoundException('Project not found');
+    if (!p.consolidation_fee_at)
+      throw new BadRequestException('The funding round has not closed');
+    if (Number(p.consolidation_released ?? 0) > 0)
+      throw new BadRequestException(
+        'The reserve was already released to FARM (project completed)',
+      );
+    if (Number(p.consolidation_refunded ?? 0) > 0)
+      throw new BadRequestException(
+        'The consolidation reserve was already refunded',
+      );
+    const raised = Number(p.raised_amount ?? 0);
+    const reserve = reserveLeft(p);
+    if (!(reserve > 0) || !(raised > 0))
+      throw new BadRequestException('No consolidation reserve to refund');
+    const rows = await this.prisma.user_investments.findMany({
+      where: {
+        project_id: projectId,
+        status: { in: ['committed', 'active', 'partially_refunded'] },
+      },
+    });
+    const parts = rows
+      .map((inv) => ({
+        inv,
+        amount:
+          Math.floor((Number(inv.amount ?? 0) * reserve * 100) / raised) / 100,
+      }))
+      .filter((x) => x.amount > 0);
+    const total = await this.prisma.$transaction(async (tx) => {
+      let sum = 0;
+      for (const { inv, amount } of parts) {
+        const t = await this.creditInvestor(tx, inv, amount, projectId, {
+          reason: 'loss',
+          reserve_part: amount,
+          notes: notes.trim(),
+          by: adminId,
+        });
+        await payFromReserveInTx(tx, projectId, amount, t);
+        sum += amount;
+      }
+      return Number(sum.toFixed(2));
+    });
+    await this.prisma.project_reviews.create({
+      data: {
+        project_id: projectId,
+        actor_id: adminId,
+        action: 'consolidation_refund_loss',
+        from_status: p.status ?? 'funded',
+        to_status: p.status ?? 'funded',
+        notes: notes.trim(),
+      },
+    });
+    return { data: { refunded: parts.length, amount: total, reserve } };
+  }
+
+  /**
+   * Project completed successfully (all funds released to the business): the
+   * remaining reserve is released to FARM revenue. It stays in the platform
+   * wallet; the ledger reclassifies it. Admin-only, notes required, once.
+   */
+  async releaseReserveToFarm(
+    adminId: string,
+    projectId: string,
+    notes?: string,
+  ) {
+    if (!notes?.trim())
+      throw new BadRequestException('Notes are required (confirm completion)');
+    const p = await this.prisma.investment_projects.findUnique({
+      where: { id: projectId },
+      select: {
+        status: true,
+        project_name: true,
+        raised_amount: true,
+        released_amount: true,
+        consolidation_fee: true,
+        consolidation_refunded: true,
+        consolidation_released: true,
+        consolidation_fee_at: true,
+      },
+    });
+    if (!p) throw new NotFoundException('Project not found');
+    if (!p.consolidation_fee_at || !RELEASABLE.includes(p.status ?? ''))
+      throw new BadRequestException('The funding round has not closed');
+    if (heldFunds(p) > 0.005)
+      throw new BadRequestException(
+        'All milestones must be released before the project is completed',
+      );
+    if (Number(p.consolidation_refunded ?? 0) > 0)
+      throw new BadRequestException(
+        'Investors were already refunded from this reserve',
+      );
+    const amount = Number(reserveLeft(p).toFixed(8));
+    if (!(amount > 0))
+      throw new BadRequestException('No consolidation reserve left');
+    const txId = await this.prisma.$transaction(async (tx) => {
+      const t = await tx.transactions.create({
+        data: {
+          transaction_reference: generateTxReference(),
+          transaction_type: 'fee',
+          status: 'completed',
+          amount,
+          fee: 0,
+          net_amount: amount,
+          description: `Consolidation reserve released to FARM: ${p.project_name}`,
+          metadata: {
+            project_id: projectId,
+            category: 'consolidation_release',
+            by: adminId,
+            notes: notes.trim(),
+          },
+          processed_at: new Date(),
+        },
+      });
+      await releaseReserveToFarmInTx(tx, projectId, amount, t.id);
+      return t.id;
+    });
+    await this.prisma.project_reviews.create({
+      data: {
+        project_id: projectId,
+        actor_id: adminId,
+        action: 'consolidation_release_farm',
+        from_status: p.status ?? 'closed',
+        to_status: p.status ?? 'closed',
+        notes: notes.trim(),
+      },
+    });
+    return { data: { amount, transaction_id: txId } };
+  }
+
+  private async creditInvestor(
+    tx: any,
+    inv: { id: string; user_id: string | null },
+    amount: number,
+    projectId: string,
+    meta: Record<string, any>,
+  ): Promise<string> {
+    const w = await tx.wallets.findFirst({
+      where: { user_id: inv.user_id!, is_active: true },
+    });
+    if (!w)
+      throw new BadRequestException(`Investor wallet missing for ${inv.id}`);
+    await tx.wallets.update({
+      where: { id: w.id },
+      data: { balance: { increment: amount } },
+    });
+    const t = await tx.transactions.create({
+      data: {
+        transaction_reference: generateTxReference(),
+        receiver_wallet_id: w.id,
+        transaction_type: 'investment_refund',
+        status: 'completed',
+        amount,
+        fee: 0,
+        net_amount: amount,
+        description:
+          meta.reason === 'loss'
+            ? 'Consolidation fund refund (project loss)'
+            : 'Investment refund (project cancelled)',
+        metadata: { investment_id: inv.id, project_id: projectId, ...meta },
+        processed_at: new Date(),
+      },
+    });
+    await tx.ledger_entries.create({
+      data: {
+        transaction_id: t.id,
+        wallet_id: w.id,
+        entry_type: 'credit',
+        amount,
+        description:
+          meta.reason === 'loss'
+            ? 'Consolidation fund refund'
+            : 'Investment refund',
+      },
+    });
+    return t.id;
   }
 
   /**
@@ -246,10 +455,21 @@ export class ProjectReviewService {
       );
     const raised = Number(p.raised_amount ?? 0);
     const target = Number(p.target_amount);
-    const held = raised - Number(p.released_amount ?? 0);
+    // Round closed: the consolidation fund fee must be taken before any release.
+    let cfee = Number(p.consolidation_fee ?? 0);
+    if (!p.consolidation_fee_at) {
+      await this.closeRound(projectId, adminId);
+      const r = await this.prisma.investment_projects.findUnique({
+        where: { id: projectId },
+        select: { consolidation_fee: true },
+      });
+      cfee = Number(r?.consolidation_fee ?? 0);
+    }
+    const net = raised - cfee; // what the business can receive in total
+    const held = heldFunds({ ...p, consolidation_fee: cfee });
     const isLast = !p.milestones.some((x) => x.position > m.position);
     let amount =
-      Math.floor(Number(m.amount) * Math.min(1, raised / target) * 100) / 100;
+      Math.floor(Number(m.amount) * Math.min(1, net / target) * 100) / 100;
     if (isLast) amount = held; // last milestone sweeps any rounding remainder
     amount = Math.min(amount, held);
     if (!(amount > 0))
@@ -276,7 +496,7 @@ export class ProjectReviewService {
         UPDATE investment_projects
            SET released_amount = released_amount + ${amount}, updated_at = now()
          WHERE id = ${projectId}::uuid
-           AND released_amount + ${amount} <= COALESCE(raised_amount, 0)`;
+           AND released_amount + ${amount} <= COALESCE(raised_amount, 0) - consolidation_fee`;
       if (claimP !== 1)
         throw new BadRequestException('Release would exceed the funds held');
       await tx.wallets.update({

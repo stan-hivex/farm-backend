@@ -195,6 +195,24 @@ export class AdminProjectsController {
   ) {
     return this.svc.transition(u.id, id, dto.action, dto.notes);
   }
+  /** Project made a loss: refund this project's consolidation reserve pro-rata. */
+  @Post(':id/consolidation-refund')
+  consolidationRefund(
+    @CurrentUser() u: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: MilestoneNotesDto,
+  ) {
+    return this.svc.refundReserveForLoss(u.id, id, dto.notes);
+  }
+  /** Project completed successfully: release its remaining reserve to FARM revenue. */
+  @Post(':id/consolidation-release')
+  consolidationRelease(
+    @CurrentUser() u: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: MilestoneNotesDto,
+  ) {
+    return this.svc.releaseReserveToFarm(u.id, id, dto.notes);
+  }
   @Post(':id/milestones/:mid/release')
   release(
     @CurrentUser() u: any,

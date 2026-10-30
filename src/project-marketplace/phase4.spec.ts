@@ -383,6 +383,8 @@ describe('Phase 4 – milestone releases (admin only, backend logic)', () => {
     target_amount: 1000,
     raised_amount: 800,
     released_amount: 0,
+    consolidation_fee: 0,
+    consolidation_fee_at: new Date(),
     business: { owner_user_id: 'owner', status: 'approved' },
     milestones: [
       { id: 'm1', position: 1, amount: 400, status: 'requested' },
@@ -495,5 +497,267 @@ describe('Phase 4 – legacy projects API', () => {
     const svc = new ProjectsService({} as any);
     expect(() => svc.create({}, 'u')).toThrow(GoneException);
     expect(() => svc.invest('u', {}, '')).toThrow(GoneException);
+  });
+});
+
+describe('Consolidation fund (once at round close, 15% of raised, refundable per-project reserve)', () => {
+  const { chargeConsolidationInTx, heldFunds } = require('./consolidation');
+  function ctx(p: any, claim = 1) {
+    const tx: any = {
+      investment_projects: {
+        findUnique: jest.fn().mockResolvedValue(p),
+        updateMany: jest.fn().mockResolvedValue({ count: claim }),
+      },
+      users: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ wallets: [{ id: 'platform' }] }),
+      },
+      wallets: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'platform', balance: 0 }),
+        update: jest.fn(),
+      },
+      transactions: { create: jest.fn().mockResolvedValue({ id: 'ct1' }) },
+      ledger_entries: { create: jest.fn() },
+    };
+    return tx;
+  }
+  const prev = process.env.FEE_PROJECT_LISTING_PCT;
+  afterAll(() => {
+    if (prev === undefined) delete process.env.FEE_PROJECT_LISTING_PCT;
+    else process.env.FEE_PROJECT_LISTING_PCT = prev;
+  });
+  it('takes 15% of the total raised into the main platform wallet, category consolidation_fund', async () => {
+    delete process.env.FEE_PROJECT_LISTING_PCT;
+    const tx = ctx({
+      raised_amount: 800,
+      consolidation_fee_at: null,
+      project_name: 'P',
+    });
+    expect(await chargeConsolidationInTx(tx, null, PID)).toBe(120);
+    expect(
+      tx.investment_projects.updateMany.mock.calls[0][0].where
+        .consolidation_fee_at,
+    ).toBeNull();
+    expect(tx.transactions.create.mock.calls[0][0].data.metadata.category).toBe(
+      'consolidation_fund',
+    );
+    expect(tx.wallets.update.mock.calls[0][0]).toEqual({
+      where: { id: 'platform' },
+      data: { balance: { increment: 120 } },
+    });
+    expect(tx.ledger_entries.create.mock.calls[0][0].data.category).toBe(
+      'consolidation_fund',
+    );
+  });
+  it('is taken only once (already charged, or lost the race)', async () => {
+    const done = ctx({ raised_amount: 800, consolidation_fee_at: new Date() });
+    expect(await chargeConsolidationInTx(done, null, PID)).toBe(0);
+    expect(done.wallets.update).not.toHaveBeenCalled();
+    const race = ctx({ raised_amount: 800, consolidation_fee_at: null }, 0);
+    expect(await chargeConsolidationInTx(race, null, PID)).toBe(0);
+    expect(race.wallets.update).not.toHaveBeenCalled();
+  });
+  it('held funds exclude the fee and releases', () => {
+    expect(
+      heldFunds({
+        raised_amount: 800,
+        consolidation_fee: 120,
+        released_amount: 272,
+      }),
+    ).toBe(408);
+  });
+  it('milestones release from the 85% left after the fee', async () => {
+    const p: any = {
+      ...listed,
+      status: 'funded',
+      target_amount: 1000,
+      raised_amount: 800,
+      released_amount: 0,
+      consolidation_fee: 120,
+      consolidation_fee_at: new Date(),
+      business: { owner_user_id: 'owner', status: 'approved' },
+      milestones: [
+        { id: 'm1', position: 1, amount: 400, status: 'requested' },
+        { id: 'm2', position: 2, amount: 600, status: 'planned' },
+      ],
+    };
+    const tx: any = {
+      project_milestones: {
+        update: jest.fn(),
+
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      wallets: { update: jest.fn() },
+      transactions: { create: jest.fn().mockResolvedValue({ id: 'tx1' }) },
+      ledger_entries: { create: jest.fn() },
+      user_investments: { updateMany: jest.fn() },
+    };
+    const mk = (proj: any) =>
+      new ProjectReviewService({
+        investment_projects: { findUnique: jest.fn().mockResolvedValue(proj) },
+        wallets: { findFirst: jest.fn().mockResolvedValue({ id: 'w1' }) },
+        project_reviews: { create: jest.fn() },
+        $transaction: jest.fn((fn: any) => fn(tx)),
+      } as any);
+    expect(
+      (await mk(p).releaseMilestone('a', PID, 'm1')).data.released_amount,
+    ).toBe(272);
+    const p2 = {
+      ...p,
+      released_amount: 272,
+      milestones: [
+        { ...p.milestones[0], status: 'released' },
+        { ...p.milestones[1], status: 'requested' },
+      ],
+    };
+    expect(
+      (await mk(p2).releaseMilestone('a', PID, 'm2')).data.released_amount,
+    ).toBe(408);
+  });
+  function refundCtx(proj: any, invs: any[]) {
+    const tx: any = {
+      user_investments: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      wallets: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'iw' }),
+        update: jest.fn(),
+      },
+      users: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ wallets: [{ id: 'platform', balance: 1000 }] }),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      transactions: { create: jest.fn().mockResolvedValue({ id: 'r1' }) },
+      ledger_entries: { create: jest.fn() },
+    };
+    const svc = new ProjectReviewService({
+      investment_projects: { findUnique: jest.fn().mockResolvedValue(proj) },
+      user_investments: { findMany: jest.fn().mockResolvedValue(invs) },
+      project_reviews: { create: jest.fn() },
+      $transaction: jest.fn((fn: any) => fn(tx)),
+    } as any);
+    return { svc, tx };
+  }
+  const inv100 = [{ id: 'i1', user_id: 'u', amount: 100, status: 'committed' }];
+  it('cancellation refunds unreleased funds plus the pro-rata reserve (15% is refundable)', async () => {
+    const { svc, tx } = refundCtx(
+      {
+        raised_amount: 800,
+        released_amount: 0,
+        consolidation_fee: 120,
+        consolidation_refunded: 0,
+      },
+      inv100,
+    );
+    const r = await (svc as any).refundAll('a', PID);
+    expect(r.share).toBeCloseTo(1);
+    expect(r.amount).toBe(100); // 85 held + 15 reserve; the 3% fee is not part of this
+    expect(r.from_reserve).toBe(15);
+    const debit = tx.ledger_entries.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((d: any) => d.wallet_id === 'platform');
+    expect(debit).toMatchObject({
+      entry_type: 'debit',
+      amount: 15,
+      category: 'consolidation_fund',
+    });
+  });
+  it('cancellation after a release: share of unreleased funds + share of reserve', async () => {
+    const { svc } = refundCtx(
+      {
+        raised_amount: 800,
+        released_amount: 272,
+        consolidation_fee: 120,
+        consolidation_refunded: 0,
+      },
+      inv100,
+    );
+    const r = await (svc as any).refundAll('a', PID);
+    expect(r.amount).toBe(66); // 51 (408/800) + 15 (120/800)
+  });
+  it("loss: pays this project's reserve pro-rata, once, with notes", async () => {
+    const proj = {
+      raised_amount: 800,
+      consolidation_fee: 120,
+      consolidation_refunded: 0,
+      consolidation_released: 0,
+      consolidation_fee_at: new Date(),
+      status: 'closed',
+    };
+    const two = [
+      { id: 'i1', user_id: 'u1', amount: 600, status: 'active' },
+      { id: 'i2', user_id: 'u2', amount: 200, status: 'active' },
+    ];
+    await expect(
+      refundCtx(proj, two).svc.refundReserveForLoss('a', PID, ' '),
+    ).rejects.toThrow('Notes');
+    const { svc, tx } = refundCtx(proj, two);
+    const r = await svc.refundReserveForLoss('a', PID, 'harvest failed');
+    expect(r.data.amount).toBe(120);
+    expect(
+      tx.wallets.update.mock.calls.map((c: any) => c[0].data.balance),
+    ).toEqual([
+      { increment: 90 },
+      { decrement: 90 },
+      { increment: 30 },
+      { decrement: 30 },
+    ]);
+    await expect(
+      refundCtx(
+        { ...proj, consolidation_refunded: 120 },
+        two,
+      ).svc.refundReserveForLoss('a', PID, 'x'),
+    ).rejects.toThrow('already refunded');
+  });
+  it('success: remaining reserve is reclassified to FARM revenue (no balance change)', async () => {
+    const proj = {
+      status: 'closed',
+      project_name: 'P',
+      raised_amount: 800,
+      released_amount: 680,
+      consolidation_fee: 120,
+      consolidation_refunded: 0,
+      consolidation_released: 0,
+      consolidation_fee_at: new Date(),
+    };
+    await expect(
+      refundCtx({ ...proj, released_amount: 272 }, []).svc.releaseReserveToFarm(
+        'a',
+        PID,
+        'done',
+      ),
+    ).rejects.toThrow('All milestones');
+    const { svc, tx } = refundCtx(proj, []);
+    const r = await svc.releaseReserveToFarm('a', PID, 'completed');
+    expect(r.data.amount).toBe(120);
+    expect(tx.wallets.update).not.toHaveBeenCalled();
+    expect(
+      tx.ledger_entries.create.mock.calls.map((c: any) => [
+        c[0].data.entry_type,
+        c[0].data.category,
+      ]),
+    ).toEqual([
+      ['debit', 'consolidation_fund'],
+      ['credit', 'fee_revenue'],
+    ]);
+    await expect(
+      refundCtx(
+        { ...proj, consolidation_released: 120 },
+        [],
+      ).svc.refundReserveForLoss('a', PID, 'x'),
+    ).rejects.toThrow('released to FARM');
+  });
+  it('investors see the live fee terms before investing', async () => {
+    const svc = new MarketplaceService({} as any, {} as any, undefined as any);
+    const f = await (svc as any).investorFees();
+    expect(f.consolidation_percent).toBe(15);
+    expect(f.investment_percent).toBe(3);
+    expect(f.points.join(' ')).toContain('not refunded');
+    expect(f.points.join(' ')).toContain('makes a loss');
+    expect(f.points.join(' ')).toContain('kept by FARM');
   });
 });

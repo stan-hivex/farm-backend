@@ -8,7 +8,8 @@ import {
   Optional,
 } from '@nestjs/common';
 import { FeesService } from '../fees/fees.service';
-import { creditPlatformInTx, feeFor } from '../fees/fee-defaults';
+import { creditPlatformInTx, feeFor, ruleFor } from '../fees/fee-defaults';
+import { chargeConsolidationInTx } from './consolidation';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -189,6 +190,11 @@ export class MarketplaceService {
           documents: docs,
           updates: p.updates,
           released_amount: Number(p.released_amount ?? 0),
+          consolidation_fee: Number(p.consolidation_fee ?? 0),
+          consolidation_reserve:
+            Number(p.consolidation_fee ?? 0) -
+            Number(p.consolidation_refunded ?? 0) -
+            Number(p.consolidation_released ?? 0),
           milestones: p.milestones.map((m) => ({
             ...m,
             amount: Number(m.amount),
@@ -202,8 +208,24 @@ export class MarketplaceService {
             version: RISK_DISCLOSURE_VERSION,
             points: RISK_DISCLOSURE_TEXT,
           },
+          fees: await this.investorFees(),
         },
       ),
+    };
+  }
+
+  /** Live fee terms shown to investors before they invest. */
+  async investorFees() {
+    const inv = await ruleFor(this.fees, 'investment');
+    const cons = await ruleFor(this.fees, 'project_listing');
+    return {
+      investment_percent: inv.percent,
+      consolidation_percent: cons.percent,
+      points: [
+        `A ${inv.percent}% investment fee is added on top of the amount you invest. It is not refunded, even if the project is cancelled.`,
+        `When the funding round closes, ${cons.percent}% of the total raised is held by FARM as this project's consolidation fund (a reserve, like insurance). It is not mixed with other projects' reserves.`,
+        `If the project is cancelled or makes a loss, you get your share of this reserve back, plus (if cancelled) your share of any funds not yet released to the business. If the project completes successfully, the reserve is kept by FARM.`,
+      ],
     };
   }
 
@@ -398,11 +420,14 @@ export class MarketplaceService {
         where: { id: projectId },
         select: { raised_amount: true, target_amount: true },
       });
-      if (after && Number(after.raised_amount) >= Number(after.target_amount))
+      if (after && Number(after.raised_amount) >= Number(after.target_amount)) {
         await tx.investment_projects.update({
           where: { id: projectId },
           data: { status: 'funded' },
         });
+        // Round closed by reaching its target: take the consolidation fund fee once.
+        await chargeConsolidationInTx(tx, this.fees, projectId);
+      }
       return inv;
     });
 

@@ -94,6 +94,7 @@ export async function creditPlatformInTx(
   amount: number,
   description: string,
   transactionId?: string,
+  category?: string,
 ) {
   if (!(amount > 0)) return;
   const admin = await tx.users.findFirst({
@@ -102,7 +103,14 @@ export async function creditPlatformInTx(
   });
   const w = admin?.wallets?.[0];
   if (!w) throw new Error('Platform fee wallet not found');
-  await creditWalletInTx(tx, w.id, amount, description, transactionId);
+  await creditWalletInTx(
+    tx,
+    w.id,
+    amount,
+    description,
+    transactionId,
+    category,
+  );
 }
 
 export async function creditWalletInTx(
@@ -111,6 +119,7 @@ export async function creditWalletInTx(
   amount: number,
   description: string,
   transactionId?: string,
+  category?: string,
 ) {
   if (!(amount > 0)) return;
   const before = await tx.wallets.findUnique({ where: { id: walletId } });
@@ -128,6 +137,7 @@ export async function creditWalletInTx(
       balance_before: Number(before.balance ?? 0),
       balance_after: Number(before.balance ?? 0) + amount,
       description,
+      ...(category ? { category } : {}),
     },
   });
 }
