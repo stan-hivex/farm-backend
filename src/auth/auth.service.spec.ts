@@ -52,6 +52,7 @@ const createPrismaMock = () => {
   return prisma;
 };
 
+let afterCreate: () => void = () => undefined;
 describe('AuthService', () => {
   let service: AuthService;
   let module: TestingModule;
@@ -280,17 +281,29 @@ describe('AuthService', () => {
     const prisma = module.get(PrismaService);
     const notifications = module.get(NotificationsService);
     jest.spyOn(prisma.otp_verifications, 'findFirst').mockResolvedValue(null);
-    jest.spyOn(prisma.otp_verifications, 'create').mockResolvedValue({} as any);
+    const create = jest
+      .spyOn(prisma.otp_verifications, 'create')
+      .mockResolvedValue({} as any);
+    jest
+      .spyOn(module.get(ConfigService), 'get')
+      .mockImplementation((k: string) =>
+        k === 'JWT_ACCESS_SECRET' ? 'access-secret' : undefined,
+      );
     jest.spyOn(prisma.user_settings, 'findUnique').mockResolvedValue({
       push_notifications: true,
     } as any);
     jest
       .spyOn(notifications, 'sendPush')
       .mockReturnValue(new Promise(() => {}) as any);
+    afterCreate = () => {
+      const stored = (create.mock.calls[0][0] as any).data.otp_code;
+      expect(stored).toMatch(/^h1:[0-9a-f]{64}$/);
+    };
 
     await expect(
       service.sendOtp('user-1', '+254700123456', 'phone_verification', true),
     ).resolves.toEqual({ message: 'OTP delivery started' });
+    afterCreate();
   });
 
   it('sends a Firebase-generated reset link through the configured email service', async () => {

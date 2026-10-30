@@ -332,6 +332,7 @@ export class TravelService {
         kind: 'travel_flight',
         provider: offer.provider,
         offer_id: offer.id,
+        label: `Flight booking · ${offer.slices.map((s) => `${s.origin}-${s.destination}`).join(', ')}`,
       },
       booking: {
         provider: offer.provider,

@@ -131,7 +131,7 @@ export class TravelController {
   @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Post('hotels/prebook')
   hotelPrebook(@Body() dto: HotelPrebookDto) {
-    return this.hotels.prebook(dto.offer_id);
+    return this.hotels.prebook(dto.offer_id).then((data) => ({ data }));
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
@@ -142,13 +142,13 @@ export class TravelController {
     @Body() dto: HotelBookDtoV,
     @Req() req: Request,
   ) {
-    return this.hotels.book(u.id, dto, req.ip || '');
+    return this.hotels.book(u.id, dto, req.ip || '').then((data) => ({ data }));
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('hotels/bookings/:id/cancel')
   hotelCancel(@CurrentUser() u: any, @Param('id', ParseUUIDPipe) id: string) {
-    return this.hotels.cancel(u.id, id);
+    return this.hotels.cancel(u.id, id).then((data) => ({ data }));
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })

@@ -14,6 +14,7 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { hashOtp, verifyOtp } from '../common/utils/otp-hash.util';
 import * as bcrypt from 'bcrypt';
 import * as admin from 'firebase-admin';
 import { createHash, randomBytes } from 'crypto';
@@ -88,6 +89,14 @@ export class AuthService implements OnModuleInit {
     private firebase: FirebaseService,
     private readonly redis: RedisService,
   ) {}
+
+  private otpSecret(): string {
+    return (
+      this.cfg.get<string>('OTP_HASH_SECRET') ||
+      this.cfg.get<string>('JWT_ACCESS_SECRET') ||
+      ''
+    );
+  }
 
   // ── Register ────────────────────────────────────────────────────────────────
   async register(dto: RegisterDto, ip: string, turnstileToken?: string) {
@@ -322,7 +331,7 @@ export class AuthService implements OnModuleInit {
     if (attempts >= OTP_MAX_ATTEMPTS)
       throw new ForbiddenException('Too many attempts. Request a new OTP.');
 
-    if (otp.otp_code !== otpCode) {
+    if (!verifyOtp(otp.otp_code, String(otpCode ?? ''), this.otpSecret())) {
       await this.prisma.otp_verifications.update({
         where: { id: otp.id },
         data: { attempts: { increment: 1 } },
@@ -1915,7 +1924,7 @@ export class AuthService implements OnModuleInit {
     await this.prisma.otp_verifications.create({
       data: {
         user_id: userId,
-        otp_code: code,
+        otp_code: hashOtp(code, this.otpSecret()),
         purpose,
         expires_at,
       },

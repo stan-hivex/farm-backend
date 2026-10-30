@@ -568,6 +568,9 @@ describe('HotelsService', () => {
       '"hotel_name":"Best Western Plus Meridian Hotel"',
     );
     expect(summary).toContain('"hotel_city":"Nairobi"');
+    expect(summary).toContain(
+      '"label":"Hotel booking · Best Western Plus Meridian Hotel"',
+    );
   });
   it('hotel info lookup failure does not block booking', async () => {
     const prisma = mkPrisma();
@@ -577,17 +580,42 @@ describe('HotelsService', () => {
     const r = await svc.book('u1', bdto(), '');
     expect(r.status).toBe('confirmed');
   });
-  it('provider rejection on prebook -> 409, outage -> 503', async () => {
+  it('sandbox: retries a flaky "no availability" once and succeeds', async () => {
+    const ok = {
+      prebook_id: 'PB9',
+      hotel_id: 'lp1',
+      checkin: '2099-01-01',
+      checkout: '2099-01-03',
+      total_amount: 100,
+      total_currency: 'USD',
+      refundable: true,
+      cancel_policies: [],
+      live_mode: false,
+    };
+    const prebook = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new ProviderRejectedError('LiteAPI 409: no availability found'),
+      )
+      .mockResolvedValueOnce(ok);
+    const { svc } = mkHotels(mkPrisma(), { prebook });
+    svc.retryDelayMs = 0;
+    expect((await svc.prebook('offer-abc')).prebook_id).toBe('PB9');
+    expect(prebook).toHaveBeenCalledTimes(2);
+  });
+  it('provider rejection on prebook -> friendly 409, outage -> 503', async () => {
+    const no = () =>
+      new ProviderRejectedError('LiteAPI 409: no availability found');
     const { svc } = mkHotels(mkPrisma(), {
       prebook: jest
         .fn()
-        .mockRejectedValueOnce(
-          new ProviderRejectedError('LiteAPI 409: no availability found'),
-        )
+        .mockRejectedValueOnce(no())
+        .mockRejectedValueOnce(no())
         .mockRejectedValueOnce(new Error('socket hang up')),
     });
+    svc.retryDelayMs = 0;
     await expect(svc.prebook('offer-abc')).rejects.toThrow(
-      'This room is no longer available. Please choose another.',
+      'This room is not available right now. Try again in a moment or choose another room.',
     );
     await expect(svc.prebook('offer-abc')).rejects.toBeInstanceOf(
       ServiceUnavailableException,

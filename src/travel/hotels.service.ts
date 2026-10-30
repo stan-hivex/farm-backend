@@ -24,7 +24,7 @@ function mapProviderError(what: string) {
     if (e instanceof ProviderRejectedError)
       throw new ConflictException(
         /availability/i.test(e.message)
-          ? 'This room is no longer available. Please choose another.'
+          ? 'This room is not available right now. Try again in a moment or choose another room.'
           : e.message,
       );
     if (e instanceof Error && 'getStatus' in e) throw e;
@@ -56,6 +56,7 @@ export interface HotelBookDto {
  */
 @Injectable()
 export class HotelsService {
+  retryDelayMs = 1500;
   private readonly log = new Logger(HotelsService.name);
   private readonly env = process.env;
   constructor(
@@ -151,8 +152,27 @@ export class HotelsService {
     if (!/^[A-Za-z0-9_\-+/=.:]{5,4000}$/.test(String(offerId ?? '')))
       throw new BadRequestException('Invalid offer id');
     return this.withPrice(
-      await this.hotels.prebook(offerId).catch(mapProviderError('prebook')),
+      await this.prebookWithRetry(offerId).catch(mapProviderError('prebook')),
     );
+  }
+
+  /**
+   * The LiteAPI sandbox intermittently answers "no availability" for offers it
+   * just listed. Retry once (sandbox only) before surfacing the error.
+   */
+  private async prebookWithRetry(offerId: string) {
+    try {
+      return await this.hotels.prebook(offerId);
+    } catch (e) {
+      if (
+        !this.hotels.isSandbox() ||
+        !(e instanceof ProviderRejectedError) ||
+        !/availability/i.test(e.message)
+      )
+        throw e;
+      await new Promise((r) => setTimeout(r, this.retryDelayMs));
+      return this.hotels.prebook(offerId);
+    }
   }
 
   async book(userId: string, dto: HotelBookDto, ip: string) {
@@ -208,12 +228,13 @@ export class HotelsService {
     const booking = await this.travel.holdAndCreate(userId, key, ip, {
       total,
       fee: pb.service_fee_farm ?? 0,
-      description: `Hotel ${pb.checkin} to ${pb.checkout}`,
+      description: `Hotel ${info?.name ? `${info.name} ` : ''}${pb.checkin} to ${pb.checkout}`,
       ledger: 'Hotel booking (held)',
       metadata: {
         kind: 'travel_hotel',
         provider: this.hotels.name,
         prebook_id: pb.prebook_id,
+        label: `Hotel booking${info?.name ? ` · ${info.name}` : ''}`,
       },
       booking: {
         kind: 'hotel',
