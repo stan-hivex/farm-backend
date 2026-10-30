@@ -79,7 +79,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 20,
-      ttl: 60,
+      ttl: 60_000,
       generateKey: authThrottleKey,
     },
   })
@@ -97,7 +97,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 20,
-      ttl: 60,
+      ttl: 60_000,
       generateKey: authThrottleKey,
     },
   })
@@ -121,7 +121,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 60,
+      ttl: 60_000,
       generateKey: authThrottleKey,
     },
   })
@@ -152,7 +152,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 60,
+      ttl: 60_000,
     },
   })
   @ApiOperation({
@@ -177,7 +177,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 3,
-      ttl: 60,
+      ttl: 60_000,
     },
   })
   @ApiOperation({
@@ -218,7 +218,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 300,
+      ttl: 300_000,
       generateKey: authThrottleKey,
     },
   })
@@ -236,7 +236,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 300,
+      ttl: 300_000,
       generateKey: authThrottleKey,
     },
   })
@@ -251,7 +251,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 300,
+      ttl: 300_000,
       generateKey: authThrottleKey,
     },
   })
@@ -263,7 +263,7 @@ export class AuthController {
   @Public()
   @Post('password-reset/complete')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 5, ttl: 300 } })
+  @Throttle({ default: { limit: 5, ttl: 300_000 } })
   @ApiOperation({ summary: 'Synchronize a completed Firebase password reset' })
   completePasswordReset(@Body() dto: AdminPasswordResetCompleteDto) {
     return this.authService.completePasswordReset(dto);
@@ -275,7 +275,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 300,
+      ttl: 300_000,
     },
   })
   @ApiOperation({ summary: 'Reset password using OTP' })
@@ -330,7 +330,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 60,
+      ttl: 60_000,
       generateKey: authThrottleKey,
     },
   })
@@ -362,7 +362,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 60,
+      ttl: 60_000,
       generateKey: authThrottleKey,
     },
   })
@@ -387,7 +387,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 10,
-      ttl: 60,
+      ttl: 60_000,
       generateKey: authThrottleKey,
     },
   })
@@ -424,7 +424,7 @@ export class AuthController {
   @Throttle({
     default: {
       limit: 5,
-      ttl: 60,
+      ttl: 60_000,
       generateKey: authThrottleKey,
     },
   })
