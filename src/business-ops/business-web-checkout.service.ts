@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { QrPaymentsService } from '../qr-payments/qr-payments.service';
@@ -13,6 +14,8 @@ import { BusinessCommerceService } from './business-commerce.service';
 import { BusinessWebhooksService } from './business-webhooks.service';
 
 const PAYABLE = ['sent', 'pending', 'overdue'];
+/** How long a started web checkout holds a link use or an invoice. */
+export const HOLD_MINUTES = 60;
 export const WEB_METHODS = ['mpesa', 'card', 'bank', 'crypto'] as const;
 export type WebMethod = (typeof WEB_METHODS)[number];
 
@@ -107,33 +110,102 @@ export class BusinessWebCheckoutService {
         'This business cannot accept web payments yet. Pay in the FARM app.',
       );
     const amountKes = await this.quoteKes(t.amount);
-    const res: any = await this.qr.initialize({
-      merchantId: biz.merchant_id,
-      amount: amountKes,
-      method: method as WebMethod,
-      guestEmail: email?.trim() || undefined,
-    });
-    const url: string | undefined =
-      res?.data?.authorization_url ?? res?.authorization_url;
-    const reference: string | undefined =
-      res?.data?.reference ?? res?.reference;
-    if (!url || !reference)
-      throw new BadRequestException('Could not start the payment. Try again.');
-    if (!/^https:\/\//i.test(url))
-      throw new BadRequestException('Unexpected payment provider URL');
-    await this.prisma.business_web_checkouts.create({
-      data: {
-        business_id: t.business_id,
-        source: kind === 'link' ? 'payment_link' : 'invoice',
-        source_id: t.id,
-        transaction_reference: reference,
-        amount: t.amount,
-        amount_kes: amountKes,
-        method,
-        payer_email: email?.trim() || null,
-      },
-    });
+    // Claim the link use / invoice BEFORE sending the payer to the provider,
+    // so concurrent payers cannot overshoot max_uses or pay an invoice twice.
+    const checkoutId = randomUUID();
+    const expiresAt = new Date(Date.now() + HOLD_MINUTES * 60_000);
+    await this.reserve(kind, t.id, checkoutId, expiresAt);
+    let url: string | undefined;
+    let reference: string | undefined;
+    try {
+      const res: any = await this.qr.initialize({
+        merchantId: biz.merchant_id,
+        amount: amountKes,
+        method: method as WebMethod,
+        guestEmail: email?.trim() || undefined,
+      });
+      url = res?.data?.authorization_url ?? res?.authorization_url;
+      reference = res?.data?.reference ?? res?.reference;
+      if (!url || !reference)
+        throw new BadRequestException(
+          'Could not start the payment. Try again.',
+        );
+      if (!/^https:\/\//i.test(url))
+        throw new BadRequestException('Unexpected payment provider URL');
+      await this.prisma.business_web_checkouts.create({
+        data: {
+          id: checkoutId,
+          business_id: t.business_id,
+          source: kind === 'link' ? 'payment_link' : 'invoice',
+          source_id: t.id,
+          transaction_reference: reference,
+          amount: t.amount,
+          amount_kes: amountKes,
+          method,
+          payer_email: email?.trim() || null,
+          reserved: true,
+          expires_at: expiresAt,
+        },
+      });
+    } catch (e) {
+      await this.release(
+        kind === 'link' ? 'payment_link' : 'invoice',
+        t.id,
+        checkoutId,
+      );
+      throw e;
+    }
     return { url, reference };
+  }
+
+  /** Atomically takes one link use, or an exclusive hold on the invoice. */
+  async reserve(
+    kind: 'link' | 'invoice',
+    id: string,
+    checkoutId: string,
+    until: Date,
+  ) {
+    if (kind === 'link') {
+      const n = await this.prisma.$executeRaw`
+        UPDATE business_payment_links SET use_count = use_count + 1, updated_at = now()
+         WHERE id = ${id}::uuid AND is_active = true
+           AND (expires_at IS NULL OR expires_at > now())
+           AND (max_uses IS NULL OR use_count < max_uses)`;
+      if (n !== 1)
+        throw new GoneException(
+          'This payment link is no longer accepting payments',
+        );
+      return;
+    }
+    const r = await this.prisma.business_invoices.updateMany({
+      where: {
+        id,
+        status: { in: PAYABLE as any },
+        OR: [
+          { payment_hold_ref: null },
+          { payment_hold_until: { lt: new Date() } },
+        ],
+      },
+      data: { payment_hold_ref: checkoutId, payment_hold_until: until },
+    });
+    if (!r.count)
+      throw new GoneException(
+        'This invoice is already being paid or is no longer payable. Try again later.',
+      );
+  }
+
+  /** Gives back a reservation taken by reserve(). Safe to call twice. */
+  async release(source: string, id: string, checkoutId: string) {
+    if (source === 'payment_link') {
+      await this.prisma.$executeRaw`
+        UPDATE business_payment_links SET use_count = use_count - 1, updated_at = now()
+         WHERE id = ${id}::uuid AND use_count > 0`;
+    } else {
+      await this.prisma.business_invoices.updateMany({
+        where: { id, payment_hold_ref: checkoutId },
+        data: { payment_hold_ref: null, payment_hold_until: null },
+      });
+    }
   }
 
   /**
@@ -145,7 +217,8 @@ export class BusinessWebCheckoutService {
       where: { transaction_reference: reference },
     });
     if (!c) throw new NotFoundException('Checkout not found');
-    if (c.status !== 'pending') return c.status;
+    if (c.status !== 'pending' && c.status !== 'expired') return c.status;
+    const wasExpired = c.status === 'expired';
     let status: string;
     try {
       const v: any = await this.qr.verify(reference);
@@ -155,13 +228,27 @@ export class BusinessWebCheckoutService {
       return 'pending';
     }
     if (status === 'failed') {
-      await this.prisma.business_web_checkouts.updateMany({
-        where: { id: c.id, status: 'pending' },
+      const f = await this.prisma.business_web_checkouts.updateMany({
+        where: { id: c.id, status: c.status },
         data: { status: 'failed' },
       });
+      if (f.count && !wasExpired && c.reserved)
+        await this.release(c.source, c.source_id, c.id);
       return 'failed';
     }
-    if (status !== 'completed') return 'pending';
+    if (status !== 'completed') {
+      // Provider still pending past the hold: free the link use / invoice.
+      if (!wasExpired && c.expires_at && c.expires_at < new Date()) {
+        const x = await this.prisma.business_web_checkouts.updateMany({
+          where: { id: c.id, status: 'pending' },
+          data: { status: 'expired' },
+        });
+        if (x.count && c.reserved)
+          await this.release(c.source, c.source_id, c.id);
+        return 'expired';
+      }
+      return wasExpired ? 'expired' : 'pending';
+    }
 
     // Amount check: the credited FARM must match what was asked (1% rate tolerance).
     const txn = await this.prisma.transactions.findUnique({
@@ -178,7 +265,7 @@ export class BusinessWebCheckoutService {
       );
     }
     const claim = await this.prisma.business_web_checkouts.updateMany({
-      where: { id: c.id, status: 'pending' },
+      where: { id: c.id, status: c.status },
       data: { status: 'completed', completed_at: new Date() },
     });
     if (!claim.count) return 'completed';
@@ -193,11 +280,33 @@ export class BusinessWebCheckoutService {
         channel: 'web',
       },
     });
+    // Money has already arrived. Settle against the reservation; if it was lost
+    // (late completion after the hold expired), try to take it again atomically,
+    // and if that fails record the payment for refund/review.
+    const settled = await this.settle(c, wasExpired);
+    if (!settled) {
+      await this.prisma.business_payment_exceptions
+        .create({
+          data: {
+            business_id: c.business_id,
+            checkout_id: c.id,
+            source: c.source,
+            source_id: c.source_id,
+            transaction_reference: reference,
+            amount: credited || Number(c.amount),
+            reason:
+              c.source === 'payment_link'
+                ? 'Payment link had no uses left when the web payment completed'
+                : 'Invoice was already paid or cancelled when the web payment completed',
+          },
+        })
+        .catch(() => undefined);
+      this.logger.error(
+        `Web payment ${reference} could not be applied; recorded for refund/review`,
+      );
+      return 'completed';
+    }
     if (c.source === 'payment_link') {
-      await this.prisma.business_payment_links.update({
-        where: { id: c.source_id },
-        data: { use_count: { increment: 1 } },
-      });
       this.webhooks.emit(c.business_id, 'live', 'payment_link.paid', {
         payment_link_id: c.source_id,
         amount: Number(c.amount),
@@ -205,18 +314,6 @@ export class BusinessWebCheckoutService {
         transaction_reference: reference,
       });
     } else {
-      const inv = await this.prisma.business_invoices.updateMany({
-        where: { id: c.source_id, status: { in: PAYABLE as any } },
-        data: {
-          status: 'paid',
-          paid_at: new Date(),
-          transaction_reference: reference,
-        },
-      });
-      if (!inv.count)
-        this.logger.error(
-          `Invoice ${c.source_id} was already settled; web payment ${reference} needs review`,
-        );
       this.webhooks.emit(c.business_id, 'live', 'invoice.paid', {
         invoice_id: c.source_id,
         amount: Number(c.amount),
@@ -234,11 +331,45 @@ export class BusinessWebCheckoutService {
     return 'completed';
   }
 
+  /** Applies a completed web payment to its link/invoice. Returns false when it cannot. */
+  private async settle(c: any, wasExpired: boolean): Promise<boolean> {
+    const reference = c.transaction_reference;
+    if (c.source === 'payment_link') {
+      if (c.reserved && !wasExpired) return true; // use was taken at checkout start
+      const n = await this.prisma.$executeRaw`
+        UPDATE business_payment_links SET use_count = use_count + 1, updated_at = now()
+         WHERE id = ${c.source_id}::uuid AND (max_uses IS NULL OR use_count < max_uses)`;
+      return n === 1;
+    }
+    const inv = await this.prisma.business_invoices.updateMany({
+      where: {
+        id: c.source_id,
+        status: { in: PAYABLE as any },
+        OR: [
+          { payment_hold_ref: c.id },
+          { payment_hold_ref: null },
+          { payment_hold_until: { lt: new Date() } },
+        ],
+      },
+      data: {
+        status: 'paid',
+        paid_at: new Date(),
+        transaction_reference: reference,
+        payment_hold_ref: null,
+        payment_hold_until: null,
+      },
+    });
+    return inv.count === 1;
+  }
+
   @Cron(CronExpression.EVERY_5_MINUTES)
   async reconcilePending() {
     const since = new Date(Date.now() - 3 * 24 * 3600_000);
     const rows = await this.prisma.business_web_checkouts.findMany({
-      where: { status: 'pending', created_at: { gte: since } },
+      where: {
+        status: { in: ['pending', 'expired'] },
+        created_at: { gte: since },
+      },
       select: { transaction_reference: true },
       take: 100,
     });

@@ -55,14 +55,27 @@ export class WithdrawService {
     private readonly nowpayments: NowpaymentsService,
   ) {}
 
-  async createWithdrawal(userId: string, dto: CreateWithdrawDto) {
+  /**
+   * @param opts.preAuthorized set only by trusted server code that has already
+   *   authorised the request another way (a live business API key with the
+   *   payout scope). It skips the PIN/biometric step and nothing else: the
+   *   atomic balance lock, daily limits, address validation and automatic
+   *   payout are identical.
+   */
+  async createWithdrawal(
+    userId: string,
+    dto: CreateWithdrawDto,
+    opts: { preAuthorized?: string } = {},
+  ) {
     const requestedMethod: string = dto.method;
     if (requestedMethod === 'CRYPTO') {
-      return this.createNowpaymentsCryptoWithdrawal(userId, dto);
+      return this.createNowpaymentsCryptoWithdrawal(userId, dto, opts);
     }
 
     // Support biometric-based authorization: verify device fingerprint server-side
-    if (dto.biometric_auth) {
+    if (opts.preAuthorized) {
+      this.logger.log(`Withdrawal pre-authorised by ${opts.preAuthorized}`);
+    } else if (dto.biometric_auth) {
       const deviceFingerprint =
         dto.device_fingerprint || (dto as any).deviceFingerprint;
       if (!deviceFingerprint)
@@ -281,8 +294,11 @@ export class WithdrawService {
   async createNowpaymentsCryptoWithdrawal(
     userId: string,
     dto: CreateWithdrawDto,
+    opts: { preAuthorized?: string } = {},
   ) {
-    if (dto.biometric_auth) {
+    if (opts.preAuthorized) {
+      this.logger.log(`Crypto withdrawal pre-authorised by ${opts.preAuthorized}`);
+    } else if (dto.biometric_auth) {
       const fingerprint = dto.device_fingerprint;
       if (!fingerprint) {
         throw new BadRequestException(

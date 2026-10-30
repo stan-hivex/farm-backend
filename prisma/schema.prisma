@@ -1233,6 +1233,8 @@ model business_invoices {
   created_by            String?                 @db.Uuid
   created_at            DateTime                @default(now()) @db.Timestamptz(6)
   updated_at            DateTime                @default(now()) @updatedAt @db.Timestamptz(6)
+  payment_hold_ref      String?                 @db.VarChar(255)
+  payment_hold_until    DateTime?               @db.Timestamptz(6)
   business              businesses              @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   customer              business_customers?     @relation(fields: [customer_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
@@ -1387,8 +1389,46 @@ model business_web_checkouts {
   status                String     @default("pending") @db.VarChar(20)
   completed_at          DateTime?  @db.Timestamptz(6)
   created_at            DateTime   @default(now()) @db.Timestamptz(6)
+  /// When set, this checkout holds a link use / invoice until it expires.
+  reserved              Boolean    @default(false)
+  expires_at            DateTime?  @db.Timestamptz(6)
   business              businesses @relation(fields: [business_id], references: [id], onDelete: Cascade)
 
   @@index([status, created_at])
   @@index([source, source_id])
+}
+
+/// Web payments that arrived after their link/invoice could no longer accept them.
+model business_payment_exceptions {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id           String    @db.Uuid
+  checkout_id           String?   @db.Uuid
+  source                String    @db.VarChar(20)
+  source_id             String    @db.Uuid
+  transaction_reference String    @unique @db.VarChar(255)
+  amount                Decimal   @db.Decimal(30, 8)
+  reason                String    @db.VarChar(255)
+  status                String    @default("refund_pending") @db.VarChar(20)
+  resolved_at           DateTime? @db.Timestamptz(6)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([status, created_at])
+  @@index([business_id])
+}
+
+/// Idempotency records for live payouts requested through the business API.
+model business_api_payouts {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id          String   @db.Uuid
+  api_key_id           String   @db.Uuid
+  idempotency_key      String   @db.VarChar(255)
+  request_hash         String   @db.VarChar(64)
+  status               String   @default("processing") @db.VarChar(20)
+  withdrawal_reference String?  @db.VarChar(255)
+  response             Json?
+  error                String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([business_id, idempotency_key])
 }

@@ -170,16 +170,13 @@ describe('Phase 2b: web checkout reconciliation', () => {
     status: 'pending',
   };
 
-  it('records a web payment once and counts the link use', async () => {
-    const { svc, prisma, webhooks } = make(base, 'completed');
+  it('records a web payment once; the link use was already reserved at checkout start', async () => {
+    const { svc, prisma, webhooks } = make({ ...base, reserved: true }, 'completed');
     expect(await svc.reconcile('QR-1')).toBe('completed');
     expect(prisma.business_payments.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ channel: 'web', payer_user_id: null, source_id: 'l1' }),
     });
-    expect(prisma.business_payment_links.update).toHaveBeenCalledWith({
-      where: { id: 'l1' },
-      data: { use_count: { increment: 1 } },
-    });
+    expect(prisma.business_payment_links.update).not.toHaveBeenCalled();
     expect(webhooks.emit).toHaveBeenCalledWith('biz', 'live', 'payment_link.paid', expect.any(Object));
   });
 

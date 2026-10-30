@@ -573,7 +573,12 @@ export class BusinessCommerceService {
       throw new ForbiddenException('You cannot pay your own invoice');
     // Claim the invoice before moving money so it cannot be paid twice.
     const claimed = await this.prisma.business_invoices.updateMany({
-      where: { id: inv.id, status: { in: PAYABLE as any } },
+      where: {
+        id: inv.id,
+        status: { in: PAYABLE as any },
+        // A web checkout in progress holds the invoice until it expires.
+        OR: [{ payment_hold_ref: null }, { payment_hold_until: { lt: new Date() } }],
+      },
       data: { status: 'paid', paid_at: new Date() },
     });
     if (!claimed.count)
