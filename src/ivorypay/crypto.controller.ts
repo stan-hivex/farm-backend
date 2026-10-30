@@ -1,3 +1,4 @@
+import type { AuthRequest } from '../common/types/auth-user';
 import {
   Body,
   Controller,
@@ -30,7 +31,7 @@ export class CryptoController {
   @Permissions('payments:write')
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('deposit')
-  async deposit(@Req() req: any, @Body() dto: any) {
+  async deposit(@Req() req: AuthRequest, @Body() dto: any) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID not found in request');
@@ -49,7 +50,7 @@ export class CryptoController {
   @Permissions('payments:write')
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('status/:reference/verify')
-  async verify(@Req() req: any, @Param('reference') reference: string) {
+  async verify(@Req() req: AuthRequest, @Param('reference') reference: string) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID not found in request');

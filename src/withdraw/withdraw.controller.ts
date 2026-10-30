@@ -1,3 +1,4 @@
+import type { AuthRequest } from '../common/types/auth-user';
 import {
   BadRequestException,
   Body,
@@ -103,7 +104,7 @@ export class WithdrawController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('crypto')
   async createNowpaymentsCrypto(
-    @Req() req: any,
+    @Req() req: AuthRequest,
     @Body() dto: CreateWithdrawDto,
   ) {
     return this.withdrawService.createNowpaymentsCryptoWithdrawal(
@@ -135,7 +136,7 @@ export class WithdrawController {
   @RequireOwnership('id')
   @UseGuards(JwtAuthGuard)
   @Get(':id')
-  async getOne(@Param('id') id: string, @Req() req: any) {
+  async getOne(@Param('id') id: string, @Req() req: AuthRequest) {
     return this.withdrawService.getWithdrawal(id, req.user?.id);
   }
 }

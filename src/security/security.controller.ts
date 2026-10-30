@@ -1,3 +1,4 @@
+import type { AuthUser } from '../common/types/auth-user';
 import {
   Controller,
   Get,
@@ -53,7 +54,7 @@ export class SecurityController {
   @Permissions('security:read')
   @Get('settings')
   @UseGuards(JwtGuard, RolesGuard)
-  settings(@CurrentUser() user: any) {
+  settings(@CurrentUser() user: AuthUser) {
     this.logger.log(`settings requested by user=${user?.id || 'anon'}`);
     return this.svc.getSettings(user.id);
   }
@@ -64,7 +65,7 @@ export class SecurityController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Enable or disable biometric authentication' })
   async updateBiometrics(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Body() dto: UpdateBiometricsDto,
   ) {
     this.logger.log(
@@ -92,7 +93,10 @@ export class SecurityController {
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Verify device fingerprint on app resume' })
-  async verifyDevice(@CurrentUser() user: any, @Body() dto: VerifyDeviceDto) {
+  async verifyDevice(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: VerifyDeviceDto,
+  ) {
     this.logger.log(`Device verification requested by user=${user?.id}`);
     return this.svc.verifyDevice(user.id, dto.deviceFingerprint);
   }
@@ -103,7 +107,7 @@ export class SecurityController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Enable biometric authentication for this device' })
   async createBiometrics(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateBiometricsDto,
   ) {
     this.logger.log(`Create biometric requested by user=${user?.id}`);
@@ -124,7 +128,7 @@ export class SecurityController {
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get biometric settings status' })
-  async getBiometricStatus(@CurrentUser() user: any) {
+  async getBiometricStatus(@CurrentUser() user: AuthUser) {
     this.logger.log(`Biometric status requested by user=${user?.id}`);
     return this.svc.getBiometricStatus(user.id);
   }
@@ -136,7 +140,7 @@ export class SecurityController {
   @ApiOperation({
     summary: 'Delete biometric trusted device or disable biometrics',
   })
-  async deleteBiometrics(@CurrentUser() user: any) {
+  async deleteBiometrics(@CurrentUser() user: AuthUser) {
     this.logger.log(`Delete biometric requested by user=${user?.id}`);
     return this.svc.deleteBiometrics(user.id);
   }

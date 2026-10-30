@@ -1,3 +1,4 @@
+import type { AuthUser } from '../common/types/auth-user';
 import {
   Controller,
   Get,
@@ -343,7 +344,7 @@ export class AdminController {
   @Post('crypto-withdrawals/:reference/approve')
   approveNowpaymentsCryptoWithdrawal(
     @Param('reference') reference: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.withdrawService.approveNowpaymentsCryptoWithdrawal(
       reference,
@@ -356,7 +357,7 @@ export class AdminController {
   verifyNowpaymentsCryptoWithdrawal(
     @Param('reference') reference: string,
     @Body() dto: NowpaymentsPayoutVerificationDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.withdrawService.verifyNowpaymentsCryptoWithdrawal(
       reference,

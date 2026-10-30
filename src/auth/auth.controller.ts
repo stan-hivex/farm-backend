@@ -1,3 +1,4 @@
+import type { AuthUser } from '../common/types/auth-user';
 import {
   Controller,
   Post,
@@ -66,7 +67,7 @@ export class AuthController {
   @Post('admin/create')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN)
-  createAdmin(@CurrentUser() user: any, @Body() dto: CreateAdminDto) {
+  createAdmin(@CurrentUser() user: AuthUser, @Body() dto: CreateAdminDto) {
     return this.authService.createAdmin(user.id, dto);
   }
 
@@ -472,7 +473,7 @@ export class AuthController {
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Register a device token for push notifications' })
   async registerDeviceToken(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Body() body: DeviceTokenDto,
   ) {
     return this.authService.registerDeviceToken(
@@ -496,7 +497,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Logout',
   })
-  logout(@CurrentUser() user: any) {
+  logout(@CurrentUser() user: AuthUser) {
     return this.authService.logout(user.id, user.jti);
   }
 
@@ -506,7 +507,10 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Change password and revoke all other sessions' })
-  changePassword(@CurrentUser() user: any, @Body() dto: ChangePasswordDto) {
+  changePassword(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ChangePasswordDto,
+  ) {
     return this.authService.changePassword(user.id, dto);
   }
 
@@ -518,7 +522,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Delete the current account and revoke all sessions',
   })
-  deleteAccount(@CurrentUser() user: any, @Body() dto: DeleteAccountDto) {
+  deleteAccount(@CurrentUser() user: AuthUser, @Body() dto: DeleteAccountDto) {
     return this.authService.deleteAccount(user.id, dto);
   }
 
@@ -527,7 +531,7 @@ export class AuthController {
   @Get('sessions')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'List active sessions for the current user' })
-  getSessions(@CurrentUser() user: any) {
+  getSessions(@CurrentUser() user: AuthUser) {
     return this.authService.getSessions(user.id);
   }
 
@@ -536,7 +540,7 @@ export class AuthController {
   @Post('sessions/:id/revoke')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke a session by ID for the current user' })
-  revokeSession(@CurrentUser() user: any, @Param('id') sessionId: string) {
+  revokeSession(@CurrentUser() user: AuthUser, @Param('id') sessionId: string) {
     return this.authService.revokeSession(user.id, sessionId);
   }
 
@@ -545,7 +549,7 @@ export class AuthController {
   @Post('sessions/revoke-others')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke all other sessions for the current user' })
-  revokeOtherSessions(@CurrentUser() user: any) {
+  revokeOtherSessions(@CurrentUser() user: AuthUser) {
     return this.authService.revokeOtherSessions(user.id, user.jti);
   }
 
@@ -554,7 +558,7 @@ export class AuthController {
   @Post('sessions/revoke-all')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Revoke all active sessions for the current user' })
-  revokeAllSessions(@CurrentUser() user: any) {
+  revokeAllSessions(@CurrentUser() user: AuthUser) {
     return this.authService.logout(user.id, undefined, true);
   }
 
@@ -568,7 +572,7 @@ export class AuthController {
     summary: 'Set PIN',
   })
   @Permissions('auth:write')
-  setPin(@CurrentUser() user: any, @Body() dto: SetPinDto) {
+  setPin(@CurrentUser() user: AuthUser, @Body() dto: SetPinDto) {
     return this.authService.setPin(user.id, dto);
   }
 
@@ -582,7 +586,7 @@ export class AuthController {
     summary: 'Change PIN',
   })
   @Permissions('auth:write')
-  changePin(@CurrentUser() user: any, @Body() dto: ChangePinDto) {
+  changePin(@CurrentUser() user: AuthUser, @Body() dto: ChangePinDto) {
     return this.authService.changePin(user.id, dto);
   }
 
@@ -603,7 +607,7 @@ export class AuthController {
     summary: 'Reset forgotten PIN',
   })
   @Permissions('auth:write')
-  forgotPin(@CurrentUser() user: any, @Body() dto: ResetPinDto) {
+  forgotPin(@CurrentUser() user: AuthUser, @Body() dto: ResetPinDto) {
     return this.authService.resetForgottenPin(user.id, dto);
   }
 }

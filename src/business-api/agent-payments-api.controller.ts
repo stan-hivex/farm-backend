@@ -1,3 +1,4 @@
+import type { FarmApiRequest } from '../common/types/auth-user';
 import {
   Body,
   Controller,
@@ -36,7 +37,7 @@ import {
 @Controller({ path: 'farm', version: '1' })
 export class AgentPaymentsApiController {
   constructor(private readonly svc: AgentPaymentsService) {}
-  private ctx(req: any): BizCtx {
+  private ctx(req: FarmApiRequest): BizCtx {
     const a: FarmApiContext = req.farmApi;
     return {
       businessId: a.businessId,
@@ -52,7 +53,7 @@ export class AgentPaymentsApiController {
 
   @Get('payment-intents')
   @RequireScope('payment_intents:read')
-  async list(@Req() req: any, @Query('status') status?: string) {
+  async list(@Req() req: FarmApiRequest, @Query('status') status?: string) {
     const c = this.ctx(req);
     return {
       livemode: c.live,
@@ -62,7 +63,7 @@ export class AgentPaymentsApiController {
   @Post('payment-intents')
   @RequireScope('payment_intents:write')
   create(
-    @Req() req: any,
+    @Req() req: FarmApiRequest,
     @Body() b: IntentBody,
     @Headers('idempotency-key') idem?: string,
   ) {
@@ -74,27 +75,30 @@ export class AgentPaymentsApiController {
   }
   @Get('payment-intents/:id')
   @RequireScope('payment_intents:read')
-  get(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  get(@Req() req: FarmApiRequest, @Param('id', ParseUUIDPipe) id: string) {
     const c = this.ctx(req);
     return this.wrap(c.live, this.svc.getIntent(c.businessId, id, c.live));
   }
   @Post('payment-intents/:id/cancel')
   @HttpCode(200)
   @RequireScope('payment_intents:write')
-  cancel(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  cancel(@Req() req: FarmApiRequest, @Param('id', ParseUUIDPipe) id: string) {
     const c = this.ctx(req);
     return this.wrap(c.live, this.svc.cancelIntent(c.businessId, id, c.live));
   }
   @Post('payment-intents/:id/simulate-payment')
   @HttpCode(200)
   @RequireScope('payment_intents:write')
-  simulate(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  simulate(@Req() req: FarmApiRequest, @Param('id', ParseUUIDPipe) id: string) {
     const c = this.ctx(req);
     return this.wrap(false, this.svc.simulateIntent(c.businessId, id));
   }
   @Get('payment-intents/:id/refunds')
   @RequireScope('payment_intents:read')
-  async refunds(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  async refunds(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const c = this.ctx(req);
     return {
       livemode: c.live,
@@ -104,7 +108,7 @@ export class AgentPaymentsApiController {
   @Post('payment-intents/:id/refunds')
   @RequireScope('refunds:write')
   refund(
-    @Req() req: any,
+    @Req() req: FarmApiRequest,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() b: RefundBody,
     @Headers('idempotency-key') idem?: string,
@@ -117,7 +121,7 @@ export class AgentPaymentsApiController {
   }
   @Get('agent-authorizations')
   @RequireScope('agent_payments:read')
-  async mandates(@Req() req: any) {
+  async mandates(@Req() req: FarmApiRequest) {
     const c = this.ctx(req);
     return {
       livemode: c.live,
@@ -127,7 +131,7 @@ export class AgentPaymentsApiController {
   @Post('agent-payment-requests')
   @RequireScope('agent_payments:write')
   request(
-    @Req() req: any,
+    @Req() req: FarmApiRequest,
     @Body() b: AgentRequestBody,
     @Headers('idempotency-key') idem?: string,
   ) {
@@ -139,7 +143,10 @@ export class AgentPaymentsApiController {
   }
   @Get('agent-payment-requests/:id')
   @RequireScope('agent_payments:read')
-  getRequest(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  getRequest(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const c = this.ctx(req);
     return this.wrap(c.live, this.svc.businessGetRequest(c.businessId, id));
   }

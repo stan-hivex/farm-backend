@@ -1,3 +1,4 @@
+import type { FarmApiRequest } from '../common/types/auth-user';
 import {
   Body,
   Controller,
@@ -28,7 +29,7 @@ import { X402Service } from '../x402/x402.service';
 @Controller({ path: 'farm/x402', version: '1' })
 export class X402FacilitatorController {
   constructor(private readonly svc: X402Service) {}
-  private async payTo(req: any) {
+  private async payTo(req: FarmApiRequest) {
     const a: FarmApiContext = req.farmApi;
     if (a.mode !== 'live') return null;
     return { a, payTo: await this.svc.payToFor(a.ownerUserId) };
@@ -41,7 +42,7 @@ export class X402FacilitatorController {
   @Post('verify')
   @HttpCode(200)
   @RequireScope('x402:facilitate')
-  async verify(@Req() req: any, @Body() b: any) {
+  async verify(@Req() req: FarmApiRequest, @Body() b: any) {
     const ctx = await this.payTo(req);
     if (!ctx)
       return {
@@ -59,7 +60,7 @@ export class X402FacilitatorController {
   @Post('settle')
   @HttpCode(200)
   @RequireScope('x402:facilitate')
-  async settle(@Req() req: any, @Body() b: any) {
+  async settle(@Req() req: FarmApiRequest, @Body() b: any) {
     const ctx = await this.payTo(req);
     if (!ctx)
       return {
