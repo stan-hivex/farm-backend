@@ -38,7 +38,7 @@ export const SCOPE_REQUIRES: Record<ApiScope, BusinessPermission> = {
   'escrow:write': 'escrow:manage',
   'payouts:read': 'payouts:read',
   'payouts:write': 'payouts:create',
-  'projects:read': 'profile:read',
+  'projects:read': 'projects:read',
 };
 
 export const KEY_PREFIX = { sandbox: 'farm_sk_test_', live: 'farm_sk_live_' };

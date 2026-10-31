@@ -222,6 +222,33 @@ model investment_projects {
   updated_at         DateTime?          @default(now()) @db.Timestamp(6)
   users              users?             @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   user_investments   user_investments[]
+  // ---- V2 Phase 4: business-submitted projects (canonical project model) ----
+  business_id        String?            @db.Uuid
+  sector             String?            @db.VarChar(40)
+  summary            String?            @db.VarChar(500)
+  location           String?            @db.VarChar(255)
+  country            String?            @db.VarChar(2)
+  currency           String             @default("FARM") @db.VarChar(10)
+  maximum_investment Decimal?           @db.Decimal(30, 8)
+  instrument_type    String?            @db.VarChar(30)
+  use_of_funds       String?
+  risk_factors       String?
+  team               String?
+  review_notes       String?
+  submitted_at       DateTime?          @db.Timestamptz(6)
+  approved_at        DateTime?          @db.Timestamptz(6)
+  listed_at          DateTime?          @db.Timestamptz(6)
+  reviewed_by        String?            @db.Uuid
+  /// Funds released to the business so far (milestone by milestone)
+  released_amount    Decimal            @default(0) @db.Decimal(30, 8)
+  milestones         project_milestones[]
+  business           businesses?        @relation("business_projects", fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  documents          project_documents[]
+  reviews            project_reviews[]
+  updates            project_updates[]
+
+  @@index([business_id])
+  @@index([status, sector])
 }
 
 model kyc_documents {
@@ -520,6 +547,8 @@ model user_investments {
   investment_projects investment_projects? @relation(fields: [project_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   transactions        transactions?        @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users               users?               @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  /// V2: risk disclosure the investor accepted for this investment
+  disclosure_acceptance_id String?         @db.Uuid
 }
 
 model user_sessions {
@@ -892,6 +921,8 @@ enum transaction_type {
   investment
   roi_payout
   fee
+  investment_refund
+  investment_settlement
   conversion
   cross_border
 }
@@ -1102,6 +1133,7 @@ model businesses {
   webhook_endpoints    business_webhook_endpoints[]
   api_requests         business_api_requests[]
   sandbox_objects      business_sandbox_objects[]
+  projects             investment_projects[] @relation("business_projects")
   web_checkouts        business_web_checkouts[]
 
   @@index([status], map: "idx_businesses_status")
@@ -1434,4 +1466,97 @@ model business_api_payouts {
   updated_at           DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@unique([business_id, idempotency_key])
+}
+
+/// V2 Phase 4: documents attached to a project (business plan, financials, licences...).
+model project_documents {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id  String              @db.Uuid
+  kind        String              @db.VarChar(40)
+  title       String              @db.VarChar(255)
+  url         String
+  visibility  String              @default("investors") @db.VarChar(20)
+  uploaded_by String?             @db.Uuid
+  created_at  DateTime            @default(now()) @db.Timestamptz(6)
+  project     investment_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id])
+}
+
+/// V2 Phase 4: admin review trail for projects (separate from business KYB).
+model project_reviews {
+  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id String              @db.Uuid
+  actor_id   String?             @db.Uuid
+  action     String              @db.VarChar(30)
+  from_status String?            @db.VarChar(30)
+  to_status  String              @db.VarChar(30)
+  notes      String?
+  snapshot   Json?
+  created_at DateTime            @default(now()) @db.Timestamptz(6)
+  project    investment_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id, created_at])
+}
+
+/// V2 Phase 4: progress updates a business posts to its investors.
+model project_updates {
+  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id String              @db.Uuid
+  author_id  String?             @db.Uuid
+  title      String              @db.VarChar(255)
+  body       String
+  created_at DateTime            @default(now()) @db.Timestamptz(6)
+  project    investment_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id, created_at])
+}
+
+/// V2 Phase 4: investor eligibility / compliance flag (set by admins).
+model investor_profiles {
+  user_id            String    @id @db.Uuid
+  eligibility_status String    @default("pending") @db.VarChar(20)
+  category           String?   @db.VarChar(30)
+  notes              String?
+  reviewed_by        String?   @db.Uuid
+  reviewed_at        DateTime? @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+}
+
+/// V2 Phase 4: record of each risk disclosure an investor accepted.
+model risk_disclosure_acceptances {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String   @db.Uuid
+  project_id  String   @db.Uuid
+  version     String   @db.VarChar(20)
+  ip          String?  @db.VarChar(64)
+  accepted_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([user_id, project_id])
+}
+
+/// V2 Phase 4: funding milestones. Raised funds are released to the business
+/// one milestone at a time, each by an admin.
+model project_milestones {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id      String              @db.Uuid
+  position        Int
+  title           String              @db.VarChar(255)
+  description     String?
+  amount          Decimal             @db.Decimal(30, 8)
+  status          String              @default("planned") @db.VarChar(20)
+  evidence        String?
+  evidence_url    String?
+  requested_at    DateTime?           @db.Timestamptz(6)
+  requested_by    String?             @db.Uuid
+  released_amount Decimal?            @db.Decimal(30, 8)
+  released_at     DateTime?           @db.Timestamptz(6)
+  released_by     String?             @db.Uuid
+  release_notes   String?
+  transaction_id  String?             @db.Uuid
+  created_at      DateTime            @default(now()) @db.Timestamptz(6)
+  project         investment_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, position])
 }
