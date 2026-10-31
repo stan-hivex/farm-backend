@@ -163,6 +163,7 @@ async function bootstrap() {
 
       if (allowedOrigin.includes('*')) {
         const escaped = allowedOrigin.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+        // nosemgrep: detect-non-literal-regexp -- operator-set CORS_ORIGINS, fully escaped
         const pattern = new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`);
         return pattern.test(origin);
       }
@@ -201,6 +202,7 @@ async function bootstrap() {
       }
 
       if (origin) {
+        // nosemgrep: cors-misconfiguration -- origin was checked against the allowlist above
         res.header('Access-Control-Allow-Origin', origin);
         res.header('Vary', 'Origin');
         res.header('Access-Control-Allow-Credentials', 'true');

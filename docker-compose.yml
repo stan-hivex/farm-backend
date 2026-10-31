@@ -19,6 +19,13 @@ services:
 
   nginx:
     image: nginx:stable-alpine
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
     depends_on:
       - backend
     ports:
