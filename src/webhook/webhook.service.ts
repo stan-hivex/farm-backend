@@ -1730,9 +1730,11 @@ export class WebhookService {
       },
     });
 
-    this.logger.log(
-      `fixStuckDeposits: found ${stuck.length} stuck deposit transaction(s)`,
-    );
+    if (stuck.length > 0) {
+      this.logger.debug(
+        `fixStuckDeposits: found ${stuck.length} stuck deposit transaction(s)`,
+      );
+    }
 
     for (const tx of stuck) {
       try {
@@ -1761,7 +1763,7 @@ export class WebhookService {
           provider = metaProvider;
         }
 
-        this.logger.log(
+        this.logger.debug(
           `fixStuckDeposits: deposit provider=${depositProvider} paymentMethod=${paymentMethod} metadata.provider=${metaProvider} resolved provider=${provider}`,
         );
 

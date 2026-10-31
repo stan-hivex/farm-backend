@@ -97,6 +97,18 @@ services:
         sync: false
       - key: NOWPAYMENTS_IPN_SECRET
         sync: false
+      - key: NOWPAYMENTS_EMAIL
+        sync: false
+      - key: NOWPAYMENTS_PASSWORD
+        sync: false
+      - key: NOWPAYMENTS_PAYOUT_IPN_CALLBACK_URL
+        sync: false
+      - key: NOWPAYMENTS_2FA_SECRET
+        sync: false
+      - key: WITHDRAWAL_DAILY_MAX_COUNT
+        value: "5"
+      - key: WITHDRAWAL_DAILY_MAX_AMOUNT
+        value: "1000000"
       - key: DIDIT_API_KEY
         sync: false
       - key: DIDIT_WEBHOOK_SECRET

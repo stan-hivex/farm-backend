@@ -338,6 +338,26 @@ export class AdminController {
       : this.withdrawService.adminApproveWithdrawal(id);
   }
 
+  @Permissions('admin:read')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @Get('withdrawals/legacy/stuck')
+  stuckLegacyWithdrawals() {
+    return this.withdrawService.listStuckLegacyWithdrawals();
+  }
+
+  @Permissions('admin:write')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(UserRole.SUPER_ADMIN)
+  @Post('withdrawals/:id/legacy-refund')
+  refundLegacyWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: RejectWithdrawalDto,
+    @CurrentUser() u: any,
+  ) {
+    return this.withdrawService.refundLegacyWithdrawal(id, u.id, dto.reason);
+  }
+
   // ── Superadmin Wallet ────────────────────────────────────────────────────────
   @Permissions('admin:read')
   @UseGuards(JwtGuard, RolesGuard)
