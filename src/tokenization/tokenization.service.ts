@@ -22,6 +22,7 @@ const shape = (t: any) =>
     total_units: t.total_units?.toString(),
     asset_id: t.asset_id?.toString() ?? null,
     confirmed_round: t.confirmed_round?.toString() ?? null,
+    farm_asset_id: t.farm_asset_id?.toString() ?? null,
     explorer_url: t.asset_id ? explorerAsset(t.network, t.asset_id) : null,
     tx_url: t.create_tx_id ? explorerTx(t.network, t.create_tx_id) : null,
   };
@@ -188,6 +189,9 @@ export class TokenizationService {
             create_tx_id: res.txId,
             confirmed_round: res.confirmedRound,
             issuer_address: res.issuer,
+            farm_asset_id: /^\d+$/.test(process.env.FARM_ASA_ID ?? '')
+              ? BigInt(process.env.FARM_ASA_ID!)
+              : null,
           },
         });
         await tx.token_allocations.createMany({

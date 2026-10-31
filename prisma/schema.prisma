@@ -1577,6 +1577,8 @@ model project_tokens {
   create_tx_id    String?             @unique @db.VarChar(64)
   confirmed_round BigInt?
   issuer_address  String?             @db.VarChar(64)
+  /// Phase 6: FARM ASA the principal is denominated in (1 unit = 1 FARM = 1 KSh)
+  farm_asset_id   BigInt?
   requested_by    String?             @db.Uuid
   reviewed_by     String?             @db.Uuid
   notes           String?
@@ -1601,4 +1603,122 @@ model token_allocations {
   token            project_tokens @relation(fields: [project_token_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([user_id])
+}
+
+/// V2 Phase 6: custodial Algorand account per user. The secret key is
+/// AES-256-GCM encrypted with WALLET_KEY_ENCRYPTION_KEY and never returned.
+model user_chain_wallets {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String   @unique @db.Uuid
+  network        String   @db.VarChar(20)
+  address        String   @unique @db.VarChar(64)
+  enc_secret     String
+  enc_iv         String   @db.VarChar(32)
+  enc_tag        String   @db.VarChar(32)
+  key_version    Int      @default(1)
+  key_scheme     String   @default("ed25519") @db.VarChar(16)
+  funded_tx_id   String?  @db.VarChar(64)
+  usdc_opt_in_tx String?  @db.VarChar(64)
+  farm_opt_in_tx String?  @db.VarChar(64)
+  status         String   @default("created") @db.VarChar(20)
+  error          String?
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+}
+
+/// Incoming on-chain transfers (USDC/FARM) to a user's address. tx_id+asset is
+/// unique so the same deposit can never be credited twice.
+model chain_deposits {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  network         String    @db.VarChar(20)
+  tx_id           String    @db.VarChar(64)
+  asset_id        BigInt
+  asset_symbol    String    @db.VarChar(10)
+  user_id         String    @db.Uuid
+  address         String    @db.VarChar(64)
+  sender          String?   @db.VarChar(64)
+  amount_units    BigInt
+  decimals        Int
+  confirmed_round BigInt
+  status          String    @default("detected") @db.VarChar(20)
+  rate_kes        Decimal?  @db.Decimal(20, 8)
+  rate_source     String?   @db.VarChar(255)
+  rate_at         DateTime? @db.Timestamptz(6)
+  farm_amount     Decimal?  @db.Decimal(30, 8)
+  transaction_id  String?   @db.Uuid
+  credited_at     DateTime? @db.Timestamptz(6)
+  error           String?
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([network, tx_id, asset_id])
+  @@index([user_id])
+  @@index([status])
+}
+
+/// Indexer cursor per network/asset.
+model chain_sync_state {
+  key        String   @id @db.VarChar(100)
+  last_round BigInt
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+}
+
+/// FARM ledger -> on-chain mirror. The internal ledger stays the source of
+/// truth; each run records what was (or would be) moved on chain.
+model farm_reconciliation_runs {
+  id           String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  network      String                @db.VarChar(20)
+  mode         String                @db.VarChar(10)
+  status       String                @default("running") @db.VarChar(20)
+  ledger_total Decimal               @db.Decimal(30, 8)
+  chain_total  Decimal?              @db.Decimal(30, 8)
+  wallets      Int                   @default(0)
+  started_by   String?               @db.Uuid
+  error        String?
+  created_at   DateTime              @default(now()) @db.Timestamptz(6)
+  finished_at  DateTime?             @db.Timestamptz(6)
+  entries      farm_mirror_entries[]
+}
+
+model farm_mirror_entries {
+  id          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  run_id      String                   @db.Uuid
+  user_id     String                   @db.Uuid
+  address     String                   @db.VarChar(64)
+  ledger_bal  Decimal                  @db.Decimal(30, 8)
+  chain_bal   Decimal                  @db.Decimal(30, 8)
+  delta_units BigInt
+  tx_id       String?                  @db.VarChar(64)
+  status      String                   @db.VarChar(20)
+  created_at  DateTime                 @default(now()) @db.Timestamptz(6)
+  run         farm_reconciliation_runs @relation(fields: [run_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([run_id, user_id])
+}
+
+/// Phase 6b: every completed ledger transaction is mirrored on chain through
+/// this outbox (unique per ledger transaction). DB commits first; the worker
+/// sends with retries and never re-sends a tx that may still confirm.
+model chain_outbox {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transaction_id  String    @db.Uuid
+  /// main = sender->receiver (net amount); fee = sender->reserve
+  leg             String    @default("main") @db.VarChar(10)
+  network         String    @db.VarChar(20)
+  from_user_id    String?   @db.Uuid
+  to_user_id      String?   @db.Uuid
+  from_address    String    @db.VarChar(64)
+  to_address      String    @db.VarChar(64)
+  amount_units    BigInt
+  status          String    @default("pending") @db.VarChar(20)
+  tx_id           String?   @unique @db.VarChar(64)
+  last_valid      BigInt?
+  attempts        Int       @default(0)
+  last_error      String?
+  next_attempt_at DateTime  @default(now()) @db.Timestamptz(6)
+  sent_at         DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([transaction_id, leg])
+  @@index([status, next_attempt_at])
 }
