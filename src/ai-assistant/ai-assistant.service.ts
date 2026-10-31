@@ -4,8 +4,9 @@ import { PrismaService } from '../database/prisma.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { AiProvider, ChatMessage } from './ai-provider';
 import { AiToolsService } from './ai-tools.service';
+import { TravelService } from '../travel/travel.service';
 
-export const AI_ACTIONS = ['send_farm'] as const;
+export const AI_ACTIONS = ['send_farm', 'book_flight'] as const;
 const ACTION_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 4;
 const HISTORY = 20;
@@ -29,6 +30,7 @@ export class AiAssistantService {
     private readonly tools: AiToolsService,
     private readonly wallets: WalletsService,
     private readonly config: ConfigService,
+    private readonly travel: TravelService,
   ) {}
 
   status() {
@@ -107,6 +109,13 @@ export class AiAssistantService {
             const req = await this.proposePayment(userId, args, conv.id);
             proposed.push(req);
             result = { status: 'pending_user_confirmation', request_id: req.id, amount: Number(req.amount), recipient: req.recipient_identifier, expires_at: req.expires_at };
+          } else if (call.function.name === 'propose_flight_booking') {
+            const req = await this.proposeFlight(userId, args, conv.id);
+            proposed.push(req);
+            result = { status: 'pending_user_confirmation', request_id: req.id, price_farm: Number(req.amount), note: 'The user must open the request, enter passenger details and confirm with their PIN.' };
+          } else if (call.function.name === 'search_flights') {
+            const offers = await this.travel.search(args as any);
+            result = { offers: offers.slice(0, 5).map((o) => ({ offer_id: o.id, airline: o.owner, price_farm: o.price_farm, bookable: o.bookable, slices: o.slices.map((x) => ({ from: x.origin, to: x.destination, departs: x.segments[0]?.departing_at, stops: x.segments.length - 1 })) })) };
           } else if (call.function.name === 'get_spend_permissions') {
             result = await this.getPermissions(userId);
           } else {
@@ -165,10 +174,10 @@ export class AiAssistantService {
     return Number(agg._sum.amount ?? 0);
   }
 
-  private async checkCaps(userId: string, amount: number, excludeId?: string) {
+  private async checkCaps(userId: string, amount: number, excludeId?: string, action = 'send_farm') {
     const p = await this.prisma.ai_spend_permissions.findUnique({ where: { user_id: userId } });
     if (!p || !p.enabled || p.revoked_at) throw new ForbiddenException('AI payments are turned off. Enable them in Assistant settings.');
-    if (!p.allowed_actions.includes('send_farm')) throw new ForbiddenException('Sending FARM is not an allowed AI action');
+    if (!p.allowed_actions.includes(action)) throw new ForbiddenException(`${action === 'book_flight' ? 'Booking flights' : 'Sending FARM'} is not an allowed AI action`);
     if (amount > Number(p.per_tx_cap)) throw new ForbiddenException(`Amount exceeds your per-transaction AI cap of ${Number(p.per_tx_cap)} FARM`);
     let today = await this.committedToday(userId);
     if (excludeId) {
@@ -193,6 +202,21 @@ export class AiAssistantService {
     return req;
   }
 
+  async proposeFlight(userId: string, args: Record<string, unknown>, conversationId?: string) {
+    const offer = await this.travel.offer(String(args.offer_id ?? ''));
+    if (!offer.bookable || offer.price_farm == null) throw new BadRequestException('This offer cannot be priced in FARM right now');
+    await this.checkCaps(userId, offer.price_farm, undefined, 'book_flight');
+    const route = offer.slices.map((x) => `${x.origin}-${x.destination}`).join(', ');
+    const req = await this.prisma.ai_action_requests.create({
+      data: {
+        user_id: userId, conversation_id: conversationId ?? null, action: 'book_flight', recipient_identifier: `${offer.owner} ${route}`.slice(0, 120),
+        amount: offer.price_farm, description: `Flight ${route}`, payload: { offer_id: offer.id }, expires_at: new Date(Date.now() + ACTION_TTL_MS),
+      },
+    });
+    await this.audit(userId, 'action_proposed', { request_id: req.id, action: 'book_flight', amount: offer.price_farm, recipient: route });
+    return req;
+  }
+
   async listActions(userId: string, status?: string) {
     await this.prisma.ai_action_requests.updateMany({ where: { user_id: userId, status: 'pending', expires_at: { lte: new Date() } }, data: { status: 'expired' } });
     return this.prisma.ai_action_requests.findMany({ where: { user_id: userId, ...(status ? { status } : {}) }, orderBy: { created_at: 'desc' }, take: 50 });
@@ -210,6 +234,7 @@ export class AiAssistantService {
     const req = await this.prisma.ai_action_requests.findFirst({ where: { id, user_id: userId } });
     if (!req) throw new NotFoundException('Request not found');
     if (req.status !== 'pending') throw new BadRequestException(`Request is ${req.status}`);
+    if (req.action !== 'send_farm') throw new BadRequestException('Open this request in Travel to add passenger details and confirm');
     if (req.expires_at <= new Date()) {
       await this.prisma.ai_action_requests.update({ where: { id }, data: { status: 'expired' } });
       throw new BadRequestException('Request expired');

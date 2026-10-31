@@ -29,6 +29,7 @@ export class CacheInterceptor implements NestInterceptor {
     if (
       path.includes('/wallet') ||
       path.includes('/ai/') ||
+      path.includes('/travel/') ||
       path.includes('/merchant/dashboard') ||
       path.includes('/merchant/transactions') ||
       path.includes('/qr-payments/verify/') ||

@@ -26,9 +26,9 @@ const cfg = (env: Record<string, string>) => ({ get: (k: string) => env[k] }) as
 const ON = { AI_ASSISTANT_ENABLED: 'true', AI_API_KEY: 'k' };
 const PERM = { enabled: true, revoked_at: null, per_tx_cap: 1000, daily_cap: 2000, allowed_actions: ['send_farm'] };
 
-function mk(prisma: any, env = ON, provider?: any, wallets?: any) {
+function mk(prisma: any, env = ON, provider?: any, wallets?: any, travel: any = { search: jest.fn(), offer: jest.fn() }) {
   const p = provider ?? new AiProvider(cfg(env));
-  return new AiAssistantService(prisma, p, new AiToolsService(prisma), wallets ?? { sendFunds: jest.fn() }, cfg(env));
+  return new AiAssistantService(prisma, p, new AiToolsService(prisma), wallets ?? { sendFunds: jest.fn() }, cfg(env), travel as any);
 }
 
 describe('AiProvider', () => {
@@ -94,7 +94,7 @@ describe('AiAssistantService', () => {
 
   it('confirm requires the owner, executes via WalletsService with the PIN, and audits', async () => {
     const pr = mkPrisma(PERM);
-    pr.store.req = { id: 'req-1', user_id: U, status: 'pending', amount: 100, recipient_identifier: 'jane', description: null, expires_at: new Date(Date.now() + 60000), created_at: new Date() };
+    pr.store.req = { id: 'req-1', action: 'send_farm', user_id: U, status: 'pending', amount: 100, recipient_identifier: 'jane', description: null, expires_at: new Date(Date.now() + 60000), created_at: new Date() };
     const wallets = { sendFunds: jest.fn().mockResolvedValue({ data: { transaction_reference: 'TX1' } }) };
     const s = mk(pr, ON, undefined, wallets);
     await expect(s.confirmAction('other', 'req-1', '1234', '')).rejects.toBeInstanceOf(NotFoundException);
@@ -107,7 +107,7 @@ describe('AiAssistantService', () => {
 
   it('confirm re-checks caps and puts request back to pending on failure', async () => {
     const pr = mkPrisma({ ...PERM, enabled: false });
-    pr.store.req = { id: 'req-1', user_id: U, status: 'pending', amount: 100, recipient_identifier: 'jane', expires_at: new Date(Date.now() + 60000), created_at: new Date() };
+    pr.store.req = { id: 'req-1', action: 'send_farm', user_id: U, status: 'pending', amount: 100, recipient_identifier: 'jane', expires_at: new Date(Date.now() + 60000), created_at: new Date() };
     await expect(mk(pr).confirmAction(U, 'req-1', '1234', '')).rejects.toBeInstanceOf(ForbiddenException);
     const pr2 = mkPrisma(PERM);
     pr2.store.req = { ...pr.store.req };
