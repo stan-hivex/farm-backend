@@ -1722,3 +1722,69 @@ model chain_outbox {
   @@unique([transaction_id, leg])
   @@index([status, next_attempt_at])
 }
+
+// ---- Phase 7: Mkulima AI assistant (additive) ----
+model ai_conversations {
+  id         String        @id @default(uuid()) @db.Uuid
+  user_id    String        @db.Uuid
+  title      String?
+  created_at DateTime      @default(now())
+  updated_at DateTime      @updatedAt
+  messages   ai_messages[]
+
+  @@index([user_id, updated_at])
+}
+
+model ai_messages {
+  id              String           @id @default(uuid()) @db.Uuid
+  conversation_id String           @db.Uuid
+  user_id         String           @db.Uuid
+  role            String
+  content         String
+  tool_name       String?
+  created_at      DateTime         @default(now())
+  conversation    ai_conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([conversation_id, created_at])
+  @@index([user_id, created_at])
+}
+
+model ai_spend_permissions {
+  id              String    @id @default(uuid()) @db.Uuid
+  user_id         String    @unique @db.Uuid
+  enabled         Boolean   @default(false)
+  per_tx_cap      Decimal   @default(0) @db.Decimal(20, 2)
+  daily_cap       Decimal   @default(0) @db.Decimal(20, 2)
+  allowed_actions String[]  @default([])
+  revoked_at      DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+}
+
+model ai_action_requests {
+  id                   String    @id @default(uuid()) @db.Uuid
+  user_id              String    @db.Uuid
+  conversation_id      String?   @db.Uuid
+  action               String
+  recipient_identifier String
+  amount               Decimal   @db.Decimal(20, 2)
+  description          String?
+  status               String    @default("pending")
+  transaction_ref      String?
+  failure_reason       String?
+  expires_at           DateTime
+  decided_at           DateTime?
+  created_at           DateTime  @default(now())
+
+  @@index([user_id, status])
+}
+
+model ai_audit_log {
+  id         String   @id @default(uuid()) @db.Uuid
+  user_id    String   @db.Uuid
+  event      String
+  details    Json?
+  created_at DateTime @default(now())
+
+  @@index([user_id, created_at])
+}
