@@ -4,6 +4,7 @@ import {
   Get,
   Ip,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -26,7 +27,6 @@ import {
   CustomerDto,
   InvoiceDto,
   PaymentLinkDto,
-  PayoutDto,
   PinDto,
   ProfileDto,
   ToggleLinkDto,
@@ -80,11 +80,7 @@ export class BusinessOpsController {
   @Get('payouts') payouts(@CurrentUser() u: any, @Query() q: any) {
     return this.finance.payouts(u.id, q);
   }
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('payouts')
-  requestPayout(@CurrentUser() u: any, @Body() dto: PayoutDto) {
-    return this.finance.requestPayout(u.id, dto);
-  }
+  // POST business/payouts moved to BusinessPayoutsController (automatic payouts).
 
   @Get('team') team_(@CurrentUser() u: any) {
     return this.team.list(u.id);
@@ -170,6 +166,12 @@ export class BusinessOpsController {
   ) {
     return this.commerce.sendInvoice(u.id, id);
   }
+  @Post('invoices/:id/resend') resendInvoice(
+    @CurrentUser() u: any,
+    @Param('id', UUID) id: string,
+  ) {
+    return this.commerce.resendInvoice(u.id, id);
+  }
   @Post('invoices/:id/cancel') cancelInvoice(
     @CurrentUser() u: any,
     @Param('id', UUID) id: string,
@@ -233,6 +235,13 @@ export class BusinessOpsController {
   ) {
     return this.escrow.requestRelease(u.id, id);
   }
+  @Post('escrows/:id/milestones/:index/request-release') requestMilestone(
+    @CurrentUser() u: any,
+    @Param('id', UUID) id: string,
+    @Param('index', ParseIntPipe) index: number,
+  ) {
+    return this.escrow.requestMilestone(u.id, id, index);
+  }
   @Post('escrows/:id/cancel') cancelEscrow(
     @CurrentUser() u: any,
     @Param('id', UUID) id: string,
@@ -294,5 +303,16 @@ export class BusinessPayController {
     @Body() dto: PinDto,
   ) {
     return this.escrow.fund(u.id, id, dto.pin);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('escrows/:id/milestones/:index/release')
+  releaseMilestone(
+    @CurrentUser() u: any,
+    @Param('id', UUID) id: string,
+    @Param('index', ParseIntPipe) index: number,
+    @Body() dto: PinDto,
+  ) {
+    return this.escrow.releaseMilestone(u.id, id, index, dto.pin);
   }
 }

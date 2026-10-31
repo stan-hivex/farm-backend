@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   NotImplementedException,
   Param,
@@ -31,6 +32,7 @@ import {
 } from './api-key-auth.guard';
 import { ApiPayoutDto } from './business-api.dto';
 import { SandboxService } from './sandbox.service';
+import { ApiPayoutsService } from './api-payouts.service';
 
 const live = async (p: Promise<any>) => ({ livemode: true, ...(await p) });
 
@@ -50,6 +52,7 @@ export class PublicApiController {
     private readonly commerce: BusinessCommerceService,
     private readonly escrow: BusinessEscrowService,
     private readonly sandbox: SandboxService,
+    private readonly apiPayouts: ApiPayoutsService,
   ) {}
 
   private api(req: any): FarmApiContext {
@@ -286,15 +289,18 @@ export class PublicApiController {
   @Post('payouts')
   @RequireScope('payouts:write')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  requestPayout(@Req() req: any, @Body() dto: ApiPayoutDto) {
+  @ApiOperation({
+    summary: 'Request a payout (live: processed automatically; send an Idempotency-Key header)',
+  })
+  requestPayout(
+    @Req() req: any,
+    @Body() dto: ApiPayoutDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.create(a.businessId, 'payout', dto, 'pending')
-      : live(
-          this.finance.requestPayout(a.ownerUserId, dto, {
-            viaApiKeyId: a.keyId,
-          }),
-        );
+      : live(this.apiPayouts.create(a, dto, idempotencyKey));
   }
 
   // ---------- projects (not built yet) ----------

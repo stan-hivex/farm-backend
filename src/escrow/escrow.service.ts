@@ -18,6 +18,12 @@ import { paginationParams, paginate } from '../common/utils/pagination.util';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { CloudinaryService } from '../common/cloudinary.service';
 
+/** Amount still locked in an escrow after milestone releases. */
+export function remainingAmount(e: { amount: any; released_amount?: any }) {
+  const left = Number(e.amount) - Number(e.released_amount ?? 0);
+  return left > 0 ? Number(left.toFixed(8)) : 0;
+}
+
 @Injectable()
 export class EscrowService {
   private readonly logger = new Logger(EscrowService.name);
@@ -680,6 +686,161 @@ export class EscrowService {
     return released;
   }
 
+  /**
+   * Releases part of an active escrow to the seller (one milestone). Funds move
+   * only here, inside one DB transaction, with the same 1.5% release fee as a
+   * full release. When the last part is released the escrow completes.
+   */
+  async releasePartial(
+    escrowId: string,
+    buyerId: string,
+    amount: number,
+    pin: string,
+    label: string,
+  ) {
+    const part = Number(Number(amount).toFixed(2));
+    if (!Number.isFinite(part) || part <= 0)
+      throw new BadRequestException('Release amount must be positive');
+    const escrow = await this.getEscrowOrFail(escrowId);
+    if (escrow.buyer_id !== buyerId)
+      throw new ForbiddenException('Only the buyer can release');
+    if (escrow.status !== 'active')
+      throw new BadRequestException(
+        `Cannot release escrow with status: ${escrow.status}`,
+      );
+    if (!escrow.buyer_wallet_id || !escrow.seller_wallet_id)
+      throw new BadRequestException(
+        'Escrow is missing a buyer or seller wallet',
+      );
+    await this.authService.verifyPin(buyerId, pin);
+    const buyerWalletId = escrow.buyer_wallet_id;
+    const sellerWalletId = escrow.seller_wallet_id;
+    const sellerId = escrow.seller_id ?? '';
+
+    const fee = Number((part * 0.015).toFixed(2));
+    const toSeller = Number((part - fee).toFixed(8));
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Atomic claim: never release more than is still locked.
+      const rows = await tx.$queryRaw<{ amount: any; released_amount: any }[]>`
+        UPDATE escrow_contracts
+           SET released_amount = released_amount + ${part}::numeric,
+               updated_at = now()
+         WHERE id = ${escrow.id}::uuid
+           AND status = 'active'
+           AND released_amount + ${part}::numeric <= amount
+        RETURNING amount, released_amount`;
+      if (!rows.length)
+        throw new BadRequestException(
+          'Escrow is no longer active or the amount exceeds what is still locked',
+        );
+      const completed = remainingAmount(rows[0]) <= 0;
+      if (completed)
+        await tx.escrow_contracts.update({
+          where: { id: escrow.id },
+          data: { status: 'completed', released_at: new Date() },
+        });
+      const buyerWallet = await tx.wallets.update({
+        where: { id: buyerWalletId },
+        data: {
+          locked_balance: { decrement: part },
+          balance: { decrement: part },
+        },
+      });
+      const sellerWallet = await tx.wallets.update({
+        where: { id: sellerWalletId },
+        data: { balance: { increment: toSeller } },
+      });
+      const txn = await tx.transactions.create({
+        data: {
+          transaction_reference: generateTxReference(),
+          sender_wallet_id: buyerWalletId,
+          receiver_wallet_id: sellerWalletId,
+          transaction_type: 'escrow_release',
+          status: 'completed',
+          amount: part,
+          fee,
+          net_amount: toSeller,
+          description: `Escrow milestone release: ${label}`,
+          metadata: {
+            user_id: buyerId,
+            escrow_id: escrow.id,
+            partial: true,
+            milestone: label,
+          },
+          processed_at: new Date(),
+        },
+      });
+      await tx.ledger_entries.createMany({
+        data: [
+          {
+            transaction_id: txn.id,
+            wallet_id: buyerWalletId,
+            entry_type: 'debit',
+            amount: part,
+            description: `Escrow milestone ${escrow.reference_code}: ${label}`,
+          },
+          {
+            transaction_id: txn.id,
+            wallet_id: sellerWalletId,
+            entry_type: 'credit',
+            amount: toSeller,
+            description: `Escrow milestone ${escrow.reference_code}: ${label} (after 1.5% fee)`,
+          },
+        ],
+      });
+      if (fee > 0)
+        await this.creditSuperadminWalletInTx(
+          tx,
+          fee,
+          `Escrow milestone release fee: ${escrow.title}`,
+        );
+      return {
+        completed,
+        released_amount: Number(rows[0].released_amount),
+        remaining: remainingAmount(rows[0]),
+        buyerBalance: Number(buyerWallet.balance),
+        sellerBalance: Number(sellerWallet.balance),
+        transaction_reference: txn.transaction_reference,
+      };
+    });
+    try {
+      this.websocket.emitBalanceUpdate(buyerId, result.buyerBalance);
+      this.websocket.emitBalanceUpdate(sellerId, result.sellerBalance);
+    } catch {
+      /* realtime is best effort */
+    }
+    await this.notificationsService
+      .sendNotification(sellerId, {
+        type: 'escrow_received',
+        title: 'Milestone released',
+        body: `${toSeller} FARM was released to you for "${label}" (${escrow.title}).`,
+        entityId: escrow.id,
+        metadata: {
+          escrow_id: escrow.id,
+          amount: part,
+          net_amount: toSeller,
+          event: 'escrow_milestone_released',
+          transaction_reference: result.transaction_reference,
+          transaction_type: 'escrow_release',
+        },
+      })
+      .catch(() => undefined);
+    return {
+      data: {
+        transaction_reference: result.transaction_reference,
+        amount: part,
+        fee,
+        net_amount: toSeller,
+        released_amount: result.released_amount,
+        remaining: result.remaining,
+        completed: result.completed,
+      },
+      message: result.completed
+        ? 'Final milestone released'
+        : 'Milestone released',
+    };
+  }
+
   async executeRelease(
     escrow: any,
     resolution?: { adminId: string; note: string },
@@ -692,9 +853,9 @@ export class EscrowService {
     if (!Number.isFinite(Number(escrow.amount)) || Number(escrow.amount) <= 0) {
       throw new BadRequestException('Escrow amount is invalid');
     }
-    const releaseFee = Number((Number(escrow.amount) * 0.015).toFixed(2)); // 1.5% release fee
-    const amountToSeller = Number(escrow.amount) - releaseFee;
-    const amountLocked = Number(escrow.amount);
+    let releaseFee = 0;
+    let amountToSeller = 0;
+    let amountLocked = 0;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const resolvedAt = new Date();
@@ -722,6 +883,22 @@ export class EscrowService {
             : 'Escrow is no longer active',
         );
       }
+      // The row is now locked by this transaction; only release what milestone
+      // releases have not already paid out.
+      const fresh = await tx.escrow_contracts.findUnique({
+        where: { id: escrow.id },
+        select: { amount: true, released_amount: true },
+      });
+      amountLocked = remainingAmount(fresh ?? escrow);
+      releaseFee = Number((amountLocked * 0.015).toFixed(2)); // 1.5% release fee
+      amountToSeller = Number((amountLocked - releaseFee).toFixed(8));
+      if (amountLocked <= 0) {
+        return {
+          buyerBalance: null,
+          sellerBalance: null,
+          transactionReference: null,
+        } as any;
+      }
       // Deduct only the locked escrow amount from buyer's wallet. The creation fee was already charged at escrow creation.
       const updatedBuyerWallet = await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
@@ -742,7 +919,7 @@ export class EscrowService {
           receiver_wallet_id: escrow.seller_wallet_id,
           transaction_type: 'escrow_release',
           status: 'completed',
-          amount: Number(escrow.amount),
+          amount: amountLocked,
           fee: releaseFee,
           net_amount: amountToSeller,
           description: `Escrow release: ${escrow.title}`,
@@ -783,6 +960,7 @@ export class EscrowService {
       };
     });
 
+    if (!result.transactionReference) return;
     try {
       this.websocket.emitBalanceUpdate(escrow.buyer_id, result.buyerBalance);
       this.websocket.emitTransactionUpdate(escrow.buyer_id, {
@@ -854,7 +1032,7 @@ export class EscrowService {
     escrow: any,
     resolution?: { adminId: string; note: string },
   ) {
-    const amount = Number(escrow.amount);
+    let amount = 0;
     const result = await this.prisma.$transaction(async (tx) => {
       const resolvedAt = new Date();
       const transitioned = await tx.escrow_contracts.updateMany({
@@ -880,6 +1058,11 @@ export class EscrowService {
             : 'Escrow is no longer active',
         );
       }
+      const fresh = await tx.escrow_contracts.findUnique({
+        where: { id: escrow.id },
+        select: { amount: true, released_amount: true },
+      });
+      amount = remainingAmount(fresh ?? escrow);
       const updatedWallet = await tx.wallets.update({
         where: { id: escrow.buyer_wallet_id },
         data: { locked_balance: { decrement: amount } },

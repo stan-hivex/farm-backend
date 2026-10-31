@@ -331,6 +331,25 @@ describe('WithdrawService security (race, idempotency, refunds)', () => {
     expect(db.wallet.locked_balance).toBe(4_000);
   });
 
+  it('business-API pre-authorised withdrawals skip only the PIN: same lock and daily limits', async () => {
+    await build(10_000);
+    jest.spyOn(service as any, 'processWithdrawal').mockResolvedValue(undefined);
+    process.env.WITHDRAWAL_DAILY_MAX_COUNT = '0';
+    const noPin = { ...fiat(3_000), pin: undefined } as any;
+    await expect(service.createWithdrawal('user-1', noPin)).rejects.toThrow(/PIN is required/);
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, () =>
+        service.createWithdrawal('user-1', noPin, { preAuthorized: 'business_api_key:k1' }),
+      ),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+    expect(db.wallet.locked_balance).toBe(9_000);
+    process.env.WITHDRAWAL_DAILY_MAX_AMOUNT = '9000';
+    await expect(
+      service.createWithdrawal('user-1', { ...noPin, amount: 1_500 } as any, { preAuthorized: 'k' }),
+    ).rejects.toThrow(/Daily withdrawal amount limit|Insufficient/);
+  });
+
   it('auto-submits a crypto payout exactly once even if triggered concurrently', async () => {
     await build(1_000);
     const { reference } = await service.createNowpaymentsCryptoWithdrawal(

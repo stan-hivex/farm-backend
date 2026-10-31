@@ -132,6 +132,8 @@ model escrow_contracts {
   resolved_at                                        DateTime?         @db.Timestamp(6)
   auto_release_at                                    DateTime?         @db.Timestamp(6)
   resolution_note                                    String?
+  /// V2 Phase 2b: running total released milestone-by-milestone.
+  released_amount                                    Decimal           @default(0) @db.Decimal(30, 8)
   created_at                                         DateTime?         @default(now()) @db.Timestamp(6)
   updated_at                                         DateTime?         @default(now()) @db.Timestamp(6)
   users_escrow_contracts_arbiter_idTousers           users?            @relation("escrow_contracts_arbiter_idTousers", fields: [arbiter_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1100,6 +1102,7 @@ model businesses {
   webhook_endpoints    business_webhook_endpoints[]
   api_requests         business_api_requests[]
   sandbox_objects      business_sandbox_objects[]
+  web_checkouts        business_web_checkouts[]
 
   @@index([status], map: "idx_businesses_status")
 }
@@ -1223,12 +1226,15 @@ model business_invoices {
   notes                 String?
   due_date              DateTime?               @db.Date
   sent_at               DateTime?               @db.Timestamptz(6)
+  last_emailed_at       DateTime?               @db.Timestamptz(6)
   paid_at               DateTime?               @db.Timestamptz(6)
   cancelled_at          DateTime?               @db.Timestamptz(6)
   transaction_reference String?                 @db.VarChar(255)
   created_by            String?                 @db.Uuid
   created_at            DateTime                @default(now()) @db.Timestamptz(6)
   updated_at            DateTime                @default(now()) @updatedAt @db.Timestamptz(6)
+  payment_hold_ref      String?                 @db.VarChar(255)
+  payment_hold_until    DateTime?               @db.Timestamptz(6)
   business              businesses              @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   customer              business_customers?     @relation(fields: [customer_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
@@ -1263,6 +1269,7 @@ model business_payments {
   payer_user_id         String?    @db.Uuid
   amount                Decimal    @db.Decimal(30, 8)
   transaction_reference String     @unique @db.VarChar(255)
+  channel               String     @default("app") @db.VarChar(20)
   created_at            DateTime   @default(now()) @db.Timestamptz(6)
   business              businesses @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -1365,4 +1372,66 @@ model business_sandbox_objects {
   business    businesses @relation(fields: [business_id], references: [id], onDelete: Cascade)
 
   @@index([business_id, object_type, created_at])
+}
+
+/// V2 Phase 2b: hosted web checkout for payers without the app. Money is
+/// collected and credited by the existing guest merchant (qr_payments) pipeline.
+model business_web_checkouts {
+  id                    String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id           String     @db.Uuid
+  source                String     @db.VarChar(20)
+  source_id             String     @db.Uuid
+  transaction_reference String     @unique @db.VarChar(255)
+  amount                Decimal    @db.Decimal(30, 8)
+  amount_kes            Decimal    @db.Decimal(20, 2)
+  method                String     @db.VarChar(20)
+  payer_email           String?    @db.VarChar(255)
+  status                String     @default("pending") @db.VarChar(20)
+  completed_at          DateTime?  @db.Timestamptz(6)
+  created_at            DateTime   @default(now()) @db.Timestamptz(6)
+  /// When set, this checkout holds a link use / invoice until it expires.
+  reserved              Boolean    @default(false)
+  expires_at            DateTime?  @db.Timestamptz(6)
+  business              businesses @relation(fields: [business_id], references: [id], onDelete: Cascade)
+
+  @@index([status, created_at])
+  @@index([source, source_id])
+}
+
+/// Web payments that arrived after their link/invoice could no longer accept them.
+model business_payment_exceptions {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id           String    @db.Uuid
+  checkout_id           String?   @db.Uuid
+  source                String    @db.VarChar(20)
+  source_id             String    @db.Uuid
+  transaction_reference String    @unique @db.VarChar(255)
+  amount                Decimal   @db.Decimal(30, 8)
+  reason                String    @db.VarChar(255)
+  status                String    @default("refund_pending") @db.VarChar(20)
+  resolved_at           DateTime? @db.Timestamptz(6)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([status, created_at])
+  @@index([business_id])
+}
+
+/// Idempotency records for live payouts requested through the business API.
+model business_api_payouts {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id          String   @db.Uuid
+  api_key_id           String?  @db.Uuid
+  /// 'api' (live API key) or 'dashboard' (team member with PIN)
+  source               String   @default("api") @db.VarChar(20)
+  actor_user_id        String?  @db.Uuid
+  idempotency_key      String   @db.VarChar(255)
+  request_hash         String   @db.VarChar(64)
+  status               String   @default("processing") @db.VarChar(20)
+  withdrawal_reference String?  @db.VarChar(255)
+  response             Json?
+  error                String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([business_id, idempotency_key])
 }
