@@ -18,26 +18,26 @@ model activity_logs {
 }
 
 model api_keys {
-  id           String    @id @default(dbgenerated("gen_random_uuid()"))
-  user_id      String?   @db.Uuid
-  api_key      String?
-  api_key_hash String?   @unique
-  api_secret   String?
-  permissions  Json?
-  last_used_at DateTime? @db.Timestamp(6)
-  expires_at   DateTime? @db.Timestamp(6)
-  created_at   DateTime? @default(now()) @db.Timestamp(6)
-  users        users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id              String                  @id @default(dbgenerated("gen_random_uuid()"))
+  user_id         String?                 @db.Uuid
+  api_key         String?
+  api_key_hash    String?                 @unique
+  api_secret      String?
+  permissions     Json?
+  last_used_at    DateTime?               @db.Timestamp(6)
+  expires_at      DateTime?               @db.Timestamp(6)
+  created_at      DateTime?               @default(now()) @db.Timestamp(6)
+  users           users?                  @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   // V2 Phase 3: business developer API keys (sandbox/live)
-  business_id  String?   @db.Uuid
-  name         String?   @db.VarChar(120)
-  mode         String?   @db.VarChar(10)
-  key_prefix   String?   @db.VarChar(40)
-  status       String?   @default("active") @db.VarChar(20)
-  revoked_at   DateTime? @db.Timestamp(6)
+  business_id     String?                 @db.Uuid
+  name            String?                 @db.VarChar(120)
+  mode            String?                 @db.VarChar(10)
+  key_prefix      String?                 @db.VarChar(40)
+  status          String?                 @default("active") @db.VarChar(20)
+  revoked_at      DateTime?               @db.Timestamp(6)
   rotated_from_id String?
-  business     businesses? @relation("api_keys_business", fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  requests     business_api_requests[]
+  business        businesses?             @relation("api_keys_business", fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  requests        business_api_requests[]
 
   @@index([business_id, mode])
 }
@@ -203,46 +203,47 @@ model fee_configurations {
 }
 
 model investment_projects {
-  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  project_name       String             @db.VarChar(255)
-  category           String?            @db.VarChar(100)
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_name       String               @db.VarChar(255)
+  category           String?              @db.VarChar(100)
   description        String?
   banner_image       String?
-  target_amount      Decimal?           @db.Decimal(30, 8)
-  raised_amount      Decimal?           @default(0) @db.Decimal(30, 8)
-  minimum_investment Decimal?           @db.Decimal(30, 8)
-  roi_percent        Decimal?           @db.Decimal(10, 2)
+  target_amount      Decimal?             @db.Decimal(30, 8)
+  raised_amount      Decimal?             @default(0) @db.Decimal(30, 8)
+  minimum_investment Decimal?             @db.Decimal(30, 8)
+  roi_percent        Decimal?             @db.Decimal(10, 2)
   duration_months    Int?
-  total_backers      Int?               @default(0)
-  status             String?            @default("open") @db.VarChar(50)
-  starts_at          DateTime?          @db.Timestamp(6)
-  ends_at            DateTime?          @db.Timestamp(6)
-  created_by         String?            @db.Uuid
-  created_at         DateTime?          @default(now()) @db.Timestamp(6)
-  updated_at         DateTime?          @default(now()) @db.Timestamp(6)
-  users              users?             @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  total_backers      Int?                 @default(0)
+  status             String?              @default("open") @db.VarChar(50)
+  starts_at          DateTime?            @db.Timestamp(6)
+  ends_at            DateTime?            @db.Timestamp(6)
+  created_by         String?              @db.Uuid
+  created_at         DateTime?            @default(now()) @db.Timestamp(6)
+  updated_at         DateTime?            @default(now()) @db.Timestamp(6)
+  users              users?               @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   user_investments   user_investments[]
   // ---- V2 Phase 4: business-submitted projects (canonical project model) ----
-  business_id        String?            @db.Uuid
-  sector             String?            @db.VarChar(40)
-  summary            String?            @db.VarChar(500)
-  location           String?            @db.VarChar(255)
-  country            String?            @db.VarChar(2)
-  currency           String             @default("FARM") @db.VarChar(10)
-  maximum_investment Decimal?           @db.Decimal(30, 8)
-  instrument_type    String?            @db.VarChar(30)
+  business_id        String?              @db.Uuid
+  sector             String?              @db.VarChar(40)
+  summary            String?              @db.VarChar(500)
+  location           String?              @db.VarChar(255)
+  country            String?              @db.VarChar(2)
+  currency           String               @default("FARM") @db.VarChar(10)
+  maximum_investment Decimal?             @db.Decimal(30, 8)
+  instrument_type    String?              @db.VarChar(30)
   use_of_funds       String?
   risk_factors       String?
   team               String?
   review_notes       String?
-  submitted_at       DateTime?          @db.Timestamptz(6)
-  approved_at        DateTime?          @db.Timestamptz(6)
-  listed_at          DateTime?          @db.Timestamptz(6)
-  reviewed_by        String?            @db.Uuid
+  submitted_at       DateTime?            @db.Timestamptz(6)
+  approved_at        DateTime?            @db.Timestamptz(6)
+  listed_at          DateTime?            @db.Timestamptz(6)
+  reviewed_by        String?              @db.Uuid
   /// Funds released to the business so far (milestone by milestone)
-  released_amount    Decimal            @default(0) @db.Decimal(30, 8)
+  released_amount    Decimal              @default(0) @db.Decimal(30, 8)
   milestones         project_milestones[]
-  business           businesses?        @relation("business_projects", fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  token              project_tokens?
+  business           businesses?          @relation("business_projects", fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   documents          project_documents[]
   reviews            project_reviews[]
   updates            project_updates[]
@@ -495,17 +496,17 @@ model transactions {
 }
 
 model payment_receipts {
-  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  receipt_number   String       @unique @db.VarChar(100)
-  transaction_id   String       @unique @db.Uuid
-  merchant_id      String       @db.Uuid
-  amount           Decimal      @db.Decimal(30, 8)
-  fee              Decimal      @default(0) @db.Decimal(30, 8)
-  pdf_url          String?
-  email_sent_at    DateTime?    @db.Timestamp(6)
-  created_at       DateTime     @default(now()) @db.Timestamp(6)
-  transactions     transactions @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  merchants        merchants    @relation(fields: [merchant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receipt_number String       @unique @db.VarChar(100)
+  transaction_id String       @unique @db.Uuid
+  merchant_id    String       @db.Uuid
+  amount         Decimal      @db.Decimal(30, 8)
+  fee            Decimal      @default(0) @db.Decimal(30, 8)
+  pdf_url        String?
+  email_sent_at  DateTime?    @db.Timestamp(6)
+  created_at     DateTime     @default(now()) @db.Timestamp(6)
+  transactions   transactions @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  merchants      merchants    @relation(fields: [merchant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([merchant_id, created_at(sort: Desc)])
 }
@@ -534,21 +535,21 @@ model uploads {
 }
 
 model user_investments {
-  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id             String?              @db.Uuid
-  project_id          String?              @db.Uuid
-  amount              Decimal?             @db.Decimal(30, 8)
-  expected_roi        Decimal?             @db.Decimal(30, 8)
-  transaction_id      String?              @db.Uuid
-  status              String?              @default("active") @db.VarChar(50)
-  invested_at         DateTime?            @default(now()) @db.Timestamp(6)
-  maturity_date       DateTime?            @db.Timestamp(6)
-  roi_payouts         roi_payouts[]
-  investment_projects investment_projects? @relation(fields: [project_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  transactions        transactions?        @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users               users?               @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                       String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                  String?              @db.Uuid
+  project_id               String?              @db.Uuid
+  amount                   Decimal?             @db.Decimal(30, 8)
+  expected_roi             Decimal?             @db.Decimal(30, 8)
+  transaction_id           String?              @db.Uuid
+  status                   String?              @default("active") @db.VarChar(50)
+  invested_at              DateTime?            @default(now()) @db.Timestamp(6)
+  maturity_date            DateTime?            @db.Timestamp(6)
+  roi_payouts              roi_payouts[]
+  investment_projects      investment_projects? @relation(fields: [project_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  transactions             transactions?        @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                    users?               @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   /// V2: risk disclosure the investor accepted for this investment
-  disclosure_acceptance_id String?         @db.Uuid
+  disclosure_acceptance_id String?              @db.Uuid
 }
 
 model user_sessions {
@@ -568,82 +569,82 @@ model user_sessions {
 }
 
 model pending_login_verifications {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id        String    @db.Uuid
-  phone          String    @db.VarChar(20)
-  role           user_role
-  status         String    @default("pending") @db.VarChar(20)
-  expires_at     DateTime  @db.Timestamp(6)
-  created_at     DateTime  @default(now()) @db.Timestamp(6)
-  verified_at    DateTime? @db.Timestamp(6)
-  attempt_count  Int       @default(0)
-  users          users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id       String    @db.Uuid
+  phone         String    @db.VarChar(20)
+  role          user_role
+  status        String    @default("pending") @db.VarChar(20)
+  expires_at    DateTime  @db.Timestamp(6)
+  created_at    DateTime  @default(now()) @db.Timestamp(6)
+  verified_at   DateTime? @db.Timestamp(6)
+  attempt_count Int       @default(0)
+  users         users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([user_id, status])
   @@index([expires_at])
 }
 
 model users {
-  id                                                                    String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  first_name                                                            String                   @db.VarChar(100)
-  last_name                                                             String                   @db.VarChar(100)
-  username                                                              String                   @unique @db.VarChar(50)
-  email                                                                 String?                  @unique @db.VarChar(255)
-  firebase_uid                                                          String?                  @unique @db.VarChar(128)
-  phone                                                                 String                   @unique @db.VarChar(20)
+  id                                                                    String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  first_name                                                            String                        @db.VarChar(100)
+  last_name                                                             String                        @db.VarChar(100)
+  username                                                              String                        @unique @db.VarChar(50)
+  email                                                                 String?                       @unique @db.VarChar(255)
+  firebase_uid                                                          String?                       @unique @db.VarChar(128)
+  phone                                                                 String                        @unique @db.VarChar(20)
   password_hash                                                         String
   pin_hash                                                              String?
-  role                                                                  user_role?               @default(user)
-  kyc_status                                                            kyc_status?              @default(none)
-  is_active                                                             Boolean?                 @default(true)
-  is_suspended                                                          Boolean?                 @default(false)
-  is_deleted                                                            Boolean?                 @default(false)
-  phone_verified                                                        Boolean?                 @default(false)
-  email_verified                                                        Boolean?                 @default(false)
-  failed_login_attempts                                                 Int?                     @default(0)
-  failed_pin_attempts                                                   Int?                     @default(0)
+  role                                                                  user_role?                    @default(user)
+  kyc_status                                                            kyc_status?                   @default(none)
+  is_active                                                             Boolean?                      @default(true)
+  is_suspended                                                          Boolean?                      @default(false)
+  is_deleted                                                            Boolean?                      @default(false)
+  phone_verified                                                        Boolean?                      @default(false)
+  email_verified                                                        Boolean?                      @default(false)
+  failed_login_attempts                                                 Int?                          @default(0)
+  failed_pin_attempts                                                   Int?                          @default(0)
   profile_image                                                         String?
   bio                                                                   String?
-  country                                                               String?                  @db.VarChar(100)
-  city                                                                  String?                  @db.VarChar(100)
+  country                                                               String?                       @db.VarChar(100)
+  city                                                                  String?                       @db.VarChar(100)
   address                                                               String?
-  referral_code                                                         String?                  @db.VarChar(20)
-  referred_by                                                           String?                  @db.Uuid
-  last_login_at                                                         DateTime?                @db.Timestamp(6)
-  last_seen_at                                                          DateTime?                @db.Timestamp(6)
-  created_at                                                            DateTime?                @default(now()) @db.Timestamp(6)
-  updated_at                                                            DateTime?                @default(now()) @db.Timestamp(6)
-  deleted_at                                                            DateTime?                @db.Timestamp(6)
-  kyc_level                                                             Int?                     @default(0)
+  referral_code                                                         String?                       @db.VarChar(20)
+  referred_by                                                           String?                       @db.Uuid
+  last_login_at                                                         DateTime?                     @db.Timestamp(6)
+  last_seen_at                                                          DateTime?                     @db.Timestamp(6)
+  created_at                                                            DateTime?                     @default(now()) @db.Timestamp(6)
+  updated_at                                                            DateTime?                     @default(now()) @db.Timestamp(6)
+  deleted_at                                                            DateTime?                     @db.Timestamp(6)
+  kyc_level                                                             Int?                          @default(0)
   deposits                                                              Deposit[]
   withdrawals                                                           Withdrawal[]
   activity_logs                                                         activity_logs[]
   api_keys                                                              api_keys[]
   audit_logs                                                            audit_logs[]
   beneficiaries                                                         beneficiaries[]
-  contacts_contacts_contact_user_idTousers                              contacts[]               @relation("contacts_contact_user_idTousers")
-  contacts_contacts_owner_idTousers                                     contacts[]               @relation("contacts_owner_idTousers")
-  cross_border_transfers_cross_border_transfers_receiver_user_idTousers cross_border_transfers[] @relation("cross_border_transfers_receiver_user_idTousers")
-  cross_border_transfers_cross_border_transfers_sender_user_idTousers   cross_border_transfers[] @relation("cross_border_transfers_sender_user_idTousers")
+  contacts_contacts_contact_user_idTousers                              contacts[]                    @relation("contacts_contact_user_idTousers")
+  contacts_contacts_owner_idTousers                                     contacts[]                    @relation("contacts_owner_idTousers")
+  cross_border_transfers_cross_border_transfers_receiver_user_idTousers cross_border_transfers[]      @relation("cross_border_transfers_receiver_user_idTousers")
+  cross_border_transfers_cross_border_transfers_sender_user_idTousers   cross_border_transfers[]      @relation("cross_border_transfers_sender_user_idTousers")
   device_tokens                                                         device_tokens[]
-  escrow_contracts_escrow_contracts_arbiter_idTousers                   escrow_contracts[]       @relation("escrow_contracts_arbiter_idTousers")
-  escrow_contracts_escrow_contracts_buyer_idTousers                     escrow_contracts[]       @relation("escrow_contracts_buyer_idTousers")
-  escrow_contracts_escrow_contracts_seller_idTousers                    escrow_contracts[]       @relation("escrow_contracts_seller_idTousers")
+  escrow_contracts_escrow_contracts_arbiter_idTousers                   escrow_contracts[]            @relation("escrow_contracts_arbiter_idTousers")
+  escrow_contracts_escrow_contracts_buyer_idTousers                     escrow_contracts[]            @relation("escrow_contracts_buyer_idTousers")
+  escrow_contracts_escrow_contracts_seller_idTousers                    escrow_contracts[]            @relation("escrow_contracts_seller_idTousers")
   escrow_messages                                                       escrow_messages[]
   investment_projects                                                   investment_projects[]
-  kyc_documents_kyc_documents_reviewed_byTousers                        kyc_documents[]          @relation("kyc_documents_reviewed_byTousers")
-  kyc_documents_kyc_documents_user_idTousers                            kyc_documents[]          @relation("kyc_documents_user_idTousers")
+  kyc_documents_kyc_documents_reviewed_byTousers                        kyc_documents[]               @relation("kyc_documents_reviewed_byTousers")
+  kyc_documents_kyc_documents_user_idTousers                            kyc_documents[]               @relation("kyc_documents_user_idTousers")
   merchant_payouts                                                      merchant_payouts[]
-  merchants_merchants_approved_byTousers                                merchants[]              @relation("merchants_approved_byTousers")
-  merchants_merchants_user_idTousers                                    merchants[]              @relation("merchants_user_idTousers")
+  merchants_merchants_approved_byTousers                                merchants[]                   @relation("merchants_approved_byTousers")
+  merchants_merchants_user_idTousers                                    merchants[]                   @relation("merchants_user_idTousers")
   notifications                                                         notifications[]
   otp_verifications                                                     otp_verifications[]
   project_investments                                                   project_investments[]
   qr_payments                                                           qr_payments[]
   security_events                                                       security_events[]
   support_messages                                                      support_messages[]
-  support_tickets_support_tickets_assigned_toTousers                    support_tickets[]        @relation("support_tickets_assigned_toTousers")
-  support_tickets_support_tickets_user_idTousers                        support_tickets[]        @relation("support_tickets_user_idTousers")
+  support_tickets_support_tickets_assigned_toTousers                    support_tickets[]             @relation("support_tickets_assigned_toTousers")
+  support_tickets_support_tickets_user_idTousers                        support_tickets[]             @relation("support_tickets_user_idTousers")
   system_settings                                                       system_settings[]
   currency_rates                                                        currency_rates[]
   uploads                                                               uploads[]
@@ -651,19 +652,19 @@ model users {
   user_sessions                                                         user_sessions[]
   pending_login_verifications                                           pending_login_verifications[]
   user_settings                                                         user_settings?
-  users                                                                 users?                   @relation("usersTousers", fields: [referred_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  other_users                                                           users[]                  @relation("usersTousers")
+  users                                                                 users?                        @relation("usersTousers", fields: [referred_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_users                                                           users[]                       @relation("usersTousers")
   wallets                                                               wallets[]
 
-  transfer_requests_requester transfer_requests[] @relation("transfer_requests_requester")
-  transfer_requests_sender    transfer_requests[] @relation("transfer_requests_sender")
-  payment_requests_requester  payment_requests[] @relation("payment_requests_requester")
-  payment_requests_recipient payment_requests[] @relation("payment_requests_recipient")
-  biometric_settings          biometric_settings?
-  businesses_owned            businesses[] @relation("businesses_owner")
-  businesses_reviewed         businesses[] @relation("businesses_reviewer")
+  transfer_requests_requester     transfer_requests[]      @relation("transfer_requests_requester")
+  transfer_requests_sender        transfer_requests[]      @relation("transfer_requests_sender")
+  payment_requests_requester      payment_requests[]       @relation("payment_requests_requester")
+  payment_requests_recipient      payment_requests[]       @relation("payment_requests_recipient")
+  biometric_settings              biometric_settings?
+  businesses_owned                businesses[]             @relation("businesses_owner")
+  businesses_reviewed             businesses[]             @relation("businesses_reviewer")
   business_verifications_reviewed business_verifications[] @relation("business_verifications_reviewer")
-  business_memberships        business_members[] @relation("business_members_user")
+  business_memberships            business_members[]       @relation("business_members_user")
 
   @@index([email], map: "idx_users_email")
   @@index([phone], map: "idx_users_phone")
@@ -694,8 +695,8 @@ model wallets {
 
   transfer_requests_requester_wallet transfer_requests[] @relation("transfer_requests_requester_wallet")
   transfer_requests_sender_wallet    transfer_requests[] @relation("transfer_requests_sender_wallet")
-  payment_requests_requester_wallet  payment_requests[] @relation("payment_requests_requester_wallet")
-  payment_requests_recipient_wallet payment_requests[] @relation("payment_requests_recipient_wallet")
+  payment_requests_requester_wallet  payment_requests[]  @relation("payment_requests_requester_wallet")
+  payment_requests_recipient_wallet  payment_requests[]  @relation("payment_requests_recipient_wallet")
 
   @@index([wallet_address], map: "idx_wallets_address")
   @@index([user_id], map: "idx_wallets_user_id")
@@ -768,32 +769,32 @@ model device_tokens {
 }
 
 model Deposit {
-  id            String        @id @default(cuid())
-  userId        String        @db.Uuid
-  amount        Float
-  fee           Float         @default(0)
-  total         Float
-  currency      String        @default("KES")
-  paymentMethod PaymentMethod
-  status        DepositStatus @default(PENDING)
-  reference     String        @unique
-  providerRef   String?
-  providerTransactionId String?    @db.VarChar(255)
-  providerReference     String?    @db.VarChar(255)
-  checkoutId            String?    @db.VarChar(255)
-  paymentReference      String?    @db.VarChar(255)
-  merchantReference     String?    @db.VarChar(255)
-  providerPayload       Json?
-  verificationPayload   Json?
-  blockchainTransactionHash String? @db.VarChar(255)
-  verifiedAt            DateTime?  @db.Timestamp(6)
-  creditedAt            DateTime?  @db.Timestamp(6)
-  webhookReceived       DateTime?  @db.Timestamp(6)
-  verificationAttempts  Int?       @default(0)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  provider      String?       @db.VarChar(100)
-  user          users         @relation(fields: [userId], references: [id])
+  id                        String        @id @default(cuid())
+  userId                    String        @db.Uuid
+  amount                    Float
+  fee                       Float         @default(0)
+  total                     Float
+  currency                  String        @default("KES")
+  paymentMethod             PaymentMethod
+  status                    DepositStatus @default(PENDING)
+  reference                 String        @unique
+  providerRef               String?
+  providerTransactionId     String?       @db.VarChar(255)
+  providerReference         String?       @db.VarChar(255)
+  checkoutId                String?       @db.VarChar(255)
+  paymentReference          String?       @db.VarChar(255)
+  merchantReference         String?       @db.VarChar(255)
+  providerPayload           Json?
+  verificationPayload       Json?
+  blockchainTransactionHash String?       @db.VarChar(255)
+  verifiedAt                DateTime?     @db.Timestamp(6)
+  creditedAt                DateTime?     @db.Timestamp(6)
+  webhookReceived           DateTime?     @db.Timestamp(6)
+  verificationAttempts      Int?          @default(0)
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
+  provider                  String?       @db.VarChar(100)
+  user                      users         @relation(fields: [userId], references: [id])
 
   @@index([userId, status, createdAt(sort: Desc)], map: "idx_deposits_user_status_created")
   @@index([status, updatedAt], map: "idx_deposits_status_updated")
@@ -1009,29 +1010,29 @@ model transfer_requests {
 }
 
 model payment_requests {
-  id                  String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  request_reference   String                   @unique @db.VarChar(255)
-  requester_user_id   String?                  @db.Uuid
-  requester_wallet_id String?                  @db.Uuid
-  recipient_user_id   String?                  @db.Uuid
-  recipient_wallet_id String?                  @db.Uuid
-  amount              Decimal                  @db.Decimal(30, 8)
-  currency            String?                  @default("FARM") @db.VarChar(20)
+  id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  request_reference   String                  @unique @db.VarChar(255)
+  requester_user_id   String?                 @db.Uuid
+  requester_wallet_id String?                 @db.Uuid
+  recipient_user_id   String?                 @db.Uuid
+  recipient_wallet_id String?                 @db.Uuid
+  amount              Decimal                 @db.Decimal(30, 8)
+  currency            String?                 @default("FARM") @db.VarChar(20)
   description         String?
-  status              payment_request_status?  @default(pending)
-  transaction_id      String?                  @unique @db.Uuid
-  expires_at          DateTime?                @db.Timestamp(6)
-  accepted_at         DateTime?                @db.Timestamp(6)
-  completed_at        DateTime?                @db.Timestamp(6)
-  rejected_at         DateTime?                @db.Timestamp(6)
-  ip_address          String?                  @db.VarChar(100)
-  created_at          DateTime?                @default(now()) @db.Timestamp(6)
-  updated_at          DateTime?                @default(now()) @db.Timestamp(6)
-  users_requester     users?                   @relation("payment_requests_requester", fields: [requester_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_recipient     users?                   @relation("payment_requests_recipient", fields: [recipient_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  wallets_requester   wallets?                 @relation("payment_requests_requester_wallet", fields: [requester_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  wallets_recipient   wallets?                 @relation("payment_requests_recipient_wallet", fields: [recipient_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  transactions        transactions?            @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  status              payment_request_status? @default(pending)
+  transaction_id      String?                 @unique @db.Uuid
+  expires_at          DateTime?               @db.Timestamp(6)
+  accepted_at         DateTime?               @db.Timestamp(6)
+  completed_at        DateTime?               @db.Timestamp(6)
+  rejected_at         DateTime?               @db.Timestamp(6)
+  ip_address          String?                 @db.VarChar(100)
+  created_at          DateTime?               @default(now()) @db.Timestamp(6)
+  updated_at          DateTime?               @default(now()) @db.Timestamp(6)
+  users_requester     users?                  @relation("payment_requests_requester", fields: [requester_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_recipient     users?                  @relation("payment_requests_recipient", fields: [recipient_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  wallets_requester   wallets?                @relation("payment_requests_requester_wallet", fields: [requester_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  wallets_recipient   wallets?                @relation("payment_requests_recipient_wallet", fields: [recipient_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  transactions        transactions?           @relation(fields: [transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([requester_user_id], map: "idx_payment_requests_requester")
   @@index([recipient_user_id], map: "idx_payment_requests_recipient")
@@ -1090,36 +1091,36 @@ enum business_person_role {
 }
 
 model businesses {
-  id                   String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  owner_user_id        String                   @unique @db.Uuid
-  merchant_id          String?                  @unique @db.Uuid
-  legal_name           String?                  @db.VarChar(255)
-  trading_name         String?                  @db.VarChar(255)
-  registration_number  String?                  @db.VarChar(255)
-  registration_country String?                  @db.VarChar(100)
-  incorporation_date   DateTime?                @db.Date
-  business_type        String?                  @db.VarChar(100)
-  sector               String?                  @db.VarChar(100)
-  tax_id               String?                  @db.VarChar(100)
-  country              String?                  @db.VarChar(100)
-  city                 String?                  @db.VarChar(100)
+  id                   String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_user_id        String                       @unique @db.Uuid
+  merchant_id          String?                      @unique @db.Uuid
+  legal_name           String?                      @db.VarChar(255)
+  trading_name         String?                      @db.VarChar(255)
+  registration_number  String?                      @db.VarChar(255)
+  registration_country String?                      @db.VarChar(100)
+  incorporation_date   DateTime?                    @db.Date
+  business_type        String?                      @db.VarChar(100)
+  sector               String?                      @db.VarChar(100)
+  tax_id               String?                      @db.VarChar(100)
+  country              String?                      @db.VarChar(100)
+  city                 String?                      @db.VarChar(100)
   address              String?
-  postal_code          String?                  @db.VarChar(30)
-  business_email       String?                  @db.VarChar(255)
-  business_phone       String?                  @db.VarChar(30)
-  website              String?                  @db.VarChar(255)
+  postal_code          String?                      @db.VarChar(30)
+  business_email       String?                      @db.VarChar(255)
+  business_phone       String?                      @db.VarChar(30)
+  website              String?                      @db.VarChar(255)
   description          String?
-  status               business_status          @default(draft)
-  submitted_at         DateTime?                @db.Timestamptz(6)
-  reviewed_by          String?                  @db.Uuid
-  reviewed_at          DateTime?                @db.Timestamptz(6)
-  approved_at          DateTime?                @db.Timestamptz(6)
+  status               business_status              @default(draft)
+  submitted_at         DateTime?                    @db.Timestamptz(6)
+  reviewed_by          String?                      @db.Uuid
+  reviewed_at          DateTime?                    @db.Timestamptz(6)
+  approved_at          DateTime?                    @db.Timestamptz(6)
   review_notes         String?
-  created_at           DateTime                 @default(now()) @db.Timestamptz(6)
-  updated_at           DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
-  owner                users                    @relation("businesses_owner", fields: [owner_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  reviewer             users?                   @relation("businesses_reviewer", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  merchant             merchants?               @relation(fields: [merchant_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  created_at           DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime                     @default(now()) @updatedAt @db.Timestamptz(6)
+  owner                users                        @relation("businesses_owner", fields: [owner_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  reviewer             users?                       @relation("businesses_reviewer", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  merchant             merchants?                   @relation(fields: [merchant_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   persons              business_persons[]
   documents            business_documents[]
   verifications        business_verifications[]
@@ -1129,11 +1130,11 @@ model businesses {
   payment_links        business_payment_links[]
   payments             business_payments[]
   escrows              business_escrows[]
-  api_keys             api_keys[] @relation("api_keys_business")
+  api_keys             api_keys[]                   @relation("api_keys_business")
   webhook_endpoints    business_webhook_endpoints[]
   api_requests         business_api_requests[]
   sandbox_objects      business_sandbox_objects[]
-  projects             investment_projects[] @relation("business_projects")
+  projects             investment_projects[]        @relation("business_projects")
   web_checkouts        business_web_checkouts[]
 
   @@index([status], map: "idx_businesses_status")
@@ -1334,37 +1335,37 @@ model business_escrows {
 
 // ---------- V2 Phase 3: developer API ----------
 model business_webhook_endpoints {
-  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  business_id      String     @db.Uuid
-  mode             String     @db.VarChar(10)
+  id               String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id      String                        @db.Uuid
+  mode             String                        @db.VarChar(10)
   url              String
-  description      String?    @db.VarChar(255)
+  description      String?                       @db.VarChar(255)
   events           Json
   secret_encrypted String
-  is_active        Boolean    @default(true)
-  created_by       String?    @db.Uuid
-  created_at       DateTime   @default(now()) @db.Timestamp(6)
-  updated_at       DateTime   @default(now()) @updatedAt @db.Timestamp(6)
-  business         businesses @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  is_active        Boolean                       @default(true)
+  created_by       String?                       @db.Uuid
+  created_at       DateTime                      @default(now()) @db.Timestamp(6)
+  updated_at       DateTime                      @default(now()) @updatedAt @db.Timestamp(6)
+  business         businesses                    @relation(fields: [business_id], references: [id], onDelete: Cascade)
   deliveries       business_webhook_deliveries[]
 
   @@index([business_id, mode])
 }
 
 model business_webhook_deliveries {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  endpoint_id     String    @db.Uuid
-  event_id        String    @db.VarChar(64)
-  event_type      String    @db.VarChar(80)
+  id              String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  endpoint_id     String                     @db.Uuid
+  event_id        String                     @db.VarChar(64)
+  event_type      String                     @db.VarChar(80)
   payload         Json
-  status          String    @default("pending") @db.VarChar(20)
-  attempts        Int       @default(0)
+  status          String                     @default("pending") @db.VarChar(20)
+  attempts        Int                        @default(0)
   response_status Int?
   response_body   String?
   error           String?
-  next_attempt_at DateTime? @db.Timestamp(6)
-  delivered_at    DateTime? @db.Timestamp(6)
-  created_at      DateTime  @default(now()) @db.Timestamp(6)
+  next_attempt_at DateTime?                  @db.Timestamp(6)
+  delivered_at    DateTime?                  @db.Timestamp(6)
+  created_at      DateTime                   @default(now()) @db.Timestamp(6)
   endpoint        business_webhook_endpoints @relation(fields: [endpoint_id], references: [id], onDelete: Cascade)
 
   @@index([endpoint_id, created_at])
@@ -1485,16 +1486,16 @@ model project_documents {
 
 /// V2 Phase 4: admin review trail for projects (separate from business KYB).
 model project_reviews {
-  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  project_id String              @db.Uuid
-  actor_id   String?             @db.Uuid
-  action     String              @db.VarChar(30)
-  from_status String?            @db.VarChar(30)
-  to_status  String              @db.VarChar(30)
-  notes      String?
-  snapshot   Json?
-  created_at DateTime            @default(now()) @db.Timestamptz(6)
-  project    investment_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id  String              @db.Uuid
+  actor_id    String?             @db.Uuid
+  action      String              @db.VarChar(30)
+  from_status String?             @db.VarChar(30)
+  to_status   String              @db.VarChar(30)
+  notes       String?
+  snapshot    Json?
+  created_at  DateTime            @default(now()) @db.Timestamptz(6)
+  project     investment_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@index([project_id, created_at])
 }
@@ -1559,4 +1560,45 @@ model project_milestones {
   project         investment_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@unique([project_id, position])
+}
+
+/// V2 Phase 5: one Algorand Standard Asset (ASA) per funded project.
+/// asset_id / create_tx_id are only ever written from a confirmed algod response.
+model project_tokens {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id      String              @unique @db.Uuid
+  status          String              @default("requested") @db.VarChar(30)
+  network         String              @default("testnet") @db.VarChar(20)
+  asset_name      String              @db.VarChar(32)
+  unit_name       String              @db.VarChar(8)
+  unit_price      Decimal             @db.Decimal(30, 8)
+  total_units     BigInt
+  asset_id        BigInt?             @unique
+  create_tx_id    String?             @unique @db.VarChar(64)
+  confirmed_round BigInt?
+  issuer_address  String?             @db.VarChar(64)
+  requested_by    String?             @db.Uuid
+  reviewed_by     String?             @db.Uuid
+  notes           String?
+  error           String?
+  created_at      DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  project         investment_projects @relation(fields: [project_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  allocations     token_allocations[]
+
+  @@index([status])
+}
+
+/// Units of a project token held in FARM custody on behalf of an investor.
+model token_allocations {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_token_id String         @db.Uuid
+  investment_id    String         @unique @db.Uuid
+  user_id          String         @db.Uuid
+  units            BigInt
+  custody          String         @default("farm_custody") @db.VarChar(30)
+  created_at       DateTime       @default(now()) @db.Timestamptz(6)
+  token            project_tokens @relation(fields: [project_token_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id])
 }
