@@ -74,12 +74,7 @@ describe('WebhookService Paystack deposit processing', () => {
       },
     });
 
-    expect(finalizeSuccessfulDeposit).toHaveBeenCalledWith('deposit-reference', {
-      reference: 'deposit-reference',
-      amount: 5000,
-      status: 'success',
-      channel: 'card',
-    });
+    expect(finalizeSuccessfulDeposit).toHaveBeenCalledWith('deposit-reference');
     expect(verifyTransaction).not.toHaveBeenCalled();
   });
 

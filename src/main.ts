@@ -56,7 +56,9 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (isProduction) {
-    expressApp.set('trust proxy', true);
+    // Render terminates TLS at exactly one proxy hop; trusting more would let
+    // clients spoof X-Forwarded-For and dodge IP rate limits.
+    expressApp.set('trust proxy', 1);
     app.use(
       helmet({
         hsts: {

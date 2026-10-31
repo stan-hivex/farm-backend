@@ -1722,12 +1722,18 @@ export class WebhookService {
   @Cron('* * * * *')
   async fixStuckDeposits() {
     const cutoff = new Date(Date.now() - 2 * 60 * 1000);
+    // Only reconcile recent deposits. Without a lower bound every abandoned
+    // checkout was re-verified with its provider every minute forever, which
+    // flooded the error logs and provider APIs (e.g. ~49 dead IvoryPay refs/min).
+    const lookbackHours = Number(this.cfg?.get?.('STUCK_DEPOSIT_LOOKBACK_HOURS')) || 48;
+    const oldest = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
     const stuck = await this.prisma.transactions.findMany({
       where: {
         transaction_type: 'deposit',
         status: 'pending',
-        created_at: { lt: cutoff },
+        created_at: { lt: cutoff, gte: oldest },
       },
+      take: 200,
     });
 
     if (stuck.length > 0) {
@@ -1753,7 +1759,12 @@ export class WebhookService {
         ).trim();
 
         let provider = 'unknown';
-        if (paymentMethod === 'CRYPTO') {
+        if (depositProvider === 'nowpayments' || metaProvider === 'nowpayments') {
+          // NOWPayments deposits are confirmed by signed IPN + getPayment, not
+          // by IvoryPay. They were previously misrouted to IvoryPay verification
+          // because they also carry paymentMethod=CRYPTO.
+          continue;
+        } else if (paymentMethod === 'CRYPTO') {
           provider = 'ivorypay';
         } else if (paymentMethod) {
           provider = 'paystack';

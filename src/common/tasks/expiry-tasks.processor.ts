@@ -4,6 +4,8 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { TransferRequestsService } from '../../transfer-requests/transfer-requests.service';
 import { EscrowService } from '../../escrow/escrow.service';
+import { ModuleRef } from '@nestjs/core';
+import { PaymentRequestsService } from '../../payment-requests/payment-requests.service';
 
 @Processor('expiry-tasks')
 @Injectable()
@@ -14,6 +16,7 @@ export class ExpiryTasksProcessor implements OnModuleInit {
     @InjectQueue('expiry-tasks') private readonly queue: Queue,
     private readonly transferRequests: TransferRequestsService,
     private readonly escrowService: EscrowService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   async onModuleInit() {
@@ -49,6 +52,15 @@ export class ExpiryTasksProcessor implements OnModuleInit {
       if (tr > 0) this.logger.log(`Processed ${tr} expired transfer request(s)`);
     } catch (e) {
       this.logger.error('Error processing expired transfer requests', e as any);
+    }
+
+    try {
+      // Resolved lazily (strict: false) to avoid a module import cycle.
+      const paymentRequests = this.moduleRef.get(PaymentRequestsService, { strict: false });
+      const pr = await paymentRequests.processExpiredRequests();
+      if (pr > 0) this.logger.log(`Processed ${pr} expired payment request(s)`);
+    } catch (e) {
+      this.logger.error('Error processing expired payment requests', e as any);
     }
 
     try {

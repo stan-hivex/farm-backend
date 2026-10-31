@@ -115,6 +115,52 @@ export class PaymentRequestsService {
     return { data: result.data, message: result.message };
   }
 
+  // Mark expired pending payment requests and notify both parties. Previously
+  // requests only expired lazily when the recipient listed them, so requesters
+  // saw them as pending forever and nobody was told.
+  async processExpiredRequests(): Promise<number> {
+    const now = new Date();
+    const expired = await this.prisma.payment_requests.findMany({
+      where: { status: 'pending', expires_at: { lte: now } },
+      take: 500,
+    });
+    if (!expired?.length) return 0;
+    let processed = 0;
+    for (const request of expired) {
+      try {
+        await this.prisma.payment_requests.update({
+          where: { id: request.id },
+          data: { status: 'expired' },
+        });
+        processed++;
+        const amount = Number((request as any).amount ?? 0);
+        await Promise.all([
+          request.requester_user_id
+            ? this.notificationsService.sendNotification(request.requester_user_id, {
+                type: 'payment_request_expired',
+                entityId: request.id,
+                title: 'Payment Request Expired',
+                body: `Your payment request for ${amount} FARM has expired.`,
+                metadata: { request_id: request.id, amount },
+              })
+            : null,
+          request.recipient_user_id
+            ? this.notificationsService.sendNotification(request.recipient_user_id, {
+                type: 'payment_request_expired',
+                entityId: request.id,
+                title: 'Payment Request Expired',
+                body: `A payment request for ${amount} FARM has expired.`,
+                metadata: { request_id: request.id, amount },
+              })
+            : null,
+        ]).catch((err) => this.logger.error('Payment request expiry notification failed', err));
+      } catch (e) {
+        this.logger.error(`Failed to expire payment request ${request.id}`, e as any);
+      }
+    }
+    return processed;
+  }
+
   async getPendingRequests(userId: string, query: any) {
     const { skip, take } = paginationParams(query.page, query.limit);
     const now = new Date();

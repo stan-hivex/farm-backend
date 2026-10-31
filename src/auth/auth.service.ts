@@ -1,6 +1,6 @@
 import {
   Injectable, BadRequestException, UnauthorizedException,
-  ConflictException, ForbiddenException, NotFoundException, Logger,
+  ConflictException, ForbiddenException, NotFoundException, Logger, OnModuleInit,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
@@ -30,8 +30,36 @@ import {
 } from '../common/constants';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
+
+  /** Refresh-session lifetime in days (REFRESH_TOKEN_TTL_DAYS, default 30). */
+  private refreshTtlDays(): number {
+    const days = Number(this.cfg.get('REFRESH_TOKEN_TTL_DAYS', '30'));
+    return Number.isFinite(days) && days > 0 && days <= 365 ? days : 30;
+  }
+
+  /**
+   * Graceful migration from the old 10-year sessions: cap any session that
+   * outlives the TTL to "now + TTL". Only ever shortens; nobody is logged out.
+   */
+  async onModuleInit() {
+    if (process.env.NODE_ENV === 'test') return;
+    try {
+      const days = this.refreshTtlDays();
+      const capped = new Date(Date.now() + days * 86_400_000);
+      const margin = new Date(capped.getTime() + 86_400_000);
+      const result = await this.prisma.user_sessions.updateMany({
+        where: { expires_at: { gt: margin } },
+        data: { expires_at: capped },
+      });
+      if (result.count > 0) {
+        this.logger.log(`Capped ${result.count} long-lived refresh session(s) to ${days} days`);
+      }
+    } catch (error) {
+      this.logger.warn(`Could not cap long-lived refresh sessions: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   constructor(
     private prisma: PrismaService,
@@ -84,9 +112,6 @@ export class AuthService {
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
     const password_hash = await bcrypt.hash(dto.password, rounds);
 
-    const firebaseUid = email
-      ? await this.ensureFirebaseAccount(email, dto.password)
-      : null;
 
     let referred_by: string | undefined;
     if (dto.referral_code) {
@@ -112,7 +137,6 @@ export class AuthService {
             username,
             phone,
             email,
-            firebase_uid: firebaseUid,
             password_hash,
             country: dto.country,
             referred_by,
@@ -139,7 +163,20 @@ export class AuthService {
       throw error;
     }
 
-    await this.sendOtp(user.id, user.phone, 'phone_verification');
+    // Firebase linking and OTP delivery run in the background so a slow
+    // provider can't hang or fail registration. Password-reset links the
+    // Firebase account lazily if this background link didn't finish.
+    if (email) {
+      const userId = user.id;
+      void this.ensureFirebaseAccount(email, dto.password)
+        .then((uid) =>
+          uid
+            ? this.prisma.users.update({ where: { id: userId }, data: { firebase_uid: uid } })
+            : undefined,
+        )
+        .catch((e) => this.logger.warn(`Background Firebase linking failed for ${userId}: ${e instanceof Error ? e.message : String(e)}`));
+    }
+    await this.sendOtp(user.id, user.phone, 'phone_verification', true);
     return { message: 'Registration successful. OTP sent to your phone number.' };
   }
 
@@ -211,7 +248,7 @@ export class AuthService {
       return created;
     });
 
-    await this.sendOtp(admin.id, admin.phone, 'phone_verification');
+    await this.sendOtp(admin.id, admin.phone, 'phone_verification', true);
     return { message: 'Admin account created successfully' };
   }
 
@@ -1423,14 +1460,15 @@ async resetForgottenPin(
     throw new NotFoundException('User not found');
   }
 
-  // VERIFY OTP
-  await this.verifyOtp(
-    user.phone,
-    dto.otp,
-    'forgot_pin',
-  );
+  // The supplied phone must be the account's phone (it was previously ignored).
+  if (
+    !dto.phone ||
+    this.normalizePhoneNumber(dto.phone) !== this.normalizePhoneNumber(user.phone)
+  ) {
+    throw new BadRequestException('Phone number does not match this account');
+  }
 
-  // VERIFY PASSWORD
+  // Check the password before consuming the OTP.
   const validPassword = await bcrypt.compare(
     dto.password,
     user.password_hash,
@@ -1441,6 +1479,12 @@ async resetForgottenPin(
       'Incorrect password',
     );
   }
+
+  await this.verifyOtp(
+    user.phone,
+    dto.otp,
+    'forgot_pin',
+  );
 
   const rounds =
     Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
@@ -1469,7 +1513,7 @@ async resetForgottenPin(
 }
 
 // ── Send OTP ─────────────────────────────────────────────────────────────────
-async sendOtp(userId: string, phone: string, purpose: string) {
+async sendOtp(userId: string, phone: string, purpose: string, background = false) {
   const recent = await this.prisma.otp_verifications.findFirst({
     where: {
       user_id: userId,
@@ -1495,6 +1539,7 @@ async sendOtp(userId: string, phone: string, purpose: string) {
     },
   });
   // Send OTP via configured SMS provider (do not log OTP contents)
+  const deliver = async () => {
   try {
     const message = `Your FARM OTP is ${code}. It expires in ${OTP_EXPIRY_MINUTES} minutes.`;
     // Prefer push if user has push notifications enabled and device tokens registered
@@ -1520,8 +1565,14 @@ async sendOtp(userId: string, phone: string, purpose: string) {
   } catch (e) {
     this.logger.error('OTP SMS send failed: ' + e);
   }
-
   return { message: 'OTP sent to your phone' };
+  };
+
+  if (background) {
+    void deliver();
+    return { message: 'OTP delivery started' };
+  }
+  return deliver();
 }
 
   // Add this method inside the AuthService class
@@ -1570,17 +1621,14 @@ async resendOtp(userId: string) {
       }),
       this.jwt.signAsync(payload, {
         secret: refreshSecret,
-        expiresIn: this.cfg.get('JWT_REFRESH_EXPIRES', '3650d'),
+        expiresIn: `${this.refreshTtlDays()}d`,
       }),
     ]);
     return { access_token, refresh_token, jti };
   }
 
   private refreshSessionExpiry(): Date {
-    const configuredDays = Number(this.cfg.get('JWT_REFRESH_SESSION_DAYS', '3650'));
-    const days = Number.isFinite(configuredDays) && configuredDays > 0
-      ? configuredDays
-      : 365;
+    const days = this.refreshTtlDays();
     return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 
