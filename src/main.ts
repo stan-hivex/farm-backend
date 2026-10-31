@@ -1,3 +1,4 @@
+import { PrismaClientExceptionFilter } from './common/filters/prisma-client-exception.filter';
 import cluster from 'cluster';
 import { cpus } from 'os';
 import * as express from 'express';
@@ -8,6 +9,8 @@ import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { validateSecurityEnvironment } from './config/environment-validation';
 import { SafeInputValidationPipe } from './common/pipes/safe-input.pipe';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { BusinessApiModule } from './business-api/business-api.module';
 import { MERCHANT_CHECKOUT_URL } from './qr/merchant-checkout.constants';
 
 async function bootstrap() {
@@ -22,7 +25,12 @@ async function bootstrap() {
     return res.redirect(302, `${MERCHANT_CHECKOUT_URL}${query}`);
   });
 
-  const rawBodySaver = (req: express.Request, res: express.Response, buf: Buffer, encoding: string) => {
+  const rawBodySaver = (
+    req: express.Request,
+    res: express.Response,
+    buf: Buffer,
+    encoding: string,
+  ) => {
     if (buf && buf.length) {
       const enc = (encoding as BufferEncoding) ?? 'utf8';
       (req as any).rawBody = buf.toString(enc);
@@ -45,18 +53,34 @@ async function bootstrap() {
     '/api/v1/support/tickets',
     '/api/v1/admin/support/tickets',
   ];
-  app.use(largeBodyRoutes, express.json({ limit: LARGE_BODY_LIMIT, verify: rawBodySaver }));
   app.use(
     largeBodyRoutes,
-    express.urlencoded({ extended: true, limit: LARGE_BODY_LIMIT, verify: rawBodySaver }),
+    express.json({ limit: LARGE_BODY_LIMIT, verify: rawBodySaver }),
+  );
+  app.use(
+    largeBodyRoutes,
+    express.urlencoded({
+      extended: true,
+      limit: LARGE_BODY_LIMIT,
+      verify: rawBodySaver,
+    }),
   );
   app.use(express.json({ limit: DEFAULT_BODY_LIMIT, verify: rawBodySaver }));
-  app.use(express.urlencoded({ extended: true, limit: DEFAULT_BODY_LIMIT, verify: rawBodySaver }));
+  app.useGlobalFilters(new PrismaClientExceptionFilter());
+  app.use(
+    express.urlencoded({
+      extended: true,
+      limit: DEFAULT_BODY_LIMIT,
+      verify: rawBodySaver,
+    }),
+  );
 
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (isProduction) {
-    expressApp.set('trust proxy', true);
+    // Render terminates TLS at exactly one proxy hop; trusting more would let
+    // clients spoof X-Forwarded-For and dodge IP rate limits.
+    expressApp.set('trust proxy', 1);
     app.use(
       helmet({
         hsts: {
@@ -66,17 +90,27 @@ async function bootstrap() {
         },
       }),
     );
-    app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-      const forwardedProto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim();
-      if (req.secure || forwardedProto === 'https') {
-        return next();
-      }
-      const host = req.headers.host;
-      if (!host) {
-        return next();
-      }
-      return res.redirect(301, `https://${host}${req.originalUrl}`);
-    });
+    app.use(
+      (
+        req: express.Request,
+        res: express.Response,
+        next: express.NextFunction,
+      ) => {
+        const forwardedProto = (
+          req.headers['x-forwarded-proto'] as string | undefined
+        )
+          ?.split(',')[0]
+          ?.trim();
+        if (req.secure || forwardedProto === 'https') {
+          return next();
+        }
+        const host = req.headers.host;
+        if (!host) {
+          return next();
+        }
+        return res.redirect(301, `https://${host}${req.originalUrl}`);
+      },
+    );
   } else {
     app.use(helmet());
   }
@@ -99,7 +133,12 @@ async function bootstrap() {
     'https://farmapp-e2145.web.app',
   ]
     .filter((value): value is string => Boolean(value))
-    .flatMap((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean));
+    .flatMap((value) =>
+      value
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+    );
 
   const corsOrigins = [...new Set(configuredCorsOrigins)];
 
@@ -138,42 +177,60 @@ async function bootstrap() {
     }
 
     // Localhost origins are only allowed outside production.
-    return corsOriginMatches(origin) || (!isProduction && localhostCorsRegex.test(origin));
+    return (
+      corsOriginMatches(origin) ||
+      (!isProduction && localhostCorsRegex.test(origin))
+    );
   };
 
   // Respond to browser preflight requests before the CORS package or any
   // authentication middleware can reject them without CORS headers.
-  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (req.method !== 'OPTIONS') {
-      return next();
-    }
+  app.use(
+    (
+      req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
+      if (req.method !== 'OPTIONS') {
+        return next();
+      }
 
-    const origin = req.headers.origin;
-    if (origin && !isAllowedCorsOrigin(origin)) {
-      return res.sendStatus(403);
-    }
+      const origin = req.headers.origin;
+      if (origin && !isAllowedCorsOrigin(origin)) {
+        return res.sendStatus(403);
+      }
 
-    if (origin) {
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Vary', 'Origin');
-      res.header('Access-Control-Allow-Credentials', 'true');
-    }
-    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-    res.header(
-      'Access-Control-Allow-Headers',
-      req.headers['access-control-request-headers'] ||
-        'Content-Type, Authorization, Accept, Origin, X-Requested-With',
-    );
-    res.header('Access-Control-Max-Age', '86400');
-    return res.sendStatus(204);
-  });
+      if (origin) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.header('Vary', 'Origin');
+        res.header('Access-Control-Allow-Credentials', 'true');
+      }
+      res.header(
+        'Access-Control-Allow-Methods',
+        'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      );
+      res.header(
+        'Access-Control-Allow-Headers',
+        req.headers['access-control-request-headers'] ||
+          'Content-Type, Authorization, Accept, Origin, X-Requested-With',
+      );
+      res.header('Access-Control-Max-Age', '86400');
+      return res.sendStatus(204);
+    },
+  );
 
   app.enableCors({
     origin: (origin, callback) => {
       return callback(null, isAllowedCorsOrigin(origin));
     },
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+    ],
     credentials: true,
   });
 
@@ -189,11 +246,32 @@ async function bootstrap() {
     }),
   );
 
-  const port = Number(process.env.PORT || configService.get<number>('PORT') || 3000);
+  // Public OpenAPI document for the FARM developer API (business API keys only).
+  const devDoc = SwaggerModule.createDocument(
+    app,
+    new DocumentBuilder()
+      .setTitle('FARM API')
+      .setDescription(
+        'Unified FARM business API. Use farm_sk_test_ keys for sandbox (no real funds move) and farm_sk_live_ keys for live. Webhooks are signed with HMAC-SHA256 in the Farm-Signature header (t=<unix>,v1=<hex of HMAC(secret, "t.body")>).',
+      )
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build(),
+    { include: [BusinessApiModule] },
+  );
+  SwaggerModule.setup('api/developer/docs', app, devDoc, {
+    jsonDocumentUrl: 'api/developer/openapi.json',
+  });
+
+  const port = Number(
+    process.env.PORT || configService.get<number>('PORT') || 3000,
+  );
 
   // Validate required environment variables
   const requiredEnvVars = ['DATABASE_URL'];
-  const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
+  const missingEnvVars = requiredEnvVars.filter(
+    (envVar) => !process.env[envVar],
+  );
 
   if (missingEnvVars.length > 0) {
     Logger.warn(
@@ -212,18 +290,18 @@ async function bootstrap() {
       `✅ Application is running on: ${await app.getUrl()}`,
       'Bootstrap',
     );
-    Logger.log(
-      `🔗 API: ${await app.getUrl()}/api/v1`,
-      'Bootstrap',
-    );
+    Logger.log(`🔗 API: ${await app.getUrl()}/api/v1`, 'Bootstrap');
     Logger.log(
       `💚 Health check: ${await app.getUrl()}/api/v1/health`,
       'Bootstrap',
     );
   } catch (error) {
-    if ((error as any)?.code === 'EADDRINUSE') {
+    if (error?.code === 'EADDRINUSE') {
       const fallbackPort = port + 1;
-      Logger.warn(`Port ${port} is already in use. Trying ${fallbackPort} instead.`, 'Bootstrap');
+      Logger.warn(
+        `Port ${port} is already in use. Trying ${fallbackPort} instead.`,
+        'Bootstrap',
+      );
       await app.listen(fallbackPort);
       Logger.log(
         `✅ Application is running on: ${await app.getUrl()}`,
@@ -232,7 +310,7 @@ async function bootstrap() {
     } else {
       Logger.error(
         `❌ Failed to start application: ${error instanceof Error ? error.message : String(error)}`,
-        (error as any)?.stack,
+        error?.stack,
         'Bootstrap',
       );
       Logger.error(
@@ -246,7 +324,11 @@ async function bootstrap() {
 
 const clusteringEnabled = process.env.ENABLE_CLUSTER === 'true';
 
-if (cluster.isPrimary && process.env.NODE_ENV === 'production' && clusteringEnabled) {
+if (
+  cluster.isPrimary &&
+  process.env.NODE_ENV === 'production' &&
+  clusteringEnabled
+) {
   const workerCount = Number(process.env.WEB_CONCURRENCY) || cpus().length;
   const logger = new Logger('Cluster');
 
@@ -260,7 +342,9 @@ if (cluster.isPrimary && process.env.NODE_ENV === 'production' && clusteringEnab
     const reason = signal
       ? `signal ${signal}`
       : `code ${code}${worker.exitedAfterDisconnect ? ' after disconnect' : ''}`;
-    logger.error(`Worker ${worker.process.pid} exited with ${reason}. A replacement worker will be started.`);
+    logger.error(
+      `Worker ${worker.process.pid} exited with ${reason}. A replacement worker will be started.`,
+    );
     cluster.fork();
   });
 } else {

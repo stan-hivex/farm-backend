@@ -18,7 +18,9 @@ describe('SupportService', () => {
     const cloudinary = {
       uploadSupportAttachment: jest
         .fn()
-        .mockResolvedValue('https://res.cloudinary.com/demo/image/upload/photo.jpg'),
+        .mockResolvedValue(
+          'https://res.cloudinary.com/demo/image/upload/photo.jpg',
+        ),
     };
     const service = new SupportService(
       prisma,
@@ -273,7 +275,9 @@ describe('SupportService', () => {
     const cloudinary = {
       uploadSupportAttachment: jest
         .fn()
-        .mockResolvedValue('https://res.cloudinary.com/demo/image/upload/photo.jpg'),
+        .mockResolvedValue(
+          'https://res.cloudinary.com/demo/image/upload/photo.jpg',
+        ),
     };
     const service = new SupportService(
       prisma,

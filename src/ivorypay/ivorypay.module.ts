@@ -9,7 +9,13 @@ import { WebsocketModule } from '../websocket/websocket.module';
 import { CacheModule } from '../common/cache/cache.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, NotificationsModule, WebsocketModule, CacheModule],
+  imports: [
+    ConfigModule,
+    PrismaModule,
+    NotificationsModule,
+    WebsocketModule,
+    CacheModule,
+  ],
   controllers: [CryptoController],
   providers: [IvorypayService, IvorypayDepositService],
   exports: [IvorypayService, IvorypayDepositService],

@@ -4,13 +4,11 @@ import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
 import { PaystackService } from '../paystack/paystack.service';
-import { IvorypayService } from '../ivorypay/ivorypay.service';
 import { CacheService } from '../common/cache/cache.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { PaystackTransferInitiationError } from '../paystack/paystack.service';
-import { IvorypayPayoutOutcomeUnknownError } from '../ivorypay/ivorypay.service';
 import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 
 describe('WithdrawService', () => {
@@ -52,20 +50,6 @@ describe('WithdrawService', () => {
           },
         },
         { provide: PaystackService, useValue: {} },
-        {
-          provide: IvorypayService,
-          useValue: {
-            createWithdrawal: jest.fn(),
-            verifyTransaction: jest.fn(),
-            quoteCryptoTransfer: jest.fn().mockResolvedValue({
-              minimumAmountInCrypto: 0,
-              totalAmountInCrypto: 1,
-              amountInCryptoLessFee: 1,
-              platformFeeInCrypto: 0,
-              gasFeeInCrypto: 0,
-            }),
-          },
-        },
         {
           provide: CacheService,
           useValue: {
@@ -139,9 +123,11 @@ describe('WithdrawService', () => {
     jest
       .spyOn(service as any, 'processWithdrawal')
       .mockResolvedValue(undefined);
-    (service as any).currencyConversionService.getCurrentRate.mockResolvedValue({
-      farm_usd_rate: 1,
-    });
+    (service as any).currencyConversionService.getCurrentRate.mockResolvedValue(
+      {
+        farm_usd_rate: 1,
+      },
+    );
     prisma.wallets.findFirst.mockResolvedValue({
       id: 'wallet-1',
       balance: 100,
@@ -158,129 +144,6 @@ describe('WithdrawService', () => {
       } as any),
     ).rejects.toThrow(
       'Minimum crypto withdrawal is USD 2.00 before the 1.5% withdrawal fee',
-    );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-  });
-
-  it('persists the selected crypto asset for crypto withdrawals', async () => {
-    jest
-      .spyOn(service as any, 'processWithdrawal')
-      .mockResolvedValue(undefined);
-
-    prisma.wallets.findFirst.mockResolvedValue({
-      id: 'wallet-1',
-      balance: 1000,
-      locked_balance: 0,
-    });
-
-    let createdWithdrawalData: any;
-    prisma.$transaction.mockImplementation(async (callback: any) => {
-      const tx = {
-        wallets: { update: jest.fn().mockResolvedValue({}) },
-        withdrawal: {
-          create: jest
-            .fn()
-            .mockImplementation(async ({ data }: { data: any }) => {
-              createdWithdrawalData = data;
-              return { id: 'withdrawal-1', reference: 'ref-1' };
-            }),
-        },
-        transactions: { create: jest.fn().mockResolvedValue({}) },
-      };
-
-      return callback(tx);
-    });
-
-    await service.createWithdrawal('user-1', {
-      amount: 200,
-      method: 'CRYPTO',
-      cryptoAddress: '0xabc',
-      network: 'Polygon',
-      cryptoAsset: 'USDC',
-      pin: '1234',
-    } as any);
-
-    expect(module.get(WebsocketGateway).emitBalanceUpdate).toHaveBeenCalledWith(
-      'user-1',
-      800,
-    );
-    expect(createdWithdrawalData).toMatchObject({
-      cryptoAddress: '0xabc',
-      network: 'POLYGON',
-      cryptoAsset: 'USDC',
-    });
-  });
-
-  it('accepts walletaddress alias for crypto withdrawals', async () => {
-    jest
-      .spyOn(service as any, 'processWithdrawal')
-      .mockResolvedValue(undefined);
-
-    prisma.wallets.findFirst.mockResolvedValue({
-      id: 'wallet-1',
-      balance: 1000,
-      locked_balance: 0,
-    });
-
-    let createdWithdrawalData: any;
-    prisma.$transaction.mockImplementation(async (callback: any) => {
-      const tx = {
-        wallets: { update: jest.fn().mockResolvedValue({}) },
-        withdrawal: {
-          create: jest
-            .fn()
-            .mockImplementation(async ({ data }: { data: any }) => {
-              createdWithdrawalData = data;
-              return { id: 'withdrawal-1', reference: 'ref-1' };
-            }),
-        },
-        transactions: { create: jest.fn().mockResolvedValue({}) },
-      };
-
-      return callback(tx);
-    });
-
-    await service.createWithdrawal('user-1', {
-      amount: 200,
-      method: 'CRYPTO',
-      walletaddress: '0xabc',
-      network: 'Polygon',
-      token: 'USDC',
-      pin: '1234',
-    } as any);
-
-    expect(createdWithdrawalData).toMatchObject({
-      cryptoAddress: '0xabc',
-      network: 'POLYGON',
-      cryptoAsset: 'USDC',
-    });
-  });
-
-  it('rejects crypto withdrawals below IvoryPay minimum before reserving funds', async () => {
-    prisma.wallets.findFirst.mockResolvedValue({
-      id: 'wallet-1',
-      balance: 1000,
-      locked_balance: 0,
-    });
-    (service as any).ivorypay.quoteCryptoTransfer.mockResolvedValue({
-      minimumAmountInCrypto: 3.22,
-      totalAmountInCrypto: 0.6567,
-      amountInCryptoLessFee: 0.65,
-      platformFeeInCrypto: 0.005,
-      gasFeeInCrypto: 0.0017,
-    });
-
-    await expect(
-      service.createWithdrawal('user-1', {
-        amount: 100,
-        method: 'CRYPTO',
-        cryptoAddress: '0xabc',
-        network: 'POLYGON',
-        cryptoAsset: 'USDC',
-        pin: '1234',
-      } as any),
-    ).rejects.toThrow(
-      'IvoryPay requires at least 3.22 USDC on POLYGON (approximately 490.36 FARM including the withdrawal fee).',
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -304,15 +167,6 @@ describe('WithdrawService', () => {
         mobileMoneyProvider: 'MPESA',
       },
     ],
-    [
-      'CRYPTO',
-      100,
-      {
-        cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
-        cryptoAsset: 'USDC',
-        network: 'POLYGON',
-      },
-    ],
   ])(
     'accepts the %s minimum withdrawal of FARM %i',
     async (method, minimum, fields) => {
@@ -326,6 +180,7 @@ describe('WithdrawService', () => {
       });
       prisma.$transaction.mockImplementation(async (callback: any) =>
         callback({
+          $executeRaw: jest.fn().mockResolvedValue(1),
           wallets: {
             update: jest.fn().mockResolvedValue({
               balance: 10000,
@@ -333,6 +188,9 @@ describe('WithdrawService', () => {
             }),
           },
           withdrawal: {
+            aggregate: jest
+              .fn()
+              .mockResolvedValue({ _count: { _all: 0 }, _sum: { amount: 0 } }),
             create: jest.fn().mockResolvedValue({
               id: 'withdrawal-1',
               reference: 'ref-1',
@@ -374,16 +232,6 @@ describe('WithdrawService', () => {
         mobileMoneyProvider: 'MPESA',
       },
     ],
-    [
-      'CRYPTO',
-      99,
-      'Minimum withdrawal amount for crypto is 100 FARM',
-      {
-        cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
-        cryptoAsset: 'USDC',
-        network: 'POLYGON',
-      },
-    ],
   ])(
     'rejects a %s withdrawal below the minimum',
     async (method, amount, message, fields) => {
@@ -398,116 +246,6 @@ describe('WithdrawService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     },
   );
-
-  it('passes network to Ivorypay for crypto withdrawals', async () => {
-    const withdrawal = {
-      userId: 'user-1',
-      settlement: 90,
-      cryptoAsset: 'USDC',
-      cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
-      network: 'POLYGON',
-    };
-    const createWithdrawalSpy = jest
-      .spyOn((service as any).ivorypay as any, 'createWithdrawal')
-      .mockResolvedValue({
-        data: { id: 'WD_1' },
-        providerTransactionId: 'WD_1',
-      });
-
-    await (service as any).processCryptoWithdrawal(withdrawal, 'ref-1');
-
-    expect(createWithdrawalSpy).toHaveBeenCalled();
-    const callArg: any = createWithdrawalSpy.mock.calls[0][0];
-    expect(callArg).toMatchObject({
-      reference: 'ref-1',
-      crypto: 'USDC',
-      to_address: '0xabc1234567890abcdef1234567890abcdef1234',
-      network: 'POLYGON',
-    });
-    // crypto amount is derived from the authoritative farm->USD rate (mock returns farm_usd_rate=0.00666667)
-    expect(callArg.amount).toBeCloseTo(0.6000003, 6);
-  });
-
-  it('keeps crypto withdrawal funds reserved when IvoryPay acceptance is uncertain', async () => {
-    const transaction = { id: 'tx-1', metadata: {} };
-    prisma.transactions.findUnique.mockResolvedValue(transaction);
-    (service as any).ivorypay.createWithdrawal = jest
-      .fn()
-      .mockRejectedValue(
-        new IvorypayPayoutOutcomeUnknownError(
-          'IvoryPay payout outcome is unknown; funds remain reserved pending reconciliation',
-        ),
-      );
-    const rejectWithdrawal = jest
-      .spyOn(service, 'rejectWithdrawal')
-      .mockResolvedValue(true);
-
-    await (service as any).processCryptoWithdrawal(
-      {
-        userId: 'user-1',
-        settlement: 90,
-        cryptoAsset: 'USDC',
-        cryptoAddress: '0xabc1234567890abcdef1234567890abcdef1234',
-        network: 'POLYGON',
-      },
-      'ref-unknown',
-    );
-
-    expect(rejectWithdrawal).not.toHaveBeenCalled();
-    expect(prisma.transactions.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'tx-1' },
-        data: {
-          metadata: expect.objectContaining({
-            ivorypay_withdrawal_status: 'unknown',
-            ivorypay_outcome_unknown_reason:
-              expect.stringContaining('outcome is unknown'),
-          }),
-        },
-      }),
-    );
-  });
-
-  it('verifies pending crypto withdrawals and debits only after provider success', async () => {
-    const withdrawal = {
-      reference: 'crypto-ref',
-      userId: 'user-1',
-      amount: 100,
-      currency: 'FARM',
-      method: 'CRYPTO',
-      status: 'PROCESSING',
-      rejectionReason: null,
-    };
-    const transaction = { id: 'tx-crypto', metadata: { provider: 'ivorypay' } };
-    prisma.withdrawal.findFirst
-      .mockResolvedValueOnce(withdrawal)
-      .mockResolvedValueOnce({ ...withdrawal, status: 'COMPLETED' });
-    prisma.transactions.findUnique
-      .mockResolvedValueOnce(transaction)
-      .mockResolvedValueOnce(transaction);
-    (service as any).ivorypay.verifyTransaction = jest.fn().mockResolvedValue({
-      id: 'ivory-payout-id',
-      reference: 'crypto-ref',
-      status: 'SUCCESS',
-      cryptoTransactionHash: '0xhash',
-    });
-    const markAsSuccess = jest
-      .spyOn(service, 'markAsSuccess')
-      .mockResolvedValue(true);
-
-    const status = await service.getWithdrawalStatus('crypto-ref', 'user-1');
-
-    expect((service as any).ivorypay.verifyTransaction).toHaveBeenCalledWith(
-      'crypto-ref',
-      undefined,
-      ['crypto-ref'],
-    );
-    expect(markAsSuccess).toHaveBeenCalledWith('crypto-ref');
-    expect(status).toMatchObject({
-      withdrawal_status: 'COMPLETED',
-      ivorypay_withdrawal_status: 'SUCCESS',
-    });
-  });
 
   it('creates a Kenyan Paystack bank recipient and transfers the KES settlement', async () => {
     const withdrawal = {
@@ -816,6 +554,10 @@ describe('WithdrawService', () => {
     const txLedgerCreates: any[] = [];
     prisma.$transaction.mockImplementation(async (callback: any) => {
       const tx = {
+        $executeRaw: jest.fn().mockImplementation(async () => {
+          txWalletUpdates.push({ where: { id: 'wallet-user' } });
+          return 1;
+        }),
         withdrawal: {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -866,69 +608,6 @@ describe('WithdrawService', () => {
         }),
       ]),
     );
-  });
-
-  it('marks a crypto withdrawal as success with IvoryPay metadata', async () => {
-    const userWallet = {
-      id: 'wallet-user',
-      balance: 1000,
-      locked_balance: 1000,
-    };
-    const adminWallet = { id: 'wallet-admin', balance: 500, locked_balance: 0 };
-    let txUpdateData: any;
-
-    prisma.withdrawal.findUnique.mockResolvedValue({
-      id: 'withdrawal-1',
-      reference: 'ref-1',
-      userId: 'user-1',
-      amount: 1000,
-      fee: 0,
-      status: 'PENDING',
-      method: 'CRYPTO',
-    });
-    prisma.transactions.findUnique.mockResolvedValue({
-      id: 'tx-1',
-      metadata: {},
-    });
-    prisma.wallets.findFirst.mockResolvedValue(userWallet);
-    prisma.users.findFirst.mockResolvedValue({ wallets: [adminWallet] });
-
-    prisma.$transaction.mockImplementation(async (callback: any) => {
-      const tx = {
-        withdrawal: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-        users: {
-          findFirst: jest.fn().mockResolvedValue({ wallets: [adminWallet] }),
-        },
-        wallets: {
-          update: jest.fn().mockResolvedValue({}),
-        },
-        transactions: {
-          update: jest
-            .fn()
-            .mockImplementation(async ({ data }: { data: any }) => {
-              txUpdateData = data;
-              return {};
-            }),
-        },
-        ledger_entries: {
-          findFirst: jest.fn().mockResolvedValue(null),
-          create: jest.fn().mockResolvedValue({}),
-        },
-      };
-
-      return callback(tx);
-    });
-
-    await service.markAsSuccess('ref-1');
-
-    expect(txUpdateData).toMatchObject({
-      status: 'completed',
-      description: 'Successful withdrawal',
-      metadata: expect.objectContaining({
-        provider: 'ivorypay',
-        ivorypay_withdrawal_status: 'success',
-      }),
-    });
   });
 
   it('credits completed withdrawal fees that are missing from the superadmin ledger', async () => {

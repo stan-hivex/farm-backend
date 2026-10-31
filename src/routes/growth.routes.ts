@@ -4,10 +4,6 @@ import { authenticateUser } from '../middleware/auth';
 
 const router = Router();
 
-router.get(
-  '/history',
-  authenticateUser,
-  getGrowthHistory
-);
+router.get('/history', authenticateUser, getGrowthHistory);
 
 export default router;

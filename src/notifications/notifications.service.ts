@@ -146,6 +146,7 @@ export class NotificationsService {
   async createInApp(
     userId: string,
     dto: {
+      // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents -- documents the known enum values
       type: notification_type | string;
       title: string;
       body: string;
@@ -217,7 +218,8 @@ export class NotificationsService {
     return { message: 'All notifications deleted', deletedCount: result.count };
   }
 
-  async sendEmail(to: string, subject: string, html: string) {
+  /** Sends via the SMTP mailer. Never throws; returns whether it was accepted. */
+  async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
     try {
       await this.mailer.sendMail({
         from: this.cfg.get('SMTP_FROM'),
@@ -225,9 +227,19 @@ export class NotificationsService {
         subject,
         html,
       });
+      return true;
     } catch (e) {
       this.logger.error(`Email failed to ${to}: ${e}`);
+      return false;
     }
+  }
+
+  /** True when the transactional email API (Resend) has a key and sender. */
+  isTransactionalEmailConfigured(): boolean {
+    const apiKey = this.cfg.get<string>('RESEND_API_KEY');
+    const from =
+      this.cfg.get<string>('RESEND_FROM') || this.cfg.get<string>('SMTP_FROM');
+    return Boolean(apiKey && from);
   }
 
   async sendEmailOrThrow(
@@ -272,6 +284,7 @@ export class NotificationsService {
       this.logger.error(
         `Transactional email API delivery failed${status ? ` (HTTP ${status})` : ''}${providerCode ? ` (${providerCode})` : ''}`,
       );
+      // eslint-disable-next-line preserve-caught-error -- provider error is deliberately not chained (may carry request details)
       throw new Error(
         status
           ? `Transactional email provider rejected the request (HTTP ${status})`
@@ -441,6 +454,7 @@ export class NotificationsService {
       this.logger.error(
         `Receipt email delivery failed${status ? ` (HTTP ${status})` : ''}`,
       );
+      // eslint-disable-next-line preserve-caught-error -- provider error is deliberately not chained (may carry request details)
       throw new Error(
         status
           ? `Receipt email provider rejected the request (HTTP ${status})`
@@ -514,7 +528,7 @@ export class NotificationsService {
           payload: { aps: { sound: 'default' } },
         },
       };
-      const resp = await messaging.sendEachForMulticast(payload as any);
+      const resp = await messaging.sendEachForMulticast(payload);
       const invalidTokens = resp.responses
         .map((result, index) => ({ result, token: tokens[index] }))
         .filter(({ result }) => {
@@ -550,26 +564,45 @@ export class NotificationsService {
     // Enrich with counterparty names and new balances; fall back to the plain
     // text if any lookup fails so a notification is always sent.
     const nameOf = (u: any) =>
-      u ? [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || null : null;
+      u
+        ? [u.first_name, u.last_name].filter(Boolean).join(' ') ||
+          u.username ||
+          null
+        : null;
     let senderName: string | null = null;
     let receiverName: string | null = null;
     let senderBal: number | null = null;
     let receiverBal: number | null = null;
     try {
       const [s, r, sw, rw] = await Promise.all([
-        this.prisma.users.findUnique({ where: { id: senderId }, select: { first_name: true, last_name: true, username: true } } as any),
-        this.prisma.users.findUnique({ where: { id: receiverId }, select: { first_name: true, last_name: true, username: true } } as any),
-        this.prisma.wallets.findFirst({ where: { user_id: senderId }, select: { balance: true } } as any),
-        this.prisma.wallets.findFirst({ where: { user_id: receiverId }, select: { balance: true } } as any),
+        this.prisma.users.findUnique({
+          where: { id: senderId },
+          select: { first_name: true, last_name: true, username: true },
+        } as any),
+        this.prisma.users.findUnique({
+          where: { id: receiverId },
+          select: { first_name: true, last_name: true, username: true },
+        } as any),
+        this.prisma.wallets.findFirst({
+          where: { user_id: senderId },
+          select: { balance: true },
+        } as any),
+        this.prisma.wallets.findFirst({
+          where: { user_id: receiverId },
+          select: { balance: true },
+        } as any),
       ]);
       senderName = nameOf(s);
       receiverName = nameOf(r);
       senderBal = sw?.balance != null ? Number(sw.balance) : null;
       receiverBal = rw?.balance != null ? Number(rw.balance) : null;
     } catch (e) {
-      this.logger.warn(`notifyTransfer enrichment failed: ${e instanceof Error ? e.message : String(e)}`);
+      this.logger.warn(
+        `notifyTransfer enrichment failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
-    const bal = (b: number | null) => (b != null ? ` New balance: ${b} FARM.` : '');
+    const bal = (b: number | null) =>
+      b != null ? ` New balance: ${b} FARM.` : '';
     await Promise.all([
       this.sendNotification(senderId, {
         type: 'transfer_sent',
@@ -591,6 +624,7 @@ export class NotificationsService {
   async sendNotification(
     userId: string,
     dto: {
+      // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents -- documents the known enum values
       type: notification_type | string;
       title: string;
       body: string;

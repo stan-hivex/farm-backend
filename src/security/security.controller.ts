@@ -1,4 +1,15 @@
-import { Controller, Get, Put, Post, Body, UseGuards, Logger, BadRequestException, Delete } from '@nestjs/common';
+import type { AuthUser } from '../common/types/auth-user';
+import {
+  Controller,
+  Get,
+  Put,
+  Post,
+  Body,
+  UseGuards,
+  Logger,
+  BadRequestException,
+  Delete,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsBoolean, IsString, IsOptional } from 'class-validator';
 import { SecurityService } from './security.service';
@@ -43,7 +54,7 @@ export class SecurityController {
   @Permissions('security:read')
   @Get('settings')
   @UseGuards(JwtGuard, RolesGuard)
-  settings(@CurrentUser() user: any) {
+  settings(@CurrentUser() user: AuthUser) {
     this.logger.log(`settings requested by user=${user?.id || 'anon'}`);
     return this.svc.getSettings(user.id);
   }
@@ -54,16 +65,24 @@ export class SecurityController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Enable or disable biometric authentication' })
   async updateBiometrics(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Body() dto: UpdateBiometricsDto,
   ) {
-    this.logger.log(`Biometric update requested by user=${user?.id}, enabled=${dto.enabled}`);
+    this.logger.log(
+      `Biometric update requested by user=${user?.id}, enabled=${dto.enabled}`,
+    );
 
     if (dto.enabled) {
       if (!dto.deviceFingerprint) {
-        throw new BadRequestException('deviceFingerprint is required when enabling biometrics');
+        throw new BadRequestException(
+          'deviceFingerprint is required when enabling biometrics',
+        );
       }
-      return this.svc.enableBiometrics(user.id, dto.deviceFingerprint, dto.biometricType);
+      return this.svc.enableBiometrics(
+        user.id,
+        dto.deviceFingerprint,
+        dto.biometricType,
+      );
     } else {
       return this.svc.disableBiometrics(user.id);
     }
@@ -75,7 +94,7 @@ export class SecurityController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Verify device fingerprint on app resume' })
   async verifyDevice(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Body() dto: VerifyDeviceDto,
   ) {
     this.logger.log(`Device verification requested by user=${user?.id}`);
@@ -88,7 +107,7 @@ export class SecurityController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Enable biometric authentication for this device' })
   async createBiometrics(
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateBiometricsDto,
   ) {
     this.logger.log(`Create biometric requested by user=${user?.id}`);
@@ -97,7 +116,11 @@ export class SecurityController {
       throw new BadRequestException('deviceFingerprint is required');
     }
 
-    return this.svc.enableBiometrics(user.id, dto.deviceFingerprint, dto.biometricType);
+    return this.svc.enableBiometrics(
+      user.id,
+      dto.deviceFingerprint,
+      dto.biometricType,
+    );
   }
 
   @Permissions('security:read')
@@ -105,7 +128,7 @@ export class SecurityController {
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get biometric settings status' })
-  async getBiometricStatus(@CurrentUser() user: any) {
+  async getBiometricStatus(@CurrentUser() user: AuthUser) {
     this.logger.log(`Biometric status requested by user=${user?.id}`);
     return this.svc.getBiometricStatus(user.id);
   }
@@ -114,8 +137,10 @@ export class SecurityController {
   @Delete('biometrics')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Delete biometric trusted device or disable biometrics' })
-  async deleteBiometrics(@CurrentUser() user: any) {
+  @ApiOperation({
+    summary: 'Delete biometric trusted device or disable biometrics',
+  })
+  async deleteBiometrics(@CurrentUser() user: AuthUser) {
     this.logger.log(`Delete biometric requested by user=${user?.id}`);
     return this.svc.deleteBiometrics(user.id);
   }

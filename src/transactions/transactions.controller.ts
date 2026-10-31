@@ -15,8 +15,14 @@ export class TransactionsController {
   constructor(private readonly svc: TransactionsService) {}
   @Permissions('transactions:read')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  @Get()      findAll(@CurrentUser() u: any, @Query() q: any) { return this.svc.findAll(u.id, q); }
+  @Get()
+  findAll(@CurrentUser() u: any, @Query() q: any) {
+    return this.svc.findAll(u.id, q);
+  }
 
   @Permissions('transactions:read')
-  @Get(':id') findOne(@CurrentUser() u: any, @Param('id') id: string) { return this.svc.findOne(u.id, id); }
+  @Get(':id')
+  findOne(@CurrentUser() u: any, @Param('id') id: string) {
+    return this.svc.findOne(u.id, id);
+  }
 }

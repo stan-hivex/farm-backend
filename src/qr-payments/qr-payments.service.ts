@@ -3,7 +3,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { computeFee, ruleFor } from '../fees/fee-defaults';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { CacheService } from '../common/cache/cache.service';
@@ -36,6 +39,7 @@ export class QrPaymentsService {
     private readonly notifications: NotificationsService,
     private readonly receipts: ReceiptsService,
     private readonly nowpayments: NowpaymentsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   async getPublicMerchant(merchantId: string) {
@@ -326,7 +330,7 @@ export class QrPaymentsService {
           metadata: {
             ...metadata,
             ...providerMetadata,
-          } as Prisma.InputJsonObject,
+          },
         },
       });
 
@@ -426,9 +430,7 @@ export class QrPaymentsService {
           const status = verified.payment_status?.toString().toLowerCase();
           if (['finished', 'confirmed'].includes(status ?? '')) {
             await this.complete(internalReference, 'nowpayments', verified);
-          } else if (
-            ['failed', 'refunded', 'expired'].includes(status ?? '')
-          ) {
+          } else if (['failed', 'refunded', 'expired'].includes(status ?? '')) {
             await this.markFailed(
               internalReference,
               'NOWPayments reported payment failure',
@@ -595,11 +597,7 @@ export class QrPaymentsService {
       const verifiedCurrency = verifiedPayment.pay_currency
         ?.toString()
         .toLowerCase();
-      const expectedCurrency = (
-        metadata.crypto ??
-        metadata.pay_currency ??
-        ''
-      )
+      const expectedCurrency = (metadata.crypto ?? metadata.pay_currency ?? '')
         .toString()
         .toLowerCase();
       const expectedUsd = Number(metadata.amount_usd);
@@ -608,7 +606,8 @@ export class QrPaymentsService {
         !['finished', 'confirmed'].includes(status ?? '') ||
         verifiedReference !== reference ||
         !/^[a-z0-9]{2,20}$/.test(verifiedCurrency ?? '') ||
-        (expectedCurrency.length > 0 && verifiedCurrency !== expectedCurrency) ||
+        (expectedCurrency.length > 0 &&
+          verifiedCurrency !== expectedCurrency) ||
         verifiedPayment.price_currency?.toString().toLowerCase() !== 'usd' ||
         !Number.isFinite(expectedUsd) ||
         !Number.isFinite(verifiedUsd) ||
@@ -671,13 +670,14 @@ export class QrPaymentsService {
     const merchantId = qrPayment.merchant_id;
     const walletId = transaction.receiver_wallet_id;
 
+    const merchantRule = await ruleFor(this.fees, 'merchant');
     const settled = await this.prisma.$transaction(async (tx) => {
       const settledAt = new Date();
       const amount = Number(transaction.amount);
       if (!Number.isFinite(amount) || amount <= 0) {
         throw new BadRequestException('QR payment amount is invalid');
       }
-      const saleFee = Number((amount * 0.01).toFixed(8));
+      const saleFee = computeFee(merchantRule, amount, 8);
       const merchantNet = amount - saleFee;
       const claim = await tx.transactions.updateMany({
         where: { id: transaction.id, status: { in: ['pending', 'failed'] } },

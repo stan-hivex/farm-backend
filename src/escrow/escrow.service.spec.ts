@@ -150,6 +150,7 @@ describe('EscrowService dispute resolution', () => {
     const tx: any = {
       escrow_contracts: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue(null),
       },
       wallets: {
         update: jest.fn().mockResolvedValue({ balance: 100 }),
@@ -231,6 +232,7 @@ describe('EscrowService dispute resolution', () => {
     const tx: any = {
       escrow_contracts: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue(null),
       },
       wallets: {
         update: jest
@@ -394,6 +396,7 @@ describe('EscrowService dispute evidence', () => {
     const tx: any = {
       escrow_contracts: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue(null),
       },
       escrow_messages: {
         create: jest.fn().mockResolvedValue({ id: 'message-1' }),
@@ -413,9 +416,11 @@ describe('EscrowService dispute evidence', () => {
       $transaction: jest.fn((work) => work(tx)),
     };
     const cloudinary = {
-      uploadEscrowEvidence: jest.fn().mockResolvedValue(
-        'https://res.cloudinary.com/example/image/upload/evidence.jpg',
-      ),
+      uploadEscrowEvidence: jest
+        .fn()
+        .mockResolvedValue(
+          'https://res.cloudinary.com/example/image/upload/evidence.jpg',
+        ),
     };
     const notifications = {
       sendNotification: jest.fn().mockResolvedValue(undefined),
@@ -766,6 +771,7 @@ describe('EscrowService release retries', () => {
     const tx: any = {
       escrow_contracts: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue(null),
       },
       wallets: {
         update: jest

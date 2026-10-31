@@ -97,9 +97,7 @@ export class TransactionsService {
           .map((t: any) => {
             const metadata = t.metadata;
             if (metadata && typeof metadata === 'object') {
-              return (
-                (metadata as any).merchant_id || (metadata as any).merchantId
-              );
+              return metadata.merchant_id || metadata.merchantId;
             }
             return null;
           })
@@ -246,9 +244,7 @@ export class TransactionsService {
           })
         : null;
     const depositOwner =
-      txn.transaction_type === 'deposit' &&
-      !recipientUser &&
-      wallet?.user_id
+      txn.transaction_type === 'deposit' && !recipientUser && wallet?.user_id
         ? await this.prisma.users.findUnique({
             where: { id: wallet.user_id },
             select: {

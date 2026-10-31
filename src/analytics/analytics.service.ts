@@ -19,18 +19,29 @@ export class AnalyticsService {
     else if (period === 'week') from.setDate(from.getDate() - 7);
     else from.setMonth(from.getMonth() - 1);
 
-    const [txVolume, newUsers, activeEscrows, merchantPayments] = await Promise.all([
-      this.prisma.transactions.aggregate({
-        where: { status: 'completed', created_at: { gte: from } },
-        _sum: { amount: true }, _count: true,
-      }),
-      this.prisma.users.count({ where: { created_at: { gte: from }, is_deleted: false } }),
-      this.prisma.escrow_contracts.count({ where: { status: { in: ['active', 'disputed'] } } }),
-      this.prisma.transactions.aggregate({
-        where: { transaction_type: 'merchant_payment', status: 'completed', created_at: { gte: from } },
-        _sum: { amount: true }, _count: true,
-      }),
-    ]);
+    const [txVolume, newUsers, activeEscrows, merchantPayments] =
+      await Promise.all([
+        this.prisma.transactions.aggregate({
+          where: { status: 'completed', created_at: { gte: from } },
+          _sum: { amount: true },
+          _count: true,
+        }),
+        this.prisma.users.count({
+          where: { created_at: { gte: from }, is_deleted: false },
+        }),
+        this.prisma.escrow_contracts.count({
+          where: { status: { in: ['active', 'disputed'] } },
+        }),
+        this.prisma.transactions.aggregate({
+          where: {
+            transaction_type: 'merchant_payment',
+            status: 'completed',
+            created_at: { gte: from },
+          },
+          _sum: { amount: true },
+          _count: true,
+        }),
+      ]);
 
     const payload = {
       data: {
@@ -60,7 +71,10 @@ export class AnalyticsService {
       select: { created_at: true, amount: true, transaction_type: true },
       orderBy: { created_at: 'asc' },
     });
-    const byDay: Record<string, { date: string; total: number; count: number }> = {};
+    const byDay: Record<
+      string,
+      { date: string; total: number; count: number }
+    > = {};
     for (const t of txns) {
       const day = t.created_at!.toISOString().slice(0, 10);
       if (!byDay[day]) byDay[day] = { date: day, total: 0, count: 0 };
@@ -71,11 +85,7 @@ export class AnalyticsService {
     await this.cache.cacheSet(cacheKey, payload, 90);
     return payload;
   }
-  async getUserGrowthHistory(
-    userId: string,
-    days = 7,
-    period = 'daily',
-  ) {
+  async getUserGrowthHistory(userId: string, days = 7, period = 'daily') {
     const cacheKey = `analytics:user-growth:${userId}:${days}:${period}`;
     const cached = await this.cache.cacheGet<any>(cacheKey);
     if (cached) return cached;
@@ -187,11 +197,12 @@ export class AnalyticsService {
 
     const firstValue = sorted.length ? sorted[0].total : 0;
     const lastValue = sorted.length ? sorted[sorted.length - 1].total : 0;
-    const growthPercentage = firstValue > 0
-      ? Number((((lastValue - firstValue) / firstValue) * 100).toFixed(1))
-      : lastValue > 0
-        ? 100
-        : 0;
+    const growthPercentage =
+      firstValue > 0
+        ? Number((((lastValue - firstValue) / firstValue) * 100).toFixed(1))
+        : lastValue > 0
+          ? 100
+          : 0;
 
     const payload = {
       data: sorted.map((item) => ({ date: item.date, total: item.total })),
@@ -202,5 +213,4 @@ export class AnalyticsService {
     await this.cache.cacheSet(cacheKey, payload, 90);
     return payload;
   }
-
 }

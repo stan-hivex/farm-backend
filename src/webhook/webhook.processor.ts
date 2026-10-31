@@ -21,7 +21,9 @@ export class WebhookProcessor implements OnModuleInit {
       await this.queue.clean(24 * 60 * 60 * 1000, 'completed', 1000);
       this.logger.log('Webhook queue worker started; cleaned aged queue jobs');
     } catch (error) {
-      this.logger.warn(`Failed to clean aged webhook queue jobs: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Failed to clean aged webhook queue jobs: ${error instanceof Error ? error.message : String(error)}`,
+      );
       this.logger.log('Webhook queue worker started');
     }
   }
@@ -40,7 +42,9 @@ export class WebhookProcessor implements OnModuleInit {
     try {
       await this.paymentProcessor.process(job.data);
     } catch (error) {
-      this.logger.error(`Failed to process webhook job: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Failed to process webhook job: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw error;
     }
   }

@@ -1,4 +1,12 @@
-import { WebSocketGateway, WebSocketServer, SubscribeMessage, OnGatewayConnection, OnGatewayDisconnect, MessageBody, ConnectedSocket } from '@nestjs/websockets';
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  SubscribeMessage,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  MessageBody,
+  ConnectedSocket,
+} from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -26,17 +34,25 @@ import { ConfigService } from '@nestjs/config';
       });
 
       const allowLocalhost = process.env.NODE_ENV !== 'production';
-      return callback(null, isAllowed || (allowLocalhost && localhostCorsRegex.test(origin)));
+      return callback(
+        null,
+        isAllowed || (allowLocalhost && localhostCorsRegex.test(origin)),
+      );
     },
   },
   namespace: '/ws',
 })
-export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class WebsocketGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer() server!: Server;
   private readonly logger = new Logger(WebsocketGateway.name);
   private userSockets = new Map<string, string>(); // userId → socketId
 
-  constructor(private jwtService: JwtService, private cfg: ConfigService) {}
+  constructor(
+    private jwtService: JwtService,
+    private cfg: ConfigService,
+  ) {}
 
   handleConnection(client: Socket) {
     this.logger.debug(`Client connected: ${client.id}`);
@@ -44,7 +60,10 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   handleDisconnect(client: Socket) {
     for (const [userId, socketId] of this.userSockets.entries()) {
-      if (socketId === client.id) { this.userSockets.delete(userId); break; }
+      if (socketId === client.id) {
+        this.userSockets.delete(userId);
+        break;
+      }
     }
     this.logger.debug(`Client disconnected: ${client.id}`);
   }

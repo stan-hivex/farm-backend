@@ -1,4 +1,7 @@
-import { PasswordResetRateLimiter, generatePasswordResetToken } from './password-reset.util';
+import {
+  PasswordResetRateLimiter,
+  generatePasswordResetToken,
+} from './password-reset.util';
 
 describe('password reset utilities', () => {
   it('generates a secure reset token', () => {

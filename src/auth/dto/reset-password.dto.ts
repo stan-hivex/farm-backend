@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+} from 'class-validator';
 
 export class ResetPasswordDto {
   @ApiPropertyOptional({ example: '123456' })
@@ -21,7 +27,8 @@ export class ResetPasswordDto {
   @IsString()
   @MinLength(12)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\da-zA-Z]).{12,}$/, {
-    message: 'Password must be at least 12 characters and include uppercase, lowercase, number, and symbol',
+    message:
+      'Password must be at least 12 characters and include uppercase, lowercase, number, and symbol',
   })
   password!: string;
 

@@ -1,7 +1,7 @@
 {
   "name": "farm-backend",
   "version": "1.0.0",
-  "description": "FARM/HiveXX Backend — NestJS 11 + Prisma + PostgreSQL + Algorand",
+  "description": "FARM/HiveXX Backend \u2014 NestJS 11 + Prisma + PostgreSQL + Algorand",
   "author": "HiveXX Engineering",
   "private": true,
   "license": "UNLICENSED",
@@ -9,11 +9,12 @@
     "prestart": "echo 'Skipping migrations for now'",
     "build": "node ./node_modules/prisma/build/index.js generate && nest build && node ./scripts/ensure-render-entrypoint.js",
     "format": "prettier --write \"src/**/*.ts\"",
-    "start": "node dist/main.js",
+    "start": "node ./node_modules/prisma/build/index.js migrate deploy && node dist/main.js",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main.js",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
+    "lint:fix": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -26,6 +27,7 @@
     "seed": "ts-node -r tsconfig-paths/register prisma/seed/index.ts"
   },
   "dependencies": {
+    "@algorandfoundation/falcon-wasm": "^1.0.1",
     "@aws-sdk/client-secrets-manager": "^3.1055.0",
     "@nestjs/bull": "^11.0.4",
     "@nestjs/cli": "^11.0.21",
@@ -42,7 +44,7 @@
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.24",
     "@prisma/client": "^6.19.3",
-    "algosdk": "^3.5.2",
+    "algosdk": "^3.9.0",
     "axios": "^1.16.1",
     "bcrypt": "^5.1.1",
     "bull": "^4.16.5",
@@ -57,13 +59,14 @@
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
     "lodash": "^4.18.1",
-    "multer": "^2.2.0",
+    "multer": "^2.5.0",
     "nest-winston": "^1.10.2",
     "nodemailer": "^9.0.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pdf-lib": "^1.17.1",
     "pg": "^8.21.0",
+    "prisma": "^6.19.3",
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
@@ -93,7 +96,8 @@
     },
     "retry-request": {
       "uuid": "^11.1.1"
-    }
+    },
+    "multer": "$multer"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -114,19 +118,22 @@
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.62.1",
     "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.7",
+    "globals": "^17.13.0",
     "jest": "^30.4.2",
     "node-gyp": "^12.4.0",
     "node-pre-gyp": "^0.17.0",
     "nodemon": "^3.1.14",
     "prettier": "^3.8.3",
-    "prisma": "^6.19.3",
     "source-map-support": "^0.5.21",
     "supertest": "^7.2.2",
     "ts-jest": "^29.4.11",
     "ts-loader": "^9.5.7",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1"
   },
   "jest": {
     "moduleFileExtensions": [

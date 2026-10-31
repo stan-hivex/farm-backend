@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { CacheService } from '../common/cache/cache.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
@@ -21,11 +26,26 @@ export class UsersService {
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
       select: {
-        id: true, first_name: true, last_name: true, username: true,
-        email: true, phone: true, role: true, kyc_status: true, kyc_level: true,
-        phone_verified: true, email_verified: true, profile_image: true,
-        bio: true, country: true, city: true, referral_code: true, created_at: true,
-        wallets: { select: { wallet_address: true, balance: true, currency: true } },
+        id: true,
+        first_name: true,
+        last_name: true,
+        username: true,
+        email: true,
+        phone: true,
+        role: true,
+        kyc_status: true,
+        kyc_level: true,
+        phone_verified: true,
+        email_verified: true,
+        profile_image: true,
+        bio: true,
+        country: true,
+        city: true,
+        referral_code: true,
+        created_at: true,
+        wallets: {
+          select: { wallet_address: true, balance: true, currency: true },
+        },
       },
     });
     if (!user) throw new NotFoundException('User not found');
@@ -34,11 +54,17 @@ export class UsersService {
     return payload;
   }
 
-  async updateProfile(userId: string, dto: {
-    first_name?: string; last_name?: string;
-    username?: string;
-    bio?: string; country?: string; city?: string;
-  }) {
+  async updateProfile(
+    userId: string,
+    dto: {
+      first_name?: string;
+      last_name?: string;
+      username?: string;
+      bio?: string;
+      country?: string;
+      city?: string;
+    },
+  ) {
     if (dto.username != null) {
       const normalized = dto.username.trim().toLowerCase();
       if (normalized.length < 3) {
@@ -60,8 +86,14 @@ export class UsersService {
       where: { id: userId },
       data: dto,
       select: {
-        id: true, first_name: true, last_name: true, username: true,
-        bio: true, country: true, city: true, profile_image: true,
+        id: true,
+        first_name: true,
+        last_name: true,
+        username: true,
+        bio: true,
+        country: true,
+        city: true,
+        profile_image: true,
       },
     });
 
@@ -110,10 +142,7 @@ export class UsersService {
         profile_image: true,
         wallets: { select: { wallet_address: true }, take: 1 },
       },
-      orderBy: [
-        { username: 'asc' },
-        { first_name: 'asc' },
-      ],
+      orderBy: [{ username: 'asc' }, { first_name: 'asc' }],
       take: 10,
     });
 
@@ -126,7 +155,10 @@ export class UsersService {
       include: {
         users_contacts_contact_user_idTousers: {
           select: {
-            id: true, username: true, first_name: true, last_name: true,
+            id: true,
+            username: true,
+            first_name: true,
+            last_name: true,
             profile_image: true,
             wallets: { select: { wallet_address: true }, take: 1 },
           },
@@ -139,10 +171,14 @@ export class UsersService {
 
   async addContact(ownerId: string, identifier: string, nickname?: string) {
     const target = await this.prisma.users.findFirst({
-      where: { OR: [{ username: identifier }, { phone: identifier }], is_deleted: false },
+      where: {
+        OR: [{ username: identifier }, { phone: identifier }],
+        is_deleted: false,
+      },
     });
     if (!target) throw new NotFoundException('User not found');
-    if (target.id === ownerId) throw new ConflictException('Cannot add yourself as a contact');
+    if (target.id === ownerId)
+      throw new ConflictException('Cannot add yourself as a contact');
 
     const exists = await this.prisma.contacts.findFirst({
       where: { owner_id: ownerId, contact_user_id: target.id },
@@ -156,15 +192,23 @@ export class UsersService {
   }
 
   async removeContact(ownerId: string, contactId: string) {
-    await this.prisma.contacts.deleteMany({ where: { id: contactId, owner_id: ownerId } });
+    await this.prisma.contacts.deleteMany({
+      where: { id: contactId, owner_id: ownerId },
+    });
     return { message: 'Contact removed' };
   }
 
   async getNotifications(userId: string, query: any) {
-    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
+    const { skip, take, page, limit } = paginationParams(
+      query.page,
+      query.limit,
+    );
     const [items, total] = await Promise.all([
       this.prisma.notifications.findMany({
-        where: { user_id: userId }, skip, take, orderBy: { created_at: 'desc' },
+        where: { user_id: userId },
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
       }),
       this.prisma.notifications.count({ where: { user_id: userId } }),
     ]);
@@ -173,14 +217,16 @@ export class UsersService {
 
   async markNotificationRead(userId: string, notifId: string) {
     await this.prisma.notifications.updateMany({
-      where: { id: notifId, user_id: userId }, data: { is_read: true },
+      where: { id: notifId, user_id: userId },
+      data: { is_read: true },
     });
     return { message: 'Notification marked as read' };
   }
 
   async markAllNotificationsRead(userId: string) {
     await this.prisma.notifications.updateMany({
-      where: { user_id: userId, is_read: false }, data: { is_read: true },
+      where: { user_id: userId, is_read: false },
+      data: { is_read: true },
     });
     return { message: 'All notifications marked as read' };
   }
@@ -202,7 +248,10 @@ export class UsersService {
     return { message: 'All notifications deleted', deletedCount: result.count };
   }
 
-  async changeEmail(userId: string, dto: { new_email: string; current_password: string }) {
+  async changeEmail(
+    userId: string,
+    dto: { new_email: string; current_password: string },
+  ) {
     // Validate new email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(dto.new_email)) {
@@ -221,7 +270,10 @@ export class UsersService {
     const user = await this.prisma.users.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    const passwordMatches = await bcrypt.compare(dto.current_password, user.password_hash);
+    const passwordMatches = await bcrypt.compare(
+      dto.current_password,
+      user.password_hash,
+    );
     if (!passwordMatches) {
       throw new BadRequestException('Incorrect current password');
     }
@@ -233,10 +285,16 @@ export class UsersService {
       select: { id: true, email: true, email_verified: true },
     });
 
-    return { data: updated, message: 'Email updated successfully. Please verify your new email.' };
+    return {
+      data: updated,
+      message: 'Email updated successfully. Please verify your new email.',
+    };
   }
 
-  async changePhone(userId: string, dto: { new_phone: string; current_password: string }) {
+  async changePhone(
+    userId: string,
+    dto: { new_phone: string; current_password: string },
+  ) {
     // Validate phone format (basic: digits, +, and hyphens)
     const phoneRegex = /^[\d+\-() ]{7,20}$/;
     if (!phoneRegex.test(dto.new_phone)) {
@@ -255,7 +313,10 @@ export class UsersService {
     const user = await this.prisma.users.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    const passwordMatches = await bcrypt.compare(dto.current_password, user.password_hash);
+    const passwordMatches = await bcrypt.compare(
+      dto.current_password,
+      user.password_hash,
+    );
     if (!passwordMatches) {
       throw new BadRequestException('Incorrect current password');
     }
@@ -267,6 +328,10 @@ export class UsersService {
       select: { id: true, phone: true, phone_verified: true },
     });
 
-    return { data: updated, message: 'Phone number updated successfully. Please verify your new phone.' };
+    return {
+      data: updated,
+      message:
+        'Phone number updated successfully. Please verify your new phone.',
+    };
   }
 }

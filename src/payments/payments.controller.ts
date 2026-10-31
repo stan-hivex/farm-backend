@@ -1,13 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  UseGuards,
-  Req,
-  UnauthorizedException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import {
   IsNotEmpty,
@@ -27,7 +18,6 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Public } from '../common/decorators/public.decorator';
 // Paystack webhook endpoint removed in favor of unified webhook queue flow
 
 class DepositDto {
@@ -73,13 +63,13 @@ export class PaymentsController {
     let deviceRisk = 0;
     const token = (req.headers['x-device-token'] as string) || '';
     if (token) {
-      const p = verifyDeviceToken(token) as any;
+      const p = verifyDeviceToken(token);
       if (p && typeof p.deviceRisk !== 'undefined')
         deviceRisk = Number(p.deviceRisk) || 0;
     } else {
       const header =
         req.headers['x-device-risk'] || req.headers['x-device-risk-score'];
-      deviceRisk = header ? Number(header as string) || 0 : 0;
+      deviceRisk = header ? Number(header) || 0 : 0;
     }
     return this.svc.initiateDeposit(u.id, dto, {
       deviceRisk,

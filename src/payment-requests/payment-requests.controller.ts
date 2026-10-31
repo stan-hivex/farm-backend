@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Param, Body, Query, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Body,
+  Query,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -20,13 +29,19 @@ export class PaymentRequestsController {
   @Post('request')
   @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Request payment from another user' })
-  requestPayment(@CurrentUser() u: any, @Body() dto: CreatePaymentRequestDto, @Req() req: Request) {
-    return this.svc.createRequest(u.id, dto as any, req.ip || '');
+  requestPayment(
+    @CurrentUser() u: any,
+    @Body() dto: CreatePaymentRequestDto,
+    @Req() req: Request,
+  ) {
+    return this.svc.createRequest(u.id, dto, req.ip || '');
   }
 
   @Permissions('transfer:read')
   @Get('pending')
-  @ApiOperation({ summary: 'Get pending payment requests for me (as recipient)' })
+  @ApiOperation({
+    summary: 'Get pending payment requests for me (as recipient)',
+  })
   getPendingRequests(@CurrentUser() u: any, @Query() q: any) {
     return this.svc.getPendingRequests(u.id, q);
   }
@@ -35,7 +50,11 @@ export class PaymentRequestsController {
   @Post('accept')
   @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Accept and complete a payment request' })
-  acceptAndTransfer(@CurrentUser() u: any, @Body() dto: AcceptPaymentRequestDto, @Req() req: Request) {
+  acceptAndTransfer(
+    @CurrentUser() u: any,
+    @Body() dto: AcceptPaymentRequestDto,
+    @Req() req: Request,
+  ) {
     return this.svc.acceptAndTransfer(u.id, dto as any, req.ip || '');
   }
 
@@ -43,7 +62,11 @@ export class PaymentRequestsController {
   @Post('approve')
   @UseGuards(JwtGuard, KycGuard)
   @ApiOperation({ summary: 'Approve a money request' })
-  approveRequest(@CurrentUser() u: any, @Body() dto: AcceptPaymentRequestDto, @Req() req: Request) {
+  approveRequest(
+    @CurrentUser() u: any,
+    @Body() dto: AcceptPaymentRequestDto,
+    @Req() req: Request,
+  ) {
     return this.svc.acceptAndTransfer(u.id, dto as any, req.ip || '');
   }
 

@@ -38,20 +38,22 @@ export class AuditMiddleware implements NestMiddleware {
       const user = (req as any).user;
       if (user?.id) {
         // Fire and forget — don't block the response
-        this.prisma.audit_logs.create({
-          data: {
-            user_id: user.id,
-            action: `${req.method} ${req.path}`,
-            entity_type: req.path.split('/')[2] ?? 'unknown',
-            ip_address: req.ip ?? null,
-            user_agent: req.headers['user-agent'] ?? null,
-            new_values: {
-              body: this.sanitize(req.body),
-              status: res.statusCode,
-              request_id: (req as any).requestId,
+        this.prisma.audit_logs
+          .create({
+            data: {
+              user_id: user.id,
+              action: `${req.method} ${req.path}`,
+              entity_type: req.path.split('/')[2] ?? 'unknown',
+              ip_address: req.ip ?? null,
+              user_agent: req.headers['user-agent'] ?? null,
+              new_values: {
+                body: this.sanitize(req.body),
+                status: res.statusCode,
+                request_id: (req as any).requestId,
+              },
             },
-          },
-        }).catch((e) => this.logger.error('Audit log failed:', e));
+          })
+          .catch((e) => this.logger.error('Audit log failed:', e));
       }
       return originalSend(body);
     };
@@ -62,8 +64,17 @@ export class AuditMiddleware implements NestMiddleware {
   // Strip sensitive fields before logging
   private sanitize(body: any): any {
     if (!body || typeof body !== 'object') return body;
-    const REDACTED = ['password', 'pin', 'confirm_pin', 'otp_code', 'refresh_token',
-      'access_token', 'private_key', 'mnemonic', 'secret'];
+    const REDACTED = [
+      'password',
+      'pin',
+      'confirm_pin',
+      'otp_code',
+      'refresh_token',
+      'access_token',
+      'private_key',
+      'mnemonic',
+      'secret',
+    ];
     const clean = { ...body };
     for (const key of REDACTED) {
       if (key in clean) clean[key] = '[REDACTED]';

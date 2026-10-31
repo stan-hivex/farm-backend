@@ -1,3 +1,5 @@
+> Note: IvoryPay is retired — see docs/IVORYPAY_RETIREMENT.md.
+
 # Flutter integration: provider networks for crypto withdrawals
 
 This doc shows how to fetch provider-authoritative networks from the backend and use the provider `network` value when creating a withdrawal.

@@ -1,6 +1,9 @@
 import {
-  CanActivate, ExecutionContext, Injectable,
-  BadRequestException, SetMetadata,
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  BadRequestException,
+  SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthService } from '../../auth/auth.service';
@@ -10,12 +13,16 @@ export const RequirePin = () => SetMetadata(REQUIRE_PIN_KEY, true);
 
 @Injectable()
 export class PinGuard implements CanActivate {
-  constructor(private reflector: Reflector, private authService: AuthService) {}
+  constructor(
+    private reflector: Reflector,
+    private authService: AuthService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const requirePin = this.reflector.getAllAndOverride<boolean>(REQUIRE_PIN_KEY, [
-      context.getHandler(), context.getClass(),
-    ]);
+    const requirePin = this.reflector.getAllAndOverride<boolean>(
+      REQUIRE_PIN_KEY,
+      [context.getHandler(), context.getClass()],
+    );
     if (!requirePin) return true;
 
     const request = context.switchToHttp().getRequest();

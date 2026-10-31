@@ -1,3 +1,4 @@
+import type { AuthUser } from '../common/types/auth-user';
 import {
   Body,
   Controller,
@@ -89,7 +90,10 @@ export class UserSupportController {
 
   @Post()
   @Permissions('profile:write')
-  createTicket(@CurrentUser() user: any, @Body() dto: CreateSupportTicketDto) {
+  createTicket(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateSupportTicketDto,
+  ) {
     return this.supportService.createTicket(
       user.id,
       dto.subject,
@@ -100,7 +104,7 @@ export class UserSupportController {
 
   @Get()
   @Permissions('profile:read')
-  listMyTickets(@CurrentUser() user: any) {
+  listMyTickets(@CurrentUser() user: AuthUser) {
     return this.supportService.listUserTickets(user.id);
   }
 
@@ -108,7 +112,7 @@ export class UserSupportController {
   @Permissions('profile:write')
   reply(
     @Param('id') ticketId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Body() dto: ReplyToSupportTicketDto,
   ) {
     return this.supportService.replyToTicketAsUser(
@@ -136,7 +140,7 @@ export class AdminSupportController {
   @Permissions('admin:write')
   reply(
     @Param('id') ticketId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Body() dto: ReplyToSupportTicketDto,
   ) {
     return this.supportService.replyToTicketAsAdmin(

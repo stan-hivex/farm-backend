@@ -38,7 +38,10 @@ export async function loadAwsSecrets(): Promise<void> {
     try {
       response = await client.send(command);
     } catch (err: any) {
-      console.warn('⚠️ AWS Secrets fetch failed (continuing safely):', err?.message || err);
+      console.warn(
+        '⚠️ AWS Secrets fetch failed (continuing safely):',
+        err?.message || err,
+      );
       return;
     }
 
@@ -51,7 +54,7 @@ export async function loadAwsSecrets(): Promise<void> {
 
     try {
       secrets = JSON.parse(response.SecretString);
-    } catch (err) {
+    } catch {
       console.warn('⚠️ AWS secret JSON is invalid, skipping');
       return;
     }

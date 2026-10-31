@@ -140,10 +140,10 @@ export class IvorypayService {
       ) {
         throw error;
       }
-      const status = (error as any)?.response?.status;
+      const status = error?.response?.status;
       this.logger.error(
         `IvoryPay crypto payout options lookup failed status=${status ?? 'unavailable'}: ${
-          (error as any)?.response?.data?.message ??
+          error?.response?.data?.message ??
           (error as Error)?.message ??
           'unknown error'
         }`,
@@ -310,7 +310,7 @@ export class IvorypayService {
       }
       this.logger.error(
         `IvoryPay crypto payout quote failed token=${token} network=${network}: ${
-          (error as any)?.response?.data?.message ??
+          error?.response?.data?.message ??
           (error as Error)?.message ??
           'unknown error'
         }`,
@@ -712,13 +712,14 @@ export class IvorypayService {
       >();
       const addOption = (item: any, fallbackNetworkName = '') => {
         const token =
-          typeof item?.token === 'string' ? item.token.trim().toUpperCase() : '';
+          typeof item?.token === 'string'
+            ? item.token.trim().toUpperCase()
+            : '';
         const network =
           typeof (item?.network ?? item?.blockchain) === 'string'
             ? (item.network ?? item.blockchain).trim()
             : fallbackNetworkName;
-        const isActive =
-          item?.isActive === true || item?.isSupported === true;
+        const isActive = item?.isActive === true || item?.isSupported === true;
         const networkName =
           typeof item?.networkName === 'string' && item.networkName.trim()
             ? item.networkName.trim()
@@ -756,10 +757,10 @@ export class IvorypayService {
         throw error;
       }
       const message =
-        (error as any)?.response?.data?.message ??
+        error?.response?.data?.message ??
         (error as Error)?.message ??
         'IvoryPay token lookup failed';
-      const status = (error as any)?.response?.status;
+      const status = error?.response?.status;
       this.logger.error(
         `IvoryPay supported-token lookup failed status=${status ?? 'unavailable'}: ${message}`,
       );

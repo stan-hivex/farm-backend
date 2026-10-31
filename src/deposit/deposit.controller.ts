@@ -1,4 +1,5 @@
-﻿import {
+import type { AuthRequest } from '../common/types/auth-user';
+import {
   BadRequestException,
   Body,
   Controller,
@@ -89,7 +90,7 @@ export class DepositController {
     },
   })
   @Post('create')
-  async create(@Req() req: any, @Body() dto: CreateDepositDto) {
+  async create(@Req() req: AuthRequest, @Body() dto: CreateDepositDto) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID not found in request');
@@ -99,7 +100,7 @@ export class DepositController {
 
   @Permissions('payments:read')
   @Get('history')
-  async history(@Req() req: any) {
+  async history(@Req() req: AuthRequest) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID not found in request');
@@ -110,7 +111,7 @@ export class DepositController {
 
   @Permissions('payments:read')
   @Get('wallet')
-  async wallet(@Req() req: any) {
+  async wallet(@Req() req: AuthRequest) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID not found in request');
@@ -127,7 +128,7 @@ export class DepositController {
     },
   })
   @Post('verify/:reference')
-  async verify(@Param('reference') reference: string, @Req() req: any) {
+  async verify(@Param('reference') reference: string, @Req() req: AuthRequest) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID not found in request');
@@ -138,7 +139,7 @@ export class DepositController {
 
   @Permissions('payments:read')
   @Get('status/:reference')
-  async status(@Param('reference') reference: string, @Req() req: any) {
+  async status(@Param('reference') reference: string, @Req() req: AuthRequest) {
     const userId = req.user?.id;
     if (!userId) {
       throw new Error('User ID not found in request');
@@ -150,7 +151,7 @@ export class DepositController {
   @Permissions('payments:read')
   @RequireOwnership('id')
   @Get(':id')
-  async getOne(@Param('id') id: string, @Req() req: any) {
+  async getOne(@Param('id') id: string, @Req() req: AuthRequest) {
     const userId = req.user?.id;
     return this.depositService.getDepositById(id, userId);
   }
@@ -189,8 +190,24 @@ export class NowpaymentsWalletController {
 
   @Permissions('payments:read')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('crypto/estimate')
+  async estimate(
+    @Query('amount') amountRaw: string,
+    @Query('currency') currency: string,
+  ) {
+    return {
+      data: await this.depositService.estimateUsdCrypto(
+        Number(amountRaw),
+        currency,
+      ),
+    };
+  }
+
+  // From main (83bcfe6): path-param variant kept for existing clients.
+  @Permissions('payments:read')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get('crypto/estimate/:currency')
-  estimate(
+  estimateByCurrency(
     @Param('currency') currency: string,
     @Query('price_amount') priceAmount: string,
   ) {
@@ -203,7 +220,10 @@ export class NowpaymentsWalletController {
   @Permissions('payments:write')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('crypto')
-  createCrypto(@Req() req: any, @Body() dto: CreateNowpaymentsDepositDto) {
+  createCrypto(
+    @Req() req: AuthRequest,
+    @Body() dto: CreateNowpaymentsDepositDto,
+  ) {
     const userId = req.user?.id;
     if (!userId) {
       throw new BadRequestException('User ID not found in request');
@@ -214,7 +234,7 @@ export class NowpaymentsWalletController {
   @Permissions('payments:read')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get('status/:paymentId')
-  status(@Req() req: any, @Param('paymentId') paymentId: string) {
+  status(@Req() req: AuthRequest, @Param('paymentId') paymentId: string) {
     const userId = req.user?.id;
     if (!userId) {
       throw new BadRequestException('User ID not found in request');

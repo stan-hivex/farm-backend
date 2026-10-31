@@ -10,13 +10,21 @@ export class CacheService {
   private readonly enabled: boolean;
   private readonly inFlight = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly cfg: ConfigService, @Optional() private readonly redis?: RedisService) {
+  constructor(
+    private readonly cfg: ConfigService,
+    @Optional() private readonly redis?: RedisService,
+  ) {
     this.prefix = this.cfg.get<string>('CACHE_PREFIX', 'cache:');
-    const configuredTtl = Number(this.cfg.get<string>('CACHE_TTL_SECONDS', '60'));
+    const configuredTtl = Number(
+      this.cfg.get<string>('CACHE_TTL_SECONDS', '60'),
+    );
     this.defaultTtl = Number.isFinite(configuredTtl)
       ? Math.min(60, Math.max(0, configuredTtl))
       : 60;
-    const configuredEnabled = this.cfg.get<string | boolean>('CACHE_ENABLED', 'true');
+    const configuredEnabled = this.cfg.get<string | boolean>(
+      'CACHE_ENABLED',
+      'true',
+    );
     this.enabled = String(configuredEnabled).toLowerCase() !== 'false';
   }
 
@@ -37,11 +45,11 @@ export class CacheService {
       if (raw == null) return null;
       try {
         return JSON.parse(raw) as T;
-      } catch (e) {
-        return (raw as unknown) as T;
+      } catch {
+        return raw as unknown as T;
       }
     } catch (e) {
-      this.logger.warn('Cache get failed', e as any);
+      this.logger.warn('Cache get failed', e);
       return null;
     }
   }
@@ -51,7 +59,7 @@ export class CacheService {
     try {
       const client = this.redis?.getClient();
       if (!client) return;
-      const raw = typeof value === 'string' ? (value as unknown as string) : JSON.stringify(value);
+      const raw = typeof value === 'string' ? value : JSON.stringify(value);
       const ttl = ttlSeconds ?? this.defaultTtl;
       if (ttl > 0) {
         await client.set(this.buildKey(key), raw, 'EX', Math.ceil(ttl));
@@ -59,7 +67,7 @@ export class CacheService {
         await client.set(this.buildKey(key), raw);
       }
     } catch (e) {
-      this.logger.warn('Cache set failed', e as any);
+      this.logger.warn('Cache set failed', e);
     }
   }
 
@@ -70,7 +78,7 @@ export class CacheService {
       if (!client) return;
       await client.del(this.buildKey(key));
     } catch (e) {
-      this.logger.warn('Cache delete failed', e as any);
+      this.logger.warn('Cache delete failed', e);
     }
   }
 
@@ -78,7 +86,11 @@ export class CacheService {
     return this.get<T>(key);
   }
 
-  async cacheSet(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
+  async cacheSet(
+    key: string,
+    value: unknown,
+    ttlSeconds?: number,
+  ): Promise<void> {
     return this.set(key, value, ttlSeconds);
   }
 
@@ -116,11 +128,15 @@ export class CacheService {
         await client.del(...matchedKeys.slice(offset, offset + 200));
       }
     } catch (e) {
-      this.logger.warn('Cache invalidate pattern failed', e as any);
+      this.logger.warn('Cache invalidate pattern failed', e);
     }
   }
 
-  async wrap<T>(key: string, ttlSeconds: number, fetch: () => Promise<T>): Promise<T> {
+  async wrap<T>(
+    key: string,
+    ttlSeconds: number,
+    fetch: () => Promise<T>,
+  ): Promise<T> {
     const cached = await this.get<T>(key);
     if (cached !== null) {
       return cached;

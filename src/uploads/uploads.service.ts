@@ -19,6 +19,26 @@ export class UploadsService {
   private readonly logger = new Logger(UploadsService.name);
 
   async uploadSingle(file: Express.Multer.File): Promise<UploadedImage> {
+    return this.uploadToCloudinary(file, 'image', 'farmapp');
+  }
+
+  /** Business documents: PDFs are stored as raw files, images as images. */
+  async uploadDocument(
+    file: Express.Multer.File,
+    kind: 'pdf' | 'image',
+  ): Promise<UploadedImage> {
+    return this.uploadToCloudinary(
+      file,
+      kind === 'pdf' ? 'raw' : 'image',
+      'farmapp/business-documents',
+    );
+  }
+
+  private async uploadToCloudinary(
+    file: Express.Multer.File,
+    resourceType: 'image' | 'raw',
+    folder: string,
+  ): Promise<UploadedImage> {
     if (!file?.buffer?.length) {
       throw new BadRequestException('Uploaded image is empty');
     }
@@ -26,9 +46,10 @@ export class UploadsService {
       configureCloudinary();
       const result = await new Promise<UploadApiResponse>((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-          { folder: 'farmapp', resource_type: 'image' },
+          { folder, resource_type: resourceType },
           (error, response) => {
-            if (error) return reject(error);
+            if (error)
+              return reject(new Error(error.message || 'Upload failed'));
             if (!response)
               return reject(new Error('Cloudinary returned no result'));
             resolve(response);

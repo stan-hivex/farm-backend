@@ -5,19 +5,13 @@ import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class SettingsService {
-
   constructor(
     private prisma: PrismaService,
     private cache: CacheService,
   ) {}
 
-  async updateLanguage(
-    userId: string,
-    language: string,
-  ) {
-
+  async updateLanguage(userId: string, language: string) {
     await this.prisma.user_settings.upsert({
-
       where: {
         user_id: userId,
       },
@@ -40,10 +34,7 @@ export class SettingsService {
     };
   }
 
-  async updateTheme(
-    userId: string,
-    theme: string,
-  ) {
+  async updateTheme(userId: string, theme: string) {
     // Accept 'light', 'dark', or 'system'
     const val = (theme || '').toLowerCase();
     const allowed = ['light', 'dark', 'system'];

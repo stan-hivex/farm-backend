@@ -1,12 +1,15 @@
-export function resolveDepositCreditAmount(transaction: any, deposit?: any): number {
+export function resolveDepositCreditAmount(
+  transaction: any,
+  deposit?: any,
+): number {
   const normalizeAmount = (amount: any): number => {
     const n = Number(amount ?? 0);
     if (!Number.isFinite(n)) return 0;
     return Math.round(n * 100) / 100;
   };
 
-  const metadata = (transaction?.metadata as any) ?? {};
-  const depositMetadata = (deposit?.metadata as any) ?? {};
+  const metadata = transaction?.metadata ?? {};
+  const depositMetadata = deposit?.metadata ?? {};
 
   if (deposit?.amount !== undefined && deposit?.amount !== null) {
     const depositAmount = normalizeAmount(deposit.amount);
@@ -18,7 +21,10 @@ export function resolveDepositCreditAmount(transaction: any, deposit?: any): num
     if (fiatAmount > 0) return fiatAmount;
   }
 
-  if (depositMetadata?.amount_fiat !== undefined && depositMetadata?.amount_fiat !== null) {
+  if (
+    depositMetadata?.amount_fiat !== undefined &&
+    depositMetadata?.amount_fiat !== null
+  ) {
     const depositFiatAmount = normalizeAmount(depositMetadata.amount_fiat);
     if (depositFiatAmount > 0) return depositFiatAmount;
   }

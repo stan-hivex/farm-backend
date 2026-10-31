@@ -1,10 +1,5 @@
-import {
-  Controller,
-  Get,
-  Param,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import type { AuthUser } from '../common/types/auth-user';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtGuard } from '../common/guards/jwt.guard';
@@ -18,17 +13,17 @@ export class ReceiptsController {
   constructor(private readonly receipts: ReceiptsService) {}
 
   @Get()
-  list(@CurrentUser() user: any, @Query() query: any) {
+  list(@CurrentUser() user: AuthUser, @Query() query: any) {
     return this.receipts.listForMerchantOwner(user.id, query);
   }
 
   @Get(':id/download')
-  download(@CurrentUser() user: any, @Param('id') receiptId: string) {
+  download(@CurrentUser() user: AuthUser, @Param('id') receiptId: string) {
     return this.receipts.getDownloadUrlForMerchantOwner(user.id, receiptId);
   }
 
   @Get(':id')
-  get(@CurrentUser() user: any, @Param('id') receiptId: string) {
+  get(@CurrentUser() user: AuthUser, @Param('id') receiptId: string) {
     return this.receipts.getForMerchantOwner(user.id, receiptId);
   }
 }

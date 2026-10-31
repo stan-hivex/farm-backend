@@ -3,7 +3,10 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { FEE_KEYS } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -11,6 +14,10 @@ import { WithdrawService } from '../withdraw/withdraw.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { enrichAdminListItem } from './admin-response-utils';
+import { CacheService } from '../common/cache/cache.service';
+
+const EXCHANGE_RATES_CACHE_KEY = 'exchange-rates:all';
+const EXCHANGE_RATES_CACHE_TTL_SECONDS = 300;
 
 @Injectable()
 export class AdminService {
@@ -20,6 +27,8 @@ export class AdminService {
     private notifications: NotificationsService,
     private withdrawService: WithdrawService,
     private readonly currencyConversionService: CurrencyConversionService,
+    @Optional() private readonly cache?: CacheService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   async getDashboardStats() {
@@ -717,6 +726,12 @@ export class AdminService {
     const fees = await this.prisma.fee_configurations.findMany({
       orderBy: { created_at: 'desc' },
     });
+    const known = FEE_KEYS as readonly string[];
+    fees.sort(
+      (a, b) =>
+        (known.indexOf(a.transaction_type ?? '') + 1 || 99) -
+        (known.indexOf(b.transaction_type ?? '') + 1 || 99),
+    );
 
     return {
       data: fees.map((fee) => ({
@@ -741,6 +756,9 @@ export class AdminService {
     if (Number.isNaN(numericValue)) {
       throw new BadRequestException('Fee value must be numeric');
     }
+    if (numericValue < 0 || numericValue > 100) {
+      throw new BadRequestException('Fee percent must be between 0 and 100');
+    }
 
     const updated = await this.prisma.fee_configurations.update({
       where: { id: feeId },
@@ -749,8 +767,11 @@ export class AdminService {
         flat_fee: 0,
         minimum_fee: 0,
         maximum_fee: 0,
+        updated_at: new Date(),
+        updated_by: adminId,
       },
     });
+    this.fees?.invalidate();
 
     await this.prisma.audit_logs.create({
       data: {
@@ -758,6 +779,10 @@ export class AdminService {
         action: 'UPDATE_FEE',
         entity_type: 'fee_configurations',
         entity_id: feeId,
+        old_values: {
+          transaction_type: fee.transaction_type,
+          percentage_fee: Number(fee.percentage_fee ?? 0),
+        },
         new_values: { value },
       },
     });
@@ -1042,7 +1067,7 @@ export class AdminService {
       await Promise.all(
         users
           .filter((u) => u.phone)
-          .map((user) => this.notifications.sendSms(user.phone!, dto.body)),
+          .map((user) => this.notifications.sendSms(user.phone, dto.body)),
       );
     }
 
@@ -1174,10 +1199,20 @@ export class AdminService {
   }
 
   async getExchangeRates() {
+    const cached = await this.cache?.cacheGet<{ data: unknown[] }>(
+      EXCHANGE_RATES_CACHE_KEY,
+    );
+    if (cached) return cached;
     const rates = await this.prisma.exchange_rates.findMany({
       orderBy: [{ base_currency: 'asc' }, { target_currency: 'asc' }],
     });
-    return { data: rates };
+    const result = { data: rates };
+    await this.cache?.cacheSet(
+      EXCHANGE_RATES_CACHE_KEY,
+      result,
+      EXCHANGE_RATES_CACHE_TTL_SECONDS,
+    );
+    return result;
   }
 
   async getCurrencyRates() {
@@ -1230,6 +1265,7 @@ export class AdminService {
         upserted.push(entry as any);
       }
     }
+    await this.cache?.cacheDelete(EXCHANGE_RATES_CACHE_KEY);
     return { data: upserted, message: 'Exchange rates updated' };
   }
 
@@ -1749,9 +1785,12 @@ export class AdminService {
     const staffRoles = ['admin', 'super_admin'];
     if (
       staffRoles.includes(String(user.role ?? '').toLowerCase()) ||
-      (dto.role !== undefined && staffRoles.includes(String(dto.role).toLowerCase()))
+      (dto.role !== undefined &&
+        staffRoles.includes(String(dto.role).toLowerCase()))
     ) {
-      throw new ForbiddenException('Staff roles can only be managed by superadmins');
+      throw new ForbiddenException(
+        'Staff roles can only be managed by superadmins',
+      );
     }
 
     const updateData: any = {};
@@ -1776,7 +1815,7 @@ export class AdminService {
         action: 'UPDATE_USER',
         entity_type: 'users',
         entity_id: userId,
-        new_values: updateData as any,
+        new_values: updateData,
       },
     });
     return { data: updated, message: 'User updated successfully' };
@@ -1898,7 +1937,7 @@ export class AdminService {
         action: 'UPDATE_SUPERADMIN',
         entity_type: 'users',
         entity_id: id,
-        new_values: updateData as any,
+        new_values: updateData,
       },
     });
 

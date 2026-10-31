@@ -77,7 +77,7 @@ export class NowpaymentsService {
         `NOWPayments returned an invalid response for ${operation}`,
       );
     }
-    return value as NowPaymentsRecord;
+    return value;
   }
 
   private async request<T = unknown>(
@@ -105,11 +105,12 @@ export class NowpaymentsService {
       if (axios.isAxiosError(error)) {
         const status = error.response?.status;
         const providerMessage =
-          (error.response?.data as any)?.message ??
-          (error.response?.data as any)?.status;
+          error.response?.data?.message ?? error.response?.data?.status;
         this.logger.error(
           `NOWPayments ${method.toUpperCase()} ${path} failed${status ? ` (HTTP ${status})` : ''}${
-            typeof providerMessage === 'string' ? `: ${providerMessage.slice(0, 300)}` : ''
+            typeof providerMessage === 'string'
+              ? `: ${providerMessage.slice(0, 300)}`
+              : ''
           }`,
         );
         if (status && status >= 400 && status < 500) {

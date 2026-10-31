@@ -79,7 +79,7 @@ describe('DepositService', () => {
         paymentMethod: 'CRYPTO',
         email: 'user@example.com',
       }),
-    ).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    ).rejects.toThrow('NOWPayments endpoint /api/v1/wallet/deposit/crypto');
   });
 
   it('does not create a generic deposit for crypto requests', async () => {
@@ -89,7 +89,7 @@ describe('DepositService', () => {
         paymentMethod: 'CRYPTO',
         email: 'user2@example.com',
       }),
-    ).rejects.toThrow('dedicated /api/v1/crypto/deposit endpoint');
+    ).rejects.toThrow('NOWPayments endpoint /api/v1/wallet/deposit/crypto');
     expect(prisma.deposit.create).not.toHaveBeenCalled();
   });
 

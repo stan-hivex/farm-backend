@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
 @Injectable()
 export class SafeInputValidationPipe implements PipeTransform {
   private readonly suspiciousPatterns = [
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters
     /[\u0000-\u001f\u007f]/,
     /--/,
     /\/\*/,
@@ -30,7 +31,36 @@ export class SafeInputValidationPipe implements PipeTransform {
     'paymentMethod',
     'payment_method',
     'method',
+    // Opaque provider tokens (LiteAPI offer ids are long base64url strings
+    // that can contain "--"). HotelsService validates them against a strict
+    // character allowlist before use.
+    'offer_id',
+    'prebook_id',
   ]);
+
+  // Human-written free text (descriptions, notes, chat messages...). These
+  // legitimately contain ";", newlines and words like "create"/"update".
+  // All DB access is parameterised (Prisma), so only reject control
+  // characters other than tab/newline here.
+  private readonly proseFields = new Set([
+    'description',
+    'summary',
+    'notes',
+    'message',
+    'body',
+    'use_of_funds',
+    'risk_factors',
+    'team',
+    'evidence',
+    'reason',
+    'review_notes',
+    'rejection_reason',
+    'content',
+    'title',
+  ]);
+  private readonly proseForbidden =
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
   transform(value: unknown, metadata: { type?: string; data?: string }) {
     if (value === null || value === undefined) {
@@ -62,6 +92,14 @@ export class SafeInputValidationPipe implements PipeTransform {
           this.allowRawStringFields.has(key)
         ) {
           result[key] = entryValue;
+          continue;
+        }
+
+        if (typeof entryValue === 'string' && this.proseFields.has(key)) {
+          if (this.proseForbidden.test(entryValue))
+            throw new BadRequestException(
+              `Rejected suspicious input in ${metadata.type ?? 'request'} for ${key}`,
+            );
           continue;
         }
 

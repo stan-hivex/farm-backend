@@ -6,9 +6,9 @@ import { AnalyticsController } from './analytics.controller';
 import { DatabaseModule } from '../database/database.module';
 
 @Module({
-imports: [DatabaseModule],
-providers: [AnalyticsService],
-controllers: [AnalyticsController],
-exports: [AnalyticsService],
+  imports: [DatabaseModule],
+  providers: [AnalyticsService],
+  controllers: [AnalyticsController],
+  exports: [AnalyticsService],
 })
 export class AnalyticsModule {}

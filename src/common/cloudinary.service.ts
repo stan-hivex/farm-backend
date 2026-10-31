@@ -43,9 +43,9 @@ export class CloudinaryService {
       return response.secure_url;
     } catch (error) {
       this.logger.error(
-        `Support attachment upload failed for ticket ${ticketId}: ${
-          cloudinaryErrorMessage(error)
-        }`,
+        `Support attachment upload failed for ticket ${ticketId}: ${cloudinaryErrorMessage(
+          error,
+        )}`,
         error instanceof Error ? error.stack : undefined,
       );
       throw new ServiceUnavailableException(

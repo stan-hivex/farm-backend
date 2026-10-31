@@ -11,7 +11,10 @@ const logger = new Logger('EncryptionModule');
       provide: 'FIELD_ENCRYPTION',
       useFactory: (configService: ConfigService) => {
         const encryptionKey = configService.get<string>('FIELD_ENCRYPTION_KEY');
-        const nodeEnv = configService.get<string>('NODE_ENV') || process.env.NODE_ENV || 'development';
+        const nodeEnv =
+          configService.get<string>('NODE_ENV') ||
+          process.env.NODE_ENV ||
+          'development';
         const isProduction = nodeEnv === 'production';
 
         let keyToUse = encryptionKey;

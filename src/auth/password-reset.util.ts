@@ -1,7 +1,10 @@
 import { randomBytes } from 'crypto';
 
 export class PasswordResetRateLimiter {
-  private readonly buckets = new Map<string, { count: number; windowStart: number }>();
+  private readonly buckets = new Map<
+    string,
+    { count: number; windowStart: number }
+  >();
 
   constructor(
     private readonly windowMs = 15 * 60 * 1000,

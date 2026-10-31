@@ -6,6 +6,8 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { feeFor } from '../fees/fee-defaults';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import * as QRCode from 'qrcode';
@@ -33,6 +35,7 @@ export class QrService {
     private notificationsService: NotificationsService,
     private websocket: WebsocketGateway,
     @Optional() private readonly cache?: CacheService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   async generateMerchantQr(merchantId: string) {
@@ -326,7 +329,7 @@ export class QrService {
 
     const customerFee =
       dto.amount * (Number(merchant.transaction_fee_percent || 0) / 100);
-    const saleFee = Number((dto.amount * 0.01).toFixed(8));
+    const saleFee = await feeFor(this.fees, 'merchant', dto.amount, 8);
     const merchantNet = dto.amount - saleFee;
     const totalOut = dto.amount + customerFee;
     const available =

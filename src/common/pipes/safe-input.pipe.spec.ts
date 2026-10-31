@@ -5,13 +5,60 @@ describe('SafeInputValidationPipe', () => {
   it('rejects suspicious SQL-like values in request payloads', () => {
     const pipe = new SafeInputValidationPipe();
 
-    expect(() => pipe.transform({ search: "name' OR 1=1 --" }, { type: 'body' } as any)).toThrow(BadRequestException);
+    expect(() =>
+      pipe.transform({ search: "name' OR 1=1 --" }, { type: 'body' } as any),
+    ).toThrow(BadRequestException);
   });
 
   it('allows ordinary values that do not contain suspicious payloads', () => {
     const pipe = new SafeInputValidationPipe();
-    const value = { search: 'john doe', amount: 10, nested: { note: 'normal text' } };
+    const value = {
+      search: 'john doe',
+      amount: 10,
+      nested: { note: 'normal text' },
+    };
 
     expect(pipe.transform(value, { type: 'body' } as any)).toEqual(value);
+  });
+
+  it('accepts LiteAPI offer/prebook ids that contain "--"', () => {
+    const pipe = new SafeInputValidationPipe();
+    const value = {
+      offer_id: 'AwJ2MQAAAABq5k7z--Pi5beAdfaPpT-2gVAHFTXybl_a_YoPGqDYoN==',
+      prebook_id: 'UN1hW--DZeE',
+    };
+    expect(pipe.transform({ ...value }, { type: 'body' } as any)).toEqual(
+      value,
+    );
+  });
+
+  it('still screens other fields next to an offer id', () => {
+    const pipe = new SafeInputValidationPipe();
+    expect(() =>
+      pipe.transform({ offer_id: 'abc--def', note: 'x; drop table users' }, {
+        type: 'body',
+      } as any),
+    ).toThrow(BadRequestException);
+  });
+});
+
+describe('SafeInputValidationPipe prose fields', () => {
+  const pipe = new SafeInputValidationPipe();
+  const meta = { type: 'body' } as any;
+  it('accepts normal prose with ; newlines and SQL-ish words', () => {
+    const v = {
+      description:
+        'Phase 1: create beds; update irrigation.\nPhase 2 -- harvest',
+      notes: 'Select seeds; drop off Monday',
+    };
+    expect(pipe.transform({ ...v }, meta)).toEqual(v);
+  });
+  it('still rejects NUL/control characters in prose', () => {
+    expect(() => pipe.transform({ description: 'a\u0000b' }, meta)).toThrow();
+  });
+  it('still screens non-prose identifiers', () => {
+    expect(() =>
+      pipe.transform({ recipient_identifier: "x'; drop table users" }, meta),
+    ).toThrow();
   });
 });

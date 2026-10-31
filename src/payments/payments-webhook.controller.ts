@@ -13,7 +13,9 @@ export class PaymentsWebhookController {
 
   constructor(private readonly webhookService: WebhookService) {
     // Log the exact registered route during application startup
-    this.logger.log('Registered route: /api/v1/payments/webhooks/ivorypay (GET, POST)');
+    this.logger.log(
+      'Registered route: /api/v1/payments/webhooks/ivorypay (GET, POST)',
+    );
   }
 
   @Get('ivorypay')
@@ -39,7 +41,7 @@ export class PaymentsWebhookController {
       await this.webhookService.fixStuckDeposits();
       return { ok: true, message: 'fixStuckDeposits triggered' };
     } catch (e: any) {
-      this.logger.error('Manual trigger failed', e as any);
+      this.logger.error('Manual trigger failed', e);
       return { ok: false, error: 'fixStuckDeposits failed' };
     }
   }
