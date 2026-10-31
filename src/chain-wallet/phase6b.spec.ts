@@ -203,7 +203,10 @@ describe('Phase 6b – on-chain outbox', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
-      transactions: { findMany: jest.fn().mockResolvedValue(over.txs ?? []) },
+      transactions: {
+        findMany: jest.fn().mockResolvedValue(over.txs ?? []),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       wallets: {
         findMany: jest.fn().mockResolvedValue([
           { id: 'wa', user_id: 'u1', wallet_type: 'user' },
@@ -231,6 +234,7 @@ describe('Phase 6b – on-chain outbox', () => {
         findMany: jest.fn().mockResolvedValue(over.rows ?? []),
       },
     };
+    prisma.$transaction = jest.fn((fn: any) => fn(prisma));
     const send = jest.fn().mockResolvedValue(undefined);
     const chain: any = {
       assetBalance: jest.fn().mockResolvedValue(over.balance ?? 1_000_000n),
@@ -315,9 +319,130 @@ describe('Phase 6b – on-chain outbox', () => {
       ['t1', 'fee', 'U1', RES, 200n],
       ['t2', 'main', 'U1', RES, 1000n],
     ]);
+    // every scanned row is marked in the same DB transaction as the outbox
+    const mark = prisma.transactions.updateMany.mock.calls.at(-1)[0];
+    expect(mark.where.id.in).toEqual(['t1', 't2', 't3']);
+    expect(mark.where.chain_enqueued_at).toBeNull();
+    expect(mark.data.chain_enqueued_at).toBeInstanceOf(Date);
+  });
+
+  it('escrow release is paid from the reserve (lock already moved buyer -> reserve); release fee stays in the reserve', async () => {
+    const { s, prisma } = sync({
+      txs: [
+        {
+          id: 'lock',
+          sender_wallet_id: 'wa',
+          receiver_wallet_id: null,
+          transaction_type: 'escrow_lock',
+          amount: 100,
+          fee: 1,
+          net_amount: 100,
+          metadata: {},
+        },
+        {
+          id: 'rel',
+          sender_wallet_id: 'wa',
+          receiver_wallet_id: 'wb',
+          transaction_type: 'escrow_release',
+          amount: 100,
+          fee: 2,
+          net_amount: 98,
+          metadata: {},
+        },
+        {
+          id: 'ref',
+          sender_wallet_id: null,
+          receiver_wallet_id: 'wa',
+          transaction_type: 'escrow_refund',
+          amount: 5,
+          fee: 0,
+          net_amount: 5,
+          metadata: {},
+        },
+      ],
+    });
+    await s.enqueue();
+    const a = prisma.chain_outbox.createMany.mock.calls[0][0];
     expect(
-      prisma.chain_sync_state.update.mock.calls[0][0].data.last_round,
-    ).toBe(3n);
+      a.data.map((r: any) => [
+        r.transaction_id,
+        r.leg,
+        r.from_address,
+        r.to_address,
+        r.amount_units,
+      ]),
+    ).toEqual([
+      ['lock', 'main', 'U1', RES, 10000n],
+      ['lock', 'fee', 'U1', RES, 100n],
+      ['rel', 'main', RES, 'U2', 9800n],
+      ['ref', 'main', RES, 'U1', 500n],
+    ]);
+  });
+
+  it('late completions: selects every completed row not yet enqueued, whenever it was created', async () => {
+    const old = new Date('2020-01-01');
+    const { s, prisma } = sync({
+      txs: [
+        {
+          id: 'dep',
+          sender_wallet_id: null,
+          receiver_wallet_id: 'wa',
+          transaction_type: 'deposit',
+          amount: 7,
+          fee: 0,
+          net_amount: 7,
+          metadata: {},
+          created_at: old,
+        },
+      ],
+    });
+    await s.enqueue();
+    const q = prisma.transactions.findMany.mock.calls[0][0];
+    expect(q.where).toEqual({ status: 'completed', chain_enqueued_at: null });
+    expect(q.where.created_at).toBeUndefined();
+    const a = prisma.chain_outbox.createMany.mock.calls[0][0];
+    expect(a.data[0]).toMatchObject({
+      transaction_id: 'dep',
+      from_address: RES,
+      to_address: 'U1',
+      amount_units: 700n,
+    });
+  });
+
+  it('a marked row is never enqueued again; re-scans are idempotent (skipDuplicates + marker guard)', async () => {
+    const { s, prisma } = sync({ txs: [] });
+    expect(await s.enqueue()).toEqual({ enqueued: 0 });
+    expect(prisma.chain_outbox.createMany).not.toHaveBeenCalled();
+  });
+
+  it('go-live: first run marks rows completed before the boundary as handled by reconciliation', async () => {
+    const { s, prisma } = sync({ txs: [] });
+    prisma.chain_sync_state.findUnique = jest.fn().mockResolvedValue(null);
+    const before = Date.now();
+    await s.enqueue();
+    const created = prisma.chain_sync_state.create.mock.calls[0][0].data;
+    expect(created.key).toMatch(/outbox:golive_ms$/);
+    expect(Number(created.last_round)).toBeGreaterThanOrEqual(before);
+    const m = prisma.transactions.updateMany.mock.calls[0][0];
+    expect(m.where.status).toBe('completed');
+    expect(m.where.chain_enqueued_at).toBeNull();
+    expect(m.where.created_at.lt).toBeInstanceOf(Date);
+  });
+
+  it('go-live after the legacy created_at cursor keeps that cursor as the boundary', async () => {
+    const { s, prisma } = sync({ txs: [] });
+    prisma.chain_sync_state.findUnique = jest.fn(({ where }: any) =>
+      Promise.resolve(
+        where.key.endsWith('ledger_ms') ? { last_round: 12345n } : null,
+      ),
+    );
+    await s.enqueue();
+    expect(
+      prisma.chain_sync_state.create.mock.calls[0][0].data.last_round,
+    ).toBe(12345n);
+    expect(
+      prisma.transactions.updateMany.mock.calls[0][0].where.created_at.lt.getTime(),
+    ).toBe(12345);
   });
   it('flag off => nothing is enqueued or sent', async () => {
     delete process.env.FARM_ONCHAIN_SYNC_ENABLED;

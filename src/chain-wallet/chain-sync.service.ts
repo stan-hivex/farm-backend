@@ -8,6 +8,8 @@ import { AlgoSigner } from './signer';
 
 const toUnits = (v: unknown) =>
   BigInt(Math.floor(Number(v ?? 0) * 10 ** FARM_DECIMALS));
+/** Transaction types whose funds are already held by the reserve. */
+export const RESERVE_FUNDED = new Set(['escrow_release']);
 const backoff = (attempts: number) =>
   new Date(Date.now() + Math.min(30_000 * 2 ** attempts, 3_600_000));
 
@@ -81,25 +83,58 @@ export class ChainSyncService {
     );
   }
 
-  /** Ledger -> outbox. Cursor starts at go-live; earlier balances use reconciliation. */
+  /**
+   * One-time go-live boundary. Transactions already completed before sync was
+   * switched on are matched by reconciliation, so they are marked as handled;
+   * anything completed afterwards (including rows created earlier as pending
+   * or processing) is enqueued when it completes.
+   */
+  private async ensureGoLive(network: string) {
+    const key = `${network}:outbox:golive_ms`;
+    if (await this.prisma.chain_sync_state.findUnique({ where: { key } }))
+      return;
+    const legacy = await this.prisma.chain_sync_state.findUnique({
+      where: { key: `${network}:outbox:ledger_ms` },
+    });
+    const cutoff = legacy ? Number(legacy.last_round) : Date.now();
+    try {
+      await this.prisma.$transaction(async (tx: any) => {
+        await tx.chain_sync_state.create({
+          data: { key, last_round: BigInt(cutoff) },
+        });
+        await tx.transactions.updateMany({
+          where: {
+            status: 'completed',
+            chain_enqueued_at: null,
+            created_at: { lt: new Date(cutoff) },
+          },
+          data: { chain_enqueued_at: new Date() },
+        });
+      });
+    } catch (e: any) {
+      if (e?.code !== 'P2002') throw e; // another worker set it first
+    }
+  }
+
+  /**
+   * Ledger -> outbox for every completed transaction not yet enqueued, no
+   * matter when it completed. The outbox rows and the per-transaction marker
+   * are written in one DB transaction; (transaction_id, leg) is unique, so a
+   * re-scan can never create a second transfer.
+   */
   async enqueue(limit = 200) {
     const c = chainConfig();
     if (!c.sync.enabled) return { enqueued: 0, disabled: true };
-    const key = `${c.network}:outbox:ledger_ms`;
-    let cur = await this.prisma.chain_sync_state.findUnique({ where: { key } });
-    if (!cur)
-      cur = await this.prisma.chain_sync_state.create({
-        data: { key, last_round: BigInt(Date.now()) },
-      });
-    const since = new Date(Number(cur.last_round));
+    await this.ensureGoLive(c.network);
     const txs = await this.prisma.transactions.findMany({
-      where: { status: 'completed', created_at: { gte: since } },
+      where: { status: 'completed', chain_enqueued_at: null },
       orderBy: { created_at: 'asc' },
       take: limit,
       select: {
         id: true,
         sender_wallet_id: true,
         receiver_wallet_id: true,
+        transaction_type: true,
         amount: true,
         fee: true,
         net_amount: true,
@@ -122,9 +157,13 @@ export class ChainSyncService {
     };
     const rows: any[] = [];
     for (const t of txs) {
-      if ((t.metadata as any)?.chain_settled === true) continue; // already on chain (FARM deposit)
-      const from =
-        (t.sender_wallet_id && map.get(t.sender_wallet_id)) || reserve;
+      if ((t.metadata as any)?.chain_settled === true) continue; // already on chain / never left the reserve
+      // Funds of a released escrow already sit in the reserve (the lock moved
+      // buyer -> reserve), so the release is paid out of the reserve.
+      const fromReserve = RESERVE_FUNDED.has(String(t.transaction_type));
+      const from = fromReserve
+        ? reserve
+        : (t.sender_wallet_id && map.get(t.sender_wallet_id)) || reserve;
       const to =
         (t.receiver_wallet_id && map.get(t.receiver_wallet_id)) || reserve;
       const net = toUnits(
@@ -150,18 +189,21 @@ export class ChainSyncService {
         });
       }
     }
-    const ins = rows.length
-      ? await this.prisma.chain_outbox.createMany({
-          data: rows,
-          skipDuplicates: true,
-        })
-      : { count: 0 };
-    const last = txs[txs.length - 1].created_at!;
-    await this.prisma.chain_sync_state.update({
-      where: { key },
-      data: { last_round: BigInt(last.getTime()) },
+    const count = await this.prisma.$transaction(async (tx: any) => {
+      const ins = rows.length
+        ? await tx.chain_outbox.createMany({ data: rows, skipDuplicates: true })
+        : { count: 0 };
+      await tx.transactions.updateMany({
+        where: {
+          id: { in: txs.map((t) => t.id) },
+          status: 'completed',
+          chain_enqueued_at: null,
+        },
+        data: { chain_enqueued_at: new Date() },
+      });
+      return ins.count as number;
     });
-    return { enqueued: ins.count };
+    return { enqueued: count };
   }
 
   /** Receive-only guard: only FARM-controlled destinations. */

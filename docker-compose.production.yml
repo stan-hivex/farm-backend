@@ -36,6 +36,12 @@ services:
 
   postgres:
     image: postgres:15-alpine
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
     container_name: farm-postgres-prod
     restart: unless-stopped
     environment:
@@ -55,6 +61,13 @@ services:
 
   nginx:
     image: nginx:alpine
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
     container_name: farm-nginx-prod
     restart: unless-stopped
     ports:

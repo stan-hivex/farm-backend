@@ -52,6 +52,10 @@ export class AdminChainController {
     const polled = await this.svc.pollUsdc();
     return { data: { ...polled, ...(await this.svc.creditPending()) } };
   }
+  @Get('readiness') readiness(@Query('transfers') transfers?: string) {
+    const n = Number(transfers);
+    return this.svc.readiness(Number.isFinite(n) && n > 0 ? n : undefined);
+  }
   @Get('reconcile') runs() {
     return this.svc.runs();
   }

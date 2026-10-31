@@ -1,0 +1,5 @@
+# Test fixtures use fake HMAC keys on purpose.
+*.spec.ts
+test/
+node_modules/
+dist/
