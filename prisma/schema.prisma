@@ -128,6 +128,7 @@ model escrow_contracts {
   users_escrow_contracts_seller_idTousers            users?            @relation("escrow_contracts_seller_idTousers", fields: [seller_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   wallets_escrow_contracts_seller_wallet_idTowallets wallets?          @relation("escrow_contracts_seller_wallet_idTowallets", fields: [seller_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   escrow_messages                                    escrow_messages[]
+  business_escrow                                    business_escrows?
 }
 
 model escrow_messages {
@@ -619,6 +620,7 @@ model users {
   businesses_owned            businesses[] @relation("businesses_owner")
   businesses_reviewed         businesses[] @relation("businesses_reviewer")
   business_verifications_reviewed business_verifications[] @relation("business_verifications_reviewer")
+  business_memberships        business_members[] @relation("business_members_user")
 
   @@index([email], map: "idx_users_email")
   @@index([phone], map: "idx_users_phone")
@@ -1076,6 +1078,12 @@ model businesses {
   persons              business_persons[]
   documents            business_documents[]
   verifications        business_verifications[]
+  members              business_members[]
+  customers            business_customers[]
+  invoices             business_invoices[]
+  payment_links        business_payment_links[]
+  payments             business_payments[]
+  escrows              business_escrows[]
 
   @@index([status], map: "idx_businesses_status")
 }
@@ -1124,4 +1132,147 @@ model business_verifications {
   reviewer       users?          @relation("business_verifications_reviewer", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([business_id, submitted_at(sort: Desc)], map: "idx_business_verifications_business")
+}
+
+enum business_member_role {
+  owner
+  admin
+  finance
+  accountant
+  operations
+  developer
+}
+
+enum business_invoice_status {
+  draft
+  sent
+  pending
+  paid
+  overdue
+  cancelled
+}
+
+enum business_escrow_status {
+  created
+  awaiting_payment
+  funded
+  in_progress
+  release_requested
+  released
+  disputed
+  expired
+}
+
+model business_members {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id String               @db.Uuid
+  user_id     String               @db.Uuid
+  role        business_member_role
+  is_active   Boolean              @default(true)
+  invited_by  String?              @db.Uuid
+  created_at  DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  business    businesses           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user        users                @relation("business_members_user", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([business_id, user_id], map: "uq_business_members_business_user")
+  @@index([user_id], map: "idx_business_members_user")
+}
+
+model business_customers {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id String              @db.Uuid
+  name        String              @db.VarChar(255)
+  email       String?             @db.VarChar(255)
+  phone       String?             @db.VarChar(30)
+  notes       String?
+  created_at  DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  business    businesses          @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  invoices    business_invoices[]
+
+  @@index([business_id], map: "idx_business_customers_business")
+}
+
+model business_invoices {
+  id                    String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id           String                  @db.Uuid
+  customer_id           String?                 @db.Uuid
+  invoice_number        String                  @unique @db.VarChar(64)
+  status                business_invoice_status @default(draft)
+  currency              String                  @default("FARM") @db.VarChar(20)
+  items                 Json
+  subtotal              Decimal                 @db.Decimal(30, 8)
+  total                 Decimal                 @db.Decimal(30, 8)
+  notes                 String?
+  due_date              DateTime?               @db.Date
+  sent_at               DateTime?               @db.Timestamptz(6)
+  paid_at               DateTime?               @db.Timestamptz(6)
+  cancelled_at          DateTime?               @db.Timestamptz(6)
+  transaction_reference String?                 @db.VarChar(255)
+  created_by            String?                 @db.Uuid
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                @default(now()) @updatedAt @db.Timestamptz(6)
+  business              businesses              @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  customer              business_customers?     @relation(fields: [customer_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([business_id, status], map: "idx_business_invoices_business_status")
+}
+
+model business_payment_links {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id String     @db.Uuid
+  code        String     @unique @db.VarChar(32)
+  title       String     @db.VarChar(255)
+  description String?
+  amount      Decimal    @db.Decimal(30, 8)
+  currency    String     @default("FARM") @db.VarChar(20)
+  is_active   Boolean    @default(true)
+  expires_at  DateTime?  @db.Timestamptz(6)
+  max_uses    Int?
+  use_count   Int        @default(0)
+  created_by  String?    @db.Uuid
+  created_at  DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime   @default(now()) @updatedAt @db.Timestamptz(6)
+  business    businesses @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([business_id], map: "idx_business_payment_links_business")
+}
+
+model business_payments {
+  id                    String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id           String     @db.Uuid
+  source                String     @db.VarChar(20)
+  source_id             String     @db.Uuid
+  payer_user_id         String?    @db.Uuid
+  amount                Decimal    @db.Decimal(30, 8)
+  transaction_reference String     @unique @db.VarChar(255)
+  created_at            DateTime   @default(now()) @db.Timestamptz(6)
+  business              businesses @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([business_id, created_at(sort: Desc)], map: "idx_business_payments_business_created")
+  @@index([source, source_id], map: "idx_business_payments_source")
+}
+
+model business_escrows {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id          String                 @db.Uuid
+  escrow_contract_id   String?                @unique @db.Uuid
+  buyer_user_id        String                 @db.Uuid
+  title                String                 @db.VarChar(255)
+  description          String?
+  amount               Decimal                @db.Decimal(30, 8)
+  milestones           Json?
+  status               business_escrow_status @default(created)
+  expires_at           DateTime?              @db.Timestamptz(6)
+  started_at           DateTime?              @db.Timestamptz(6)
+  release_requested_at DateTime?              @db.Timestamptz(6)
+  created_by           String?                @db.Uuid
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  business             businesses             @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  escrow_contract      escrow_contracts?      @relation(fields: [escrow_contract_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([business_id, status], map: "idx_business_escrows_business_status")
+  @@index([buyer_user_id], map: "idx_business_escrows_buyer")
 }
