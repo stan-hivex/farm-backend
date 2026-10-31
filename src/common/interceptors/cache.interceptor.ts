@@ -30,6 +30,10 @@ export class CacheInterceptor implements NestInterceptor {
       path.includes('/wallet') ||
       path.includes('/ai/') ||
       path.includes('/travel/') ||
+      path.includes('/agent-payments/') ||
+      path.includes('/payment-intents') ||
+      path.includes('/agent-authorizations') ||
+      path.includes('/agent-payment-requests') ||
       path.includes('/merchant/dashboard') ||
       path.includes('/merchant/transactions') ||
       path.includes('/qr-payments/verify/') ||

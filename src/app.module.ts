@@ -48,6 +48,7 @@ import { BusinessModule } from './business/business.module';
 import { BusinessOpsModule } from './business-ops/business-ops.module';
 import { BusinessApiModule } from './business-api/business-api.module';
 import { AiAssistantModule } from './ai-assistant/ai-assistant.module';
+import { AgentPaymentsModule } from './agent-payments/agent-payments.module';
 import { TravelModule } from './travel/travel.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
@@ -127,6 +128,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     BusinessApiModule,
     AiAssistantModule,
     TravelModule,
+    AgentPaymentsModule,
     SettingsModule,
     StkPushModule,
     TransactionsModule,

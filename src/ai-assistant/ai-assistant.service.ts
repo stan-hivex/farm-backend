@@ -5,15 +5,16 @@ import { WalletsService } from '../wallets/wallets.service';
 import { AiProvider, ChatMessage } from './ai-provider';
 import { AiToolsService } from './ai-tools.service';
 import { TravelService } from '../travel/travel.service';
+import { AgentPaymentsService } from '../agent-payments/agent-payments.service';
 
-export const AI_ACTIONS = ['send_farm', 'book_flight'] as const;
+export const AI_ACTIONS = ['send_farm', 'book_flight', 'pay_intent'] as const;
 const ACTION_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 4;
 const HISTORY = 20;
 
 const SYSTEM_PROMPT = `You are Mkulima, the assistant inside the FARM app (Kenya). FARM is the in-app currency, 1 FARM = 1 KSh.
 Answer only from tool results; never invent balances, transactions, investments, invoices or projects. If data is missing say so.
-You cannot approve businesses or projects, change limits, or move money yourself. For payments use propose_payment: it only creates a pending request the user must confirm in the app with their PIN. Never say money was sent.
+You cannot approve businesses or projects, change limits, or move money yourself. For payments use propose_payment (or propose_intent_payment for a business payment request id): it only creates a pending request the user must confirm in the app with their PIN. Never say money was sent.
 Give general information, not personalised financial advice. Be brief and clear.`;
 
 const startOfDay = () => {
@@ -31,6 +32,7 @@ export class AiAssistantService {
     private readonly wallets: WalletsService,
     private readonly config: ConfigService,
     private readonly travel: TravelService,
+    private readonly agentPayments: AgentPaymentsService,
   ) {}
 
   status() {
@@ -113,6 +115,12 @@ export class AiAssistantService {
             const req = await this.proposeFlight(userId, args, conv.id);
             proposed.push(req);
             result = { status: 'pending_user_confirmation', request_id: req.id, price_farm: Number(req.amount), note: 'The user must open the request, enter passenger details and confirm with their PIN.' };
+          } else if (call.function.name === 'propose_intent_payment') {
+            const req = await this.proposeIntent(userId, args, conv.id);
+            proposed.push(req);
+            result = { status: 'pending_user_confirmation', request_id: req.id, amount: Number(req.amount), business: req.recipient_identifier };
+          } else if (call.function.name === 'get_agent_payment_requests') {
+            result = { requests: (await this.agentPayments.myRequests(userId, 'pending')).map((r) => ({ id: r.id, business: r.business_name, amount: r.amount, description: r.description, expires_at: r.expires_at })), note: 'The user approves these in Payments > Agent requests with their PIN.' };
           } else if (call.function.name === 'search_flights') {
             const offers = await this.travel.search(args as any);
             result = { offers: offers.slice(0, 5).map((o) => ({ offer_id: o.id, airline: o.owner, price_farm: o.price_farm, bookable: o.bookable, slices: o.slices.map((x) => ({ from: x.origin, to: x.destination, departs: x.segments[0]?.departing_at, stops: x.segments.length - 1 })) })) };
@@ -177,7 +185,7 @@ export class AiAssistantService {
   private async checkCaps(userId: string, amount: number, excludeId?: string, action = 'send_farm') {
     const p = await this.prisma.ai_spend_permissions.findUnique({ where: { user_id: userId } });
     if (!p || !p.enabled || p.revoked_at) throw new ForbiddenException('AI payments are turned off. Enable them in Assistant settings.');
-    if (!p.allowed_actions.includes(action)) throw new ForbiddenException(`${action === 'book_flight' ? 'Booking flights' : 'Sending FARM'} is not an allowed AI action`);
+    if (!p.allowed_actions.includes(action)) throw new ForbiddenException(`${({ book_flight: 'Booking flights', pay_intent: 'Paying businesses' } as Record<string, string>)[action] ?? 'Sending FARM'} is not an allowed AI action`);
     if (amount > Number(p.per_tx_cap)) throw new ForbiddenException(`Amount exceeds your per-transaction AI cap of ${Number(p.per_tx_cap)} FARM`);
     let today = await this.committedToday(userId);
     if (excludeId) {
@@ -217,6 +225,23 @@ export class AiAssistantService {
     return req;
   }
 
+  async proposeIntent(userId: string, args: Record<string, unknown>, conversationId?: string) {
+    const id = String(args.payment_intent_id ?? '').trim();
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new BadRequestException('A valid payment_intent_id is required');
+    const i = await this.agentPayments.publicIntent(id);
+    if (i.status !== 'requires_payment') throw new BadRequestException(`This payment is ${i.status}`);
+    await this.checkCaps(userId, i.amount, undefined, 'pay_intent');
+    const req = await this.prisma.ai_action_requests.create({
+      data: {
+        user_id: userId, conversation_id: conversationId ?? null, action: 'pay_intent', recipient_identifier: i.business_name.slice(0, 120),
+        amount: i.amount, description: (i.description ?? `Payment to ${i.business_name}`).slice(0, 140), payload: { payment_intent_id: i.id },
+        expires_at: new Date(Math.min(Date.now() + ACTION_TTL_MS, new Date(i.expires_at).getTime())),
+      },
+    });
+    await this.audit(userId, 'action_proposed', { request_id: req.id, action: 'pay_intent', amount: i.amount, recipient: i.business_name });
+    return req;
+  }
+
   async listActions(userId: string, status?: string) {
     await this.prisma.ai_action_requests.updateMany({ where: { user_id: userId, status: 'pending', expires_at: { lte: new Date() } }, data: { status: 'expired' } });
     return this.prisma.ai_action_requests.findMany({ where: { user_id: userId, ...(status ? { status } : {}) }, orderBy: { created_at: 'desc' }, take: 50 });
@@ -234,24 +259,33 @@ export class AiAssistantService {
     const req = await this.prisma.ai_action_requests.findFirst({ where: { id, user_id: userId } });
     if (!req) throw new NotFoundException('Request not found');
     if (req.status !== 'pending') throw new BadRequestException(`Request is ${req.status}`);
-    if (req.action !== 'send_farm') throw new BadRequestException('Open this request in Travel to add passenger details and confirm');
+    if (req.action === 'book_flight') throw new BadRequestException('Open this request in Travel to add passenger details and confirm');
     if (req.expires_at <= new Date()) {
       await this.prisma.ai_action_requests.update({ where: { id }, data: { status: 'expired' } });
       throw new BadRequestException('Request expired');
     }
     // Re-check caps and allowlist at confirm time (user may have lowered or revoked them).
-    await this.checkCaps(userId, Number(req.amount), id);
+    await this.checkCaps(userId, Number(req.amount), id, req.action);
     // Claim atomically so a double tap cannot execute twice.
     const claimed = await this.prisma.ai_action_requests.updateMany({ where: { id, user_id: userId, status: 'pending' }, data: { status: 'processing' } });
     if (!claimed.count) throw new BadRequestException('Request already being processed');
     try {
-      // WalletsService verifies the PIN and applies the normal limits, fees and ledger logic.
-      const result = (await this.wallets.sendFunds(
-        userId,
-        { recipient_identifier: req.recipient_identifier, amount: Number(req.amount), pin, description: req.description ?? 'Mkulima AI payment' },
-        ip,
-      )) as { data?: { transaction_reference?: string } } | undefined;
-      const ref = result?.data?.transaction_reference ?? null;
+      let ref: string | null;
+      if (req.action === 'pay_intent') {
+        // Pays the business intent; amount comes from the intent, never from the model.
+        const intentId = String((req.payload as { payment_intent_id?: string } | null)?.payment_intent_id ?? '');
+        const paid = await this.agentPayments.payIntent(userId, intentId, pin, ip, 'mkulima');
+        if (Math.abs(paid.amount - Number(req.amount)) > 0.001) throw new BadRequestException('Payment amount changed');
+        ref = paid.transaction_reference ?? null;
+      } else {
+        // WalletsService verifies the PIN and applies the normal limits, fees and ledger logic.
+        const result = (await this.wallets.sendFunds(
+          userId,
+          { recipient_identifier: req.recipient_identifier, amount: Number(req.amount), pin, description: req.description ?? 'Mkulima AI payment' },
+          ip,
+        )) as { data?: { transaction_reference?: string } } | undefined;
+        ref = result?.data?.transaction_reference ?? null;
+      }
       await this.prisma.ai_action_requests.update({ where: { id }, data: { status: 'executed', decided_at: new Date(), transaction_ref: ref } });
       await this.audit(userId, 'action_executed', { request_id: id, amount: Number(req.amount), recipient: req.recipient_identifier, transaction_ref: ref });
       return { id, status: 'executed', transaction_ref: ref };

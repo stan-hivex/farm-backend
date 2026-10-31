@@ -1,3 +1,5 @@
+import { AgentPaymentsModule } from '../agent-payments/agent-payments.module';
+import { AgentPaymentsApiController } from './agent-payments-api.controller';
 import { ProjectMarketplaceModule } from '../project-marketplace/project-marketplace.module';
 import { BusinessPayoutsController } from './business-payouts.controller';
 import { WithdrawModule } from '../withdraw/withdraw.module';
@@ -13,8 +15,8 @@ import { DeveloperController } from './developer.controller';
 import { PublicApiController } from './public-api.controller';
 
 @Module({
-  imports: [AuthModule, BusinessOpsModule, WithdrawModule, ProjectMarketplaceModule],
-  controllers: [DeveloperController, PublicApiController, BusinessPayoutsController],
+  imports: [AuthModule, BusinessOpsModule, WithdrawModule, ProjectMarketplaceModule, AgentPaymentsModule],
+  controllers: [DeveloperController, PublicApiController, BusinessPayoutsController, AgentPaymentsApiController],
   providers: [
     ApiKeysService,
     DeveloperService,
