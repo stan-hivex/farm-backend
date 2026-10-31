@@ -302,6 +302,29 @@ describe('TravelService', () => {
     expect(r.status).toBe('failed_refunded');
   });
 
+  it('on-chain: a refund of a hold that never completed is not paid from the reserve; a completed hold is', async () => {
+    const refundMeta = async (holdStatus: string) => {
+      const pr = mkPrisma();
+      pr.transactions.findUnique.mockResolvedValue({
+        id: 't1',
+        sender_wallet_id: 'w1',
+        status: holdStatus,
+      });
+      const { svc } = mk(pr, {
+        createOrder: jest
+          .fn()
+          .mockRejectedValue(new ProviderRejectedError('gone')),
+      });
+      await svc.book(U, dto(), '');
+      const c = pr.transactions.create.mock.calls.find(
+        (x: any) => x[0].data.transaction_type === 'escrow_refund',
+      );
+      return c[0].data.metadata;
+    };
+    expect((await refundMeta('processing')).chain_settled).toBe(true);
+    expect((await refundMeta('completed')).chain_settled).toBeUndefined();
+  });
+
   it('keeps funds held for review when the outcome is unknown', async () => {
     const pr = mkPrisma();
     const { svc } = mk(pr, {

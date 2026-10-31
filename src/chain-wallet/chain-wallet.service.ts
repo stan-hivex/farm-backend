@@ -18,6 +18,7 @@ import {
 } from './chain-config';
 import { sealSecret, walletSigner } from './key-vault';
 import { AlgoSigner } from './signer';
+import { chainReadiness } from './readiness';
 
 const explorer = (net: string) =>
   `https://${net === 'testnet' ? 'testnet.' : ''}explorer.perawallet.app`;
@@ -633,5 +634,78 @@ export class ChainWalletService {
         chain_total: x.chain_total == null ? null : Number(x.chain_total),
       })),
     };
+  }
+
+  /** Read-only go-live report (balances via algod reads; no keys used). */
+  async readiness(expectedTransfers?: number) {
+    const c = chainConfig();
+    const users = await this.prisma.wallets.groupBy({
+      by: ['user_id'],
+      where: {
+        is_active: true,
+        currency: 'FARM',
+        wallet_type: { notIn: ['platform', 'treasury'] as any },
+        OR: [{ balance: { gt: 0 } }, { locked_balance: { gt: 0 } }],
+      },
+      _sum: { balance: true, locked_balance: true },
+    });
+    const ids = users.map((u) => u.user_id).filter(Boolean) as string[];
+    const cws = await this.prisma.user_chain_wallets.findMany({
+      where: { network: c.network },
+      select: { user_id: true, address: true, status: true },
+    });
+    const ready = new Map(
+      cws
+        .filter((w) => w.status === 'ready')
+        .map((w) => [w.user_id, w.address]),
+    );
+    const outbox = await this.prisma.chain_outbox.groupBy({
+      by: ['status'],
+      _count: { _all: true },
+    });
+    let funderAddress: string | undefined;
+    try {
+      if (process.env.ALGORAND_FUNDER_MNEMONIC)
+        funderAddress = this.chain.funderAddress();
+    } catch {
+      funderAddress = undefined;
+    }
+    const missing = [
+      ...c.wallets.missing,
+      ...c.wallets.problems,
+      ...c.sync.missing,
+      ...c.mirror.missing,
+    ];
+    return chainReadiness({
+      network: c.network,
+      nodeUrl:
+        process.env.ALGORAND_NODE_URL || 'https://mainnet-api.algonode.cloud',
+      farmAsaId: process.env.FARM_ASA_ID || '',
+      reserveAddress: process.env.FARM_RESERVE_ADDRESS || '',
+      funderAddress,
+      missingEnv: [...new Set(missing)],
+      fundMicroAlgos: Number(
+        process.env.CHAIN_WALLET_FUND_MICROALGOS ?? 310000,
+      ),
+      expectedTransfers,
+      db: {
+        userFarm: users.reduce(
+          (a, u) =>
+            a +
+            Number(u._sum.balance ?? 0) +
+            Number(u._sum.locked_balance ?? 0),
+          0,
+        ),
+        usersWithBalance: ids.length,
+        usersWithoutAddress: ids.filter((id) => !ready.has(id)).length,
+        walletsNotReady: cws.filter((w) => w.status !== 'ready').length,
+        readyAddresses: ids
+          .map((id) => ready.get(id))
+          .filter(Boolean) as string[],
+        outbox: Object.fromEntries(
+          outbox.map((o) => [o.status, o._count._all]),
+        ),
+      },
+    });
   }
 }

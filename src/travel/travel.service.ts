@@ -600,6 +600,9 @@ export class TravelService {
             kind: 'travel_refund',
             booking_id: b.id,
             hold_tx: hold!.id,
+            // A hold that never completed was never moved on chain, so its
+            // refund must not be paid out of the reserve either.
+            ...(hold!.status !== 'completed' ? { chain_settled: true } : {}),
           },
         },
       });
