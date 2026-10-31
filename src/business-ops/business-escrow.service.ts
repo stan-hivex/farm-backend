@@ -8,6 +8,7 @@ import { PrismaService } from '../database/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
 import { paginate, paginationParams } from '../common/utils/pagination.util';
 import { BusinessAccessService } from './business-access.service';
+import { BusinessWebhooksService } from './business-webhooks.service';
 import { BusinessEscrowDto } from './business-ops.dto';
 
 const OPEN = ['created', 'awaiting_payment'];
@@ -22,6 +23,7 @@ export class BusinessEscrowService {
     private readonly prisma: PrismaService,
     private readonly access: BusinessAccessService,
     private readonly escrow: EscrowService,
+    private readonly webhooks: BusinessWebhooksService,
   ) {}
 
   /** Expire unfunded requests and mirror the state of linked escrow contracts. */
@@ -265,6 +267,11 @@ export class BusinessEscrowService {
       await this.prisma.business_escrows.update({
         where: { id },
         data: { escrow_contract_id: res.data.id },
+      });
+      this.webhooks.emit(e.business_id, 'live', 'escrow.funded', {
+        escrow_id: id,
+        escrow_contract_id: res.data.id,
+        amount: Number(e.amount),
       });
       return {
         data: {

@@ -8,6 +8,8 @@ import { ValidationPipe, Logger, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { validateSecurityEnvironment } from './config/environment-validation';
 import { SafeInputValidationPipe } from './common/pipes/safe-input.pipe';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { BusinessApiModule } from './business-api/business-api.module';
 import { MERCHANT_CHECKOUT_URL } from './qr/merchant-checkout.constants';
 
 async function bootstrap() {
@@ -190,6 +192,23 @@ async function bootstrap() {
       },
     }),
   );
+
+  // Public OpenAPI document for the FARM developer API (business API keys only).
+  const devDoc = SwaggerModule.createDocument(
+    app,
+    new DocumentBuilder()
+      .setTitle('FARM API')
+      .setDescription(
+        'Unified FARM business API. Use farm_sk_test_ keys for sandbox (no real funds move) and farm_sk_live_ keys for live. Webhooks are signed with HMAC-SHA256 in the Farm-Signature header (t=<unix>,v1=<hex of HMAC(secret, "t.body")>).',
+      )
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build(),
+    { include: [BusinessApiModule] },
+  );
+  SwaggerModule.setup('api/developer/docs', app, devDoc, {
+    jsonDocumentUrl: 'api/developer/openapi.json',
+  });
 
   const port = Number(process.env.PORT || configService.get<number>('PORT') || 3000);
 

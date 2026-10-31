@@ -7,6 +7,7 @@ import { BusinessTeamService } from './business-team.service';
 import { BusinessFinanceService } from './business-finance.service';
 import { BusinessCommerceService } from './business-commerce.service';
 import { BusinessEscrowService } from './business-escrow.service';
+import { BusinessWebhooksService } from './business-webhooks.service';
 import {
   BusinessOpsController,
   BusinessPayController,
@@ -21,7 +22,14 @@ import {
     BusinessFinanceService,
     BusinessCommerceService,
     BusinessEscrowService,
+    BusinessWebhooksService,
   ],
-  exports: [BusinessAccessService],
+  exports: [
+    BusinessAccessService,
+    BusinessFinanceService,
+    BusinessCommerceService,
+    BusinessEscrowService,
+    BusinessWebhooksService,
+  ],
 })
 export class BusinessOpsModule {}
