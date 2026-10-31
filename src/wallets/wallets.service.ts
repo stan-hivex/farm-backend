@@ -4,8 +4,10 @@ import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CacheService } from '../common/cache/cache.service';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
+import { HIDDEN_TRANSACTION_HISTORY_STATUSES } from '../common/utils/hidden-transaction-history-statuses';
 
 @Injectable()
 export class WalletsService {
@@ -17,6 +19,7 @@ export class WalletsService {
     private securityService: SecurityService,
     private notificationsService: NotificationsService,
     private cache: CacheService,
+    private websocket: WebsocketGateway,
   ) {}
 
   async getMyWallet(userId: string) {
@@ -80,7 +83,7 @@ export class WalletsService {
       include: { wallets: { where: { is_active: true }, take: 1 } },
     });
 
-    const receiverUserId = receiverUser?.id;
+    let receiverUserId = receiverUser?.id;
     let receiverWalletId: string;
     if (receiverUser?.wallets[0]) {
       receiverWalletId = receiverUser.wallets[0].id;
@@ -184,14 +187,15 @@ export class WalletsService {
       const recvWallet = await tx.wallets.findUnique({ where: { id: receiverWalletId } });
       if (!recvWallet) throw new NotFoundException('Recipient wallet not found');
 
-      await tx.wallets.update({
+      const updatedSenderWallet = await tx.wallets.update({
         where: { id: senderWallet.id },
         data: { balance: { decrement: totalOut } },
       });
-      await tx.wallets.update({
+      const updatedReceiverWallet = await tx.wallets.update({
         where: { id: receiverWalletId },
         data: { balance: { increment: dto.amount } },
       });
+      receiverUserId = receiverUserId ?? recvWallet.user_id ?? undefined;
 
       await tx.ledger_entries.createMany({
         data: [
@@ -224,17 +228,27 @@ export class WalletsService {
       return {
         data: { transaction_reference: reference, amount: dto.amount, fee, status: 'completed' },
         message: 'Transfer successful',
+        senderBalance: Number(updatedSenderWallet.balance),
+        receiverBalance: Number(updatedReceiverWallet.balance),
       };
     });
 
-    await Promise.all([
-      this.cache.cacheInvalidatePattern(`wallet:${senderId}:balance`),
-      this.cache.cacheInvalidatePattern(`wallet:${receiverUserId}:balance`),
-      this.cache.cacheInvalidatePattern(`dashboard:${senderId}`),
-      this.cache.cacheInvalidatePattern(`dashboard:${receiverUserId}`),
-      this.cache.cacheInvalidatePattern(`transactions:${senderId}:*`),
-      this.cache.cacheInvalidatePattern(`transactions:${receiverUserId}:*`),
-    ]);
+    try {
+      this.websocket.emitBalanceUpdate(senderId, result.senderBalance);
+      this.websocket.emitTransactionUpdate(senderId, {
+        reference: result.data.transaction_reference,
+        status: 'SUCCESS',
+      });
+      if (receiverUserId) {
+        this.websocket.emitBalanceUpdate(receiverUserId, result.receiverBalance);
+        this.websocket.emitTransactionUpdate(receiverUserId, {
+          reference: result.data.transaction_reference,
+          status: 'SUCCESS',
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`Transfer realtime update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     if (receiverUserId) {
       this.notificationsService
@@ -242,7 +256,16 @@ export class WalletsService {
         .catch((error) => this.logger.error('Transfer notification failed', error));
     }
 
-    return result;
+    await Promise.all([
+      this.cache.cacheDelete(`wallet:${senderId}:balance`),
+      ...(receiverUserId ? [this.cache.cacheDelete(`wallet:${receiverUserId}:balance`)] : []),
+      this.cache.cacheDelete(`dashboard:${senderId}`),
+      ...(receiverUserId ? [this.cache.cacheDelete(`dashboard:${receiverUserId}`)] : []),
+      this.cache.cacheInvalidatePattern(`transactions:${senderId}:*`),
+      ...(receiverUserId ? [this.cache.cacheInvalidatePattern(`transactions:${receiverUserId}:*`)] : []),
+    ]);
+
+    return { data: result.data, message: result.message };
   }
 
   async getTransactions(userId: string, query: any) {
@@ -250,11 +273,23 @@ export class WalletsService {
     const wallet = await this.prisma.wallets.findFirst({ where: { user_id: userId } });
     if (!wallet) throw new NotFoundException('Wallet not found');
 
-    const where: any = { OR: [{ sender_wallet_id: wallet.id }, { receiver_wallet_id: wallet.id }] };
-    if (query.type) where.transaction_type = query.type;
-    if (query.status) where.status = query.status;
+    // Unsuccessful/in-flight transactions stay hidden from user history
+    // (asserted by wallets.service.spec.ts on main).
+    const where: any = {
+      AND: [
+        {
+          OR: [
+            { sender_wallet_id: wallet.id },
+            { receiver_wallet_id: wallet.id },
+          ],
+        },
+        { status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES } },
+      ],
+    };
+    if (query.type) where.AND.push({ transaction_type: query.type });
+    if (query.status) where.AND.push({ status: query.status });
 
-    const cacheKey = `transactions:${userId}:${page}:${limit}`;
+    const cacheKey = `transactions:${userId}:${page}:${limit}:${query.type ?? ''}:${query.status ?? ''}`;
     const cached = await this.cache.cacheGet<any>(cacheKey);
     if (cached) {
       return cached;
