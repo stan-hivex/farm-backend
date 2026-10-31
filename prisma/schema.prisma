@@ -309,6 +309,7 @@ model merchants {
   users_merchants_approved_byTousers users?             @relation("merchants_approved_byTousers", fields: [approved_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_merchants_user_idTousers     users?             @relation("merchants_user_idTousers", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   qr_payments                        qr_payments[]
+  business                           businesses?
 }
 
 model notifications {
@@ -615,6 +616,9 @@ model users {
   payment_requests_requester  payment_requests[] @relation("payment_requests_requester")
   payment_requests_recipient payment_requests[] @relation("payment_requests_recipient")
   biometric_settings          biometric_settings?
+  businesses_owned            businesses[] @relation("businesses_owner")
+  businesses_reviewed         businesses[] @relation("businesses_reviewer")
+  business_verifications_reviewed business_verifications[] @relation("business_verifications_reviewer")
 
   @@index([email], map: "idx_users_email")
   @@index([phone], map: "idx_users_phone")
@@ -1018,4 +1022,106 @@ model user_settings {
   updated_at DateTime @updatedAt
 
   user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// FARM V2 Phase 1: Business accounts (KYB). A business is an upgrade of an
+// existing merchant record (merchant_id) and is owned by a single user.
+// ---------------------------------------------------------------------------
+
+enum business_status {
+  draft
+  under_review
+  more_information_required
+  approved
+  rejected
+}
+
+enum business_person_role {
+  director
+  beneficial_owner
+}
+
+model businesses {
+  id                   String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_user_id        String                   @unique @db.Uuid
+  merchant_id          String?                  @unique @db.Uuid
+  legal_name           String?                  @db.VarChar(255)
+  trading_name         String?                  @db.VarChar(255)
+  registration_number  String?                  @db.VarChar(255)
+  registration_country String?                  @db.VarChar(100)
+  incorporation_date   DateTime?                @db.Date
+  business_type        String?                  @db.VarChar(100)
+  sector               String?                  @db.VarChar(100)
+  tax_id               String?                  @db.VarChar(100)
+  country              String?                  @db.VarChar(100)
+  city                 String?                  @db.VarChar(100)
+  address              String?
+  postal_code          String?                  @db.VarChar(30)
+  business_email       String?                  @db.VarChar(255)
+  business_phone       String?                  @db.VarChar(30)
+  website              String?                  @db.VarChar(255)
+  description          String?
+  status               business_status          @default(draft)
+  submitted_at         DateTime?                @db.Timestamptz(6)
+  reviewed_by          String?                  @db.Uuid
+  reviewed_at          DateTime?                @db.Timestamptz(6)
+  approved_at          DateTime?                @db.Timestamptz(6)
+  review_notes         String?
+  created_at           DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
+  owner                users                    @relation("businesses_owner", fields: [owner_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  reviewer             users?                   @relation("businesses_reviewer", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  merchant             merchants?               @relation(fields: [merchant_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  persons              business_persons[]
+  documents            business_documents[]
+  verifications        business_verifications[]
+
+  @@index([status], map: "idx_businesses_status")
+}
+
+model business_persons {
+  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id       String               @db.Uuid
+  role              business_person_role
+  full_name         String               @db.VarChar(255)
+  nationality       String?              @db.VarChar(100)
+  date_of_birth     DateTime?            @db.Date
+  id_number         String?              @db.VarChar(100)
+  email             String?              @db.VarChar(255)
+  phone             String?              @db.VarChar(30)
+  ownership_percent Decimal?             @db.Decimal(5, 2)
+  created_at        DateTime             @default(now()) @db.Timestamptz(6)
+  business          businesses           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([business_id], map: "idx_business_persons_business")
+}
+
+model business_documents {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id String     @db.Uuid
+  doc_type    String     @db.VarChar(64)
+  file_url    String
+  file_name   String?    @db.VarChar(255)
+  created_at  DateTime   @default(now()) @db.Timestamptz(6)
+  business    businesses @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([business_id], map: "idx_business_documents_business")
+}
+
+/// One row per submission. Keeps the full review history (audit trail) while
+/// businesses.status holds the current state.
+model business_verifications {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id    String          @db.Uuid
+  status         business_status @default(under_review)
+  snapshot       Json?
+  submitted_at   DateTime        @default(now()) @db.Timestamptz(6)
+  reviewed_by    String?         @db.Uuid
+  reviewed_at    DateTime?       @db.Timestamptz(6)
+  decision_notes String?
+  business       businesses      @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  reviewer       users?          @relation("business_verifications_reviewer", fields: [reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([business_id, submitted_at(sort: Desc)], map: "idx_business_verifications_business")
 }
