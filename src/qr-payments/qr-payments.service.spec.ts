@@ -135,7 +135,6 @@ describe('QrPaymentsService checkout initialization', () => {
       'phone',
     );
   });
-
 });
 
 describe('QrPaymentsService settlement', () => {

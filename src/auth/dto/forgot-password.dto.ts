@@ -10,7 +10,10 @@ export class ForgotPasswordDto {
   @IsOptional()
   @IsString()
   cf_turnstile_response?: string;
-  @ApiProperty({ required: false, description: 'Alternate Turnstile token field' })
+  @ApiProperty({
+    required: false,
+    description: 'Alternate Turnstile token field',
+  })
   @IsOptional()
   @IsString()
   turnstile_token?: string;

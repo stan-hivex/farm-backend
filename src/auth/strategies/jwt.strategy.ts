@@ -16,7 +16,10 @@ import { requireJwtAccessSecret } from '../jwt-secret';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
-  constructor(private cfg: ConfigService, private prisma: PrismaService) {
+  constructor(
+    private cfg: ConfigService,
+    private prisma: PrismaService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -28,7 +31,13 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   async validate(req: Request, payload: JwtPayload) {
     const user = await this.prisma.users.findUnique({
       where: { id: payload.sub },
-      select: { id: true, role: true, is_active: true, is_suspended: true, is_deleted: true },
+      select: {
+        id: true,
+        role: true,
+        is_active: true,
+        is_suspended: true,
+        is_deleted: true,
+      },
     });
 
     if (!user || !user.is_active || user.is_suspended || user.is_deleted)
@@ -40,10 +49,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         where: {
           jwt_id: payload.jti,
           user_id: payload.sub,
-          OR: [
-            { is_revoked: false },
-            { is_revoked: null },
-          ],
+          OR: [{ is_revoked: false }, { is_revoked: null }],
         },
       });
 
@@ -61,6 +67,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       }
     }
 
-    return { id: user.id, role: user.role, wallet_id: payload.wallet_id, jti: payload.jti };
+    return {
+      id: user.id,
+      role: user.role,
+      wallet_id: payload.wallet_id,
+      jti: payload.jti,
+    };
   }
 }

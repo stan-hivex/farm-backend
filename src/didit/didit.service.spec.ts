@@ -53,7 +53,9 @@ describe('DiditService', () => {
       get: jest.fn().mockReturnValue('test-api-key'),
     } as unknown as ConfigService;
     const service = new DiditService(config, {
-      users: { findUnique: jest.fn().mockResolvedValue({ kyc_status: 'rejected' }) },
+      users: {
+        findUnique: jest.fn().mockResolvedValue({ kyc_status: 'rejected' }),
+      },
     } as unknown as PrismaService);
 
     await expect(service.createSession(userId)).resolves.toEqual({
@@ -91,7 +93,9 @@ describe('DiditService', () => {
       get: jest.fn().mockReturnValue(apiKey),
     } as unknown as ConfigService;
     const service = new DiditService(config, {
-      users: { findUnique: jest.fn().mockResolvedValue({ kyc_status: 'none' }) },
+      users: {
+        findUnique: jest.fn().mockResolvedValue({ kyc_status: 'none' }),
+      },
     } as unknown as PrismaService);
     const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation();
 
@@ -224,9 +228,13 @@ describe('DiditService', () => {
   it('refuses a new Didit session for an already verified user', async () => {
     const config = { get: jest.fn().mockReturnValue('key') } as any;
     const prisma = {
-      users: { findUnique: jest.fn().mockResolvedValue({ kyc_status: 'verified' }) },
+      users: {
+        findUnique: jest.fn().mockResolvedValue({ kyc_status: 'verified' }),
+      },
     } as unknown as PrismaService;
     const service = new DiditService(config, prisma);
-    await expect(service.createSession('u-1')).rejects.toThrow('Identity is already verified');
+    await expect(service.createSession('u-1')).rejects.toThrow(
+      'Identity is already verified',
+    );
   });
 });

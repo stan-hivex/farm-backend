@@ -10,7 +10,10 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
-import { OWNERSHIP_KEY, OwnershipConfig } from '../decorators/ownership.decorator';
+import {
+  OWNERSHIP_KEY,
+  OwnershipConfig,
+} from '../decorators/ownership.decorator';
 import { UserRole } from '../enums';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../../database/prisma.service';
@@ -44,10 +47,10 @@ export class RolesGuard implements CanActivate {
     const user = this.normalizeUser(request.user);
     request.user = user;
 
-    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
+      ROLES_KEY,
+      [context.getHandler(), context.getClass()],
+    );
     if (requiredRoles && requiredRoles.length > 0) {
       const role = String(user?.role || 'user').toLowerCase();
       const allowed = requiredRoles.map((item) => String(item).toLowerCase());
@@ -59,25 +62,30 @@ export class RolesGuard implements CanActivate {
       }
     }
 
-    const requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const requiredPermissions = this.reflector.getAllAndOverride<string[]>(
+      PERMISSIONS_KEY,
+      [context.getHandler(), context.getClass()],
+    );
     if (requiredPermissions && requiredPermissions.length > 0) {
       const role = String(user?.role || 'user').toLowerCase();
       if (role !== UserRole.ADMIN && role !== UserRole.SUPER_ADMIN) {
-        const granted = await this.getEffectivePermissions(user, requiredPermissions);
-        const missing = requiredPermissions.filter((permission) => !granted.includes(permission));
+        const granted = await this.getEffectivePermissions(
+          user,
+          requiredPermissions,
+        );
+        const missing = requiredPermissions.filter(
+          (permission) => !granted.includes(permission),
+        );
         if (missing.length > 0) {
           throw new ForbiddenException('Insufficient permissions');
         }
       }
     }
 
-    const ownership = this.reflector.getAllAndOverride<OwnershipConfig>(OWNERSHIP_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const ownership = this.reflector.getAllAndOverride<OwnershipConfig>(
+      OWNERSHIP_KEY,
+      [context.getHandler(), context.getClass()],
+    );
     if (ownership) {
       const ownerId = this.resolveOwnerId(user, ownership);
       const resourceId = this.resolveResourceId(request, ownership);
@@ -139,7 +147,16 @@ export class RolesGuard implements CanActivate {
     switch (normalizedRole) {
       case String(UserRole.SUPER_ADMIN).toLowerCase():
       case String(UserRole.ADMIN).toLowerCase():
-        return ['*', ...basePermissions, 'admin:read', 'admin:write', 'audit:read', 'audit:write', 'superadmin:read', 'superadmin:write'];
+        return [
+          '*',
+          ...basePermissions,
+          'admin:read',
+          'admin:write',
+          'audit:read',
+          'audit:write',
+          'superadmin:read',
+          'superadmin:write',
+        ];
       case String(UserRole.MERCHANT).toLowerCase():
         return [
           ...basePermissions,
@@ -153,9 +170,19 @@ export class RolesGuard implements CanActivate {
     }
   }
 
-  private async getEffectivePermissions(user: any, requiredPermissions: string[]): Promise<string[]> {
-    const granted = this.getPermissionsForRole(String(user?.role || 'user').toLowerCase());
-    if (requiredPermissions.some((permission) => permission.startsWith('merchant:')) && await this.userHasMerchantRecord(user?.id || user?.userId)) {
+  private async getEffectivePermissions(
+    user: any,
+    requiredPermissions: string[],
+  ): Promise<string[]> {
+    const granted = this.getPermissionsForRole(
+      String(user?.role || 'user').toLowerCase(),
+    );
+    if (
+      requiredPermissions.some((permission) =>
+        permission.startsWith('merchant:'),
+      ) &&
+      (await this.userHasMerchantRecord(user?.id || user?.userId))
+    ) {
       return [...new Set([...granted, 'merchant:read', 'merchant:write'])];
     }
     return granted;
@@ -175,17 +202,25 @@ export class RolesGuard implements CanActivate {
   }
 
   private resolveOwnerId(user: any, ownership: OwnershipConfig): string | null {
-    const candidate = user?.[ownership.userProperty || 'id'] || user?.id || user?.sub || user?.userId;
+    const candidate =
+      user?.[ownership.userProperty || 'id'] ||
+      user?.id ||
+      user?.sub ||
+      user?.userId;
     return candidate ? String(candidate) : null;
   }
 
-  private resolveResourceId(request: any, ownership: OwnershipConfig): string | null {
+  private resolveResourceId(
+    request: any,
+    ownership: OwnershipConfig,
+  ): string | null {
     const source = ownership.source || 'params';
-    const location = source === 'body'
-      ? request.body
-      : source === 'query'
-        ? request.query
-        : request.params;
+    const location =
+      source === 'body'
+        ? request.body
+        : source === 'query'
+          ? request.query
+          : request.params;
 
     const value = location?.[ownership.param || 'id'];
     return value ? String(value) : null;

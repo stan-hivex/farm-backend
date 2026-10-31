@@ -4,6 +4,7 @@ import { BullModule } from '@nestjs/bull';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
+import { FeesModule } from './fees/fees.module';
 import { PrismaModule } from './database/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { CacheModule } from './common/cache/cache.module';
@@ -41,6 +42,7 @@ import { WebsocketModule } from './websocket/websocket.module';
 import { EscrowModule } from './escrow/escrow.module';
 import { TransferRequestsModule } from './transfer-requests/transfer-requests.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
+import { NfcPayModule } from './nfc-pay/nfc-pay.module';
 import { SupportModule } from './support/support.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { DiditModule } from './didit/didit.module';
@@ -49,8 +51,10 @@ import { BusinessOpsModule } from './business-ops/business-ops.module';
 import { BusinessApiModule } from './business-api/business-api.module';
 import { AiAssistantModule } from './ai-assistant/ai-assistant.module';
 import { AgentPaymentsModule } from './agent-payments/agent-payments.module';
+import { X402Module } from './x402/x402.module';
 import { TravelModule } from './travel/travel.module';
 import { ExpiryTasksService } from './common/tasks/expiry-tasks.service';
+import { IvorypayRetiredMiddleware } from './common/middleware/ivorypay-retired.middleware';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 @Module({
   imports: [
@@ -82,7 +86,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: async (cfg: ConfigService) => {
+      useFactory: (cfg: ConfigService) => {
         const redisUrl = cfg.get<string>('REDIS_URL')?.trim();
         if (!redisUrl) {
           throw new Error(
@@ -101,6 +105,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     }),
     BullModule.registerQueue({ name: 'expiry-tasks' }),
     DatabaseModule,
+    FeesModule,
     PrismaModule,
     RedisModule,
     CacheModule,
@@ -129,6 +134,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     AiAssistantModule,
     TravelModule,
     AgentPaymentsModule,
+    X402Module,
     SettingsModule,
     StkPushModule,
     TransactionsModule,
@@ -141,6 +147,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     EscrowModule,
     TransferRequestsModule,
     PaymentRequestsModule,
+    NfcPayModule,
     SupportModule,
     UploadsModule,
     DiditModule,
@@ -159,6 +166,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
+    consumer.apply(IvorypayRetiredMiddleware).forRoutes('*path');
     consumer.apply(IdempotencyMiddleware).forRoutes('*path');
   }
 }

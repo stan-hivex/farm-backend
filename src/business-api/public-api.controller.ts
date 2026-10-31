@@ -1,3 +1,4 @@
+import type { FarmApiRequest } from '../common/types/auth-user';
 import {
   Body,
   Controller,
@@ -57,7 +58,7 @@ export class PublicApiController {
     private readonly projectsSvc: BusinessProjectsService,
   ) {}
 
-  private api(req: any): FarmApiContext {
+  private api(req: FarmApiRequest): FarmApiContext {
     return req.farmApi;
   }
 
@@ -65,7 +66,7 @@ export class PublicApiController {
   @Get('account')
   @RequireScope('account:read')
   @ApiOperation({ summary: 'Business account and wallet balance' })
-  async account(@Req() req: any) {
+  async account(@Req() req: FarmApiRequest) {
     const a = this.api(req);
     if (a.mode === 'sandbox') return this.sandbox.account(a.businessId);
     const b = await this.prisma.businesses.findUnique({
@@ -79,7 +80,7 @@ export class PublicApiController {
   // ---------- transactions & payments ----------
   @Get('transactions')
   @RequireScope('transactions:read')
-  transactions(@Req() req: any, @Query() q: any) {
+  transactions(@Req() req: FarmApiRequest, @Query() q: any) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.list(a.businessId, 'payment', q)
@@ -88,7 +89,10 @@ export class PublicApiController {
 
   @Get('transactions/:id')
   @RequireScope('transactions:read')
-  transaction(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  transaction(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.getView(a.businessId, 'payment', id)
@@ -97,7 +101,7 @@ export class PublicApiController {
 
   @Get('payments')
   @RequireScope('payments:read')
-  async payments(@Req() req: any, @Query() q: any) {
+  async payments(@Req() req: FarmApiRequest, @Query() q: any) {
     const a = this.api(req);
     if (a.mode === 'sandbox')
       return this.sandbox.list(a.businessId, 'payment', q);
@@ -123,7 +127,7 @@ export class PublicApiController {
   // ---------- payment links ----------
   @Get('payment-links')
   @RequireScope('payment_links:read')
-  links(@Req() req: any, @Query() q: any) {
+  links(@Req() req: FarmApiRequest, @Query() q: any) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.list(a.businessId, 'payment_link', q)
@@ -132,7 +136,7 @@ export class PublicApiController {
 
   @Get('payment-links/:id')
   @RequireScope('payment_links:read')
-  link(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  link(@Req() req: FarmApiRequest, @Param('id', ParseUUIDPipe) id: string) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.getView(a.businessId, 'payment_link', id)
@@ -141,7 +145,7 @@ export class PublicApiController {
 
   @Post('payment-links')
   @RequireScope('payment_links:write')
-  createLink(@Req() req: any, @Body() dto: PaymentLinkDto) {
+  createLink(@Req() req: FarmApiRequest, @Body() dto: PaymentLinkDto) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.create(a.businessId, 'payment_link', dto, 'active')
@@ -151,7 +155,10 @@ export class PublicApiController {
   @Post('payment-links/:id/deactivate')
   @HttpCode(200)
   @RequireScope('payment_links:write')
-  deactivateLink(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  deactivateLink(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.setStatus(
@@ -167,7 +174,7 @@ export class PublicApiController {
   // ---------- invoices ----------
   @Get('invoices')
   @RequireScope('invoices:read')
-  invoices(@Req() req: any, @Query() q: any) {
+  invoices(@Req() req: FarmApiRequest, @Query() q: any) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.list(a.businessId, 'invoice', q)
@@ -176,7 +183,7 @@ export class PublicApiController {
 
   @Get('invoices/:id')
   @RequireScope('invoices:read')
-  invoice(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  invoice(@Req() req: FarmApiRequest, @Param('id', ParseUUIDPipe) id: string) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.getView(a.businessId, 'invoice', id)
@@ -185,7 +192,7 @@ export class PublicApiController {
 
   @Post('invoices')
   @RequireScope('invoices:write')
-  createInvoice(@Req() req: any, @Body() dto: InvoiceDto) {
+  createInvoice(@Req() req: FarmApiRequest, @Body() dto: InvoiceDto) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.create(a.businessId, 'invoice', dto, 'draft')
@@ -195,7 +202,10 @@ export class PublicApiController {
   @Post('invoices/:id/send')
   @HttpCode(200)
   @RequireScope('invoices:write')
-  sendInvoice(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  sendInvoice(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.setStatus(a.businessId, 'invoice', id, ['draft'], 'sent')
@@ -205,7 +215,10 @@ export class PublicApiController {
   @Post('invoices/:id/cancel')
   @HttpCode(200)
   @RequireScope('invoices:write')
-  cancelInvoice(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  cancelInvoice(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.setStatus(
@@ -221,7 +234,7 @@ export class PublicApiController {
   // ---------- escrow ----------
   @Get('escrows')
   @RequireScope('escrow:read')
-  escrows(@Req() req: any, @Query() q: any) {
+  escrows(@Req() req: FarmApiRequest, @Query() q: any) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.list(a.businessId, 'escrow', q)
@@ -230,7 +243,10 @@ export class PublicApiController {
 
   @Get('escrows/:id')
   @RequireScope('escrow:read')
-  escrowOne(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  escrowOne(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.getView(a.businessId, 'escrow', id)
@@ -239,7 +255,7 @@ export class PublicApiController {
 
   @Post('escrows')
   @RequireScope('escrow:write')
-  createEscrow(@Req() req: any, @Body() dto: BusinessEscrowDto) {
+  createEscrow(@Req() req: FarmApiRequest, @Body() dto: BusinessEscrowDto) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.create(a.businessId, 'escrow', dto, 'created')
@@ -249,7 +265,10 @@ export class PublicApiController {
   @Post('escrows/:id/send')
   @HttpCode(200)
   @RequireScope('escrow:write')
-  sendEscrow(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  sendEscrow(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.setStatus(
@@ -265,7 +284,10 @@ export class PublicApiController {
   @Post('escrows/:id/cancel')
   @HttpCode(200)
   @RequireScope('escrow:write')
-  cancelEscrow(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  cancelEscrow(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.setStatus(
@@ -281,7 +303,7 @@ export class PublicApiController {
   // ---------- payouts ----------
   @Get('payouts')
   @RequireScope('payouts:read')
-  payouts(@Req() req: any, @Query() q: any) {
+  payouts(@Req() req: FarmApiRequest, @Query() q: any) {
     const a = this.api(req);
     return a.mode === 'sandbox'
       ? this.sandbox.list(a.businessId, 'payout', q)
@@ -292,10 +314,11 @@ export class PublicApiController {
   @RequireScope('payouts:write')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({
-    summary: 'Request a payout (live: processed automatically; send an Idempotency-Key header)',
+    summary:
+      'Request a payout (live: processed automatically; send an Idempotency-Key header)',
   })
   requestPayout(
-    @Req() req: any,
+    @Req() req: FarmApiRequest,
     @Body() dto: ApiPayoutDto,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
@@ -308,23 +331,34 @@ export class PublicApiController {
   // ---------- projects (read-only; same data in sandbox and live) ----------
   @Get('projects')
   @RequireScope('projects:read')
-  @ApiOperation({ summary: 'Your investment projects and their funding status' })
-  async projects(@Req() req: any) {
+  @ApiOperation({
+    summary: 'Your investment projects and their funding status',
+  })
+  async projects(@Req() req: FarmApiRequest) {
     const a = this.api(req);
-    return { livemode: a.mode === 'live', data: await this.projectsSvc.listForBusiness(a.businessId) };
+    return {
+      livemode: a.mode === 'live',
+      data: await this.projectsSvc.listForBusiness(a.businessId),
+    };
   }
 
   @Get('projects/:id')
   @RequireScope('projects:read')
-  async project(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  async project(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     const a = this.api(req);
-    return { livemode: a.mode === 'live', data: await this.projectsSvc.getForBusiness(a.businessId, id) };
+    return {
+      livemode: a.mode === 'live',
+      data: await this.projectsSvc.getForBusiness(a.businessId, id),
+    };
   }
 
   // ---------- webhooks ----------
   @Get('webhook-events')
   @ApiOperation({ summary: 'Event types you can subscribe to' })
-  webhookEvents(@Req() req: any) {
+  webhookEvents(@Req() req: FarmApiRequest) {
     return { livemode: this.api(req).mode === 'live', data: WEBHOOK_EVENTS };
   }
 
@@ -332,21 +366,27 @@ export class PublicApiController {
   @Post('sandbox/payment-links/:id/simulate-payment')
   @HttpCode(200)
   @RequireScope('payment_links:write')
-  simLink(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  simLink(@Req() req: FarmApiRequest, @Param('id', ParseUUIDPipe) id: string) {
     return this.simulate(req, 'payment_link', id);
   }
 
   @Post('sandbox/invoices/:id/simulate-payment')
   @HttpCode(200)
   @RequireScope('invoices:write')
-  simInvoice(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  simInvoice(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.simulate(req, 'invoice', id);
   }
 
   @Post('sandbox/escrows/:id/simulate-payment')
   @HttpCode(200)
   @RequireScope('escrow:write')
-  simEscrow(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+  simEscrow(
+    @Req() req: FarmApiRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.simulate(req, 'escrow', id);
   }
 

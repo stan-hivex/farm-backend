@@ -91,17 +91,25 @@ describe('Ivorypay webhook integration', () => {
 
     await webhookService.handleIvorypayWebhookProcessing(payload);
 
-    const wallet = await prisma.wallets.findFirst({ where: { user_id: user.id, is_active: true } });
+    const wallet = await prisma.wallets.findFirst({
+      where: { user_id: user.id, is_active: true },
+    });
     const deposit = await prisma.deposit.findUnique({ where: { reference } });
-    const transaction = await prisma.transactions.findUnique({ where: { transaction_reference: reference } });
+    const transaction = await prisma.transactions.findUnique({
+      where: { transaction_reference: reference },
+    });
 
     expect(wallet).toBeDefined();
     expect(Number(wallet?.balance ?? 0)).toBeCloseTo(130);
     expect(deposit?.status).toBe('SUCCESS');
     expect(transaction?.status).toBe('completed');
 
-    await prisma.ledger_entries.deleteMany({ where: { wallet_id: wallet?.id } });
-    await prisma.transactions.deleteMany({ where: { transaction_reference: reference } });
+    await prisma.ledger_entries.deleteMany({
+      where: { wallet_id: wallet?.id },
+    });
+    await prisma.transactions.deleteMany({
+      where: { transaction_reference: reference },
+    });
     await prisma.deposit.deleteMany({ where: { reference } });
     await prisma.wallets.deleteMany({ where: { user_id: user.id } });
     await prisma.users.deleteMany({ where: { id: user.id } });
@@ -170,15 +178,23 @@ describe('Ivorypay webhook integration', () => {
 
     await webhookService.handleIvorypayWebhookProcessing(payload);
 
-    const wallet = await prisma.wallets.findFirst({ where: { user_id: user.id, is_active: true } });
-    const deposit = await prisma.deposit.findUnique({ where: { reference: failureReference } });
-    const transaction = await prisma.transactions.findUnique({ where: { transaction_reference: failureReference } });
+    const wallet = await prisma.wallets.findFirst({
+      where: { user_id: user.id, is_active: true },
+    });
+    const deposit = await prisma.deposit.findUnique({
+      where: { reference: failureReference },
+    });
+    const transaction = await prisma.transactions.findUnique({
+      where: { transaction_reference: failureReference },
+    });
 
     expect(wallet).toBeNull();
     expect(deposit?.status).toBe('FAILED');
     expect(transaction?.status).toBe('failed');
 
-    await prisma.transactions.deleteMany({ where: { transaction_reference: failureReference } });
+    await prisma.transactions.deleteMany({
+      where: { transaction_reference: failureReference },
+    });
     await prisma.deposit.deleteMany({ where: { reference: failureReference } });
     await prisma.users.deleteMany({ where: { id: user.id } });
   }, 60000);

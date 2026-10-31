@@ -1,0 +1,19 @@
+# V2 changelog
+- Phase 5–6: tokenization, FARM on-chain (Algorand) with chain outbox.
+- Phase 7: Mkulima AI assistant (xAI), actions confirmed with PIN, caps.
+- Phase 8 + 10: travel — LiteAPI hotels, Duffel flights (provider abstraction).
+- Phase 9: agent payments — mandates, PIN, per-tx/daily/monthly caps, intents, refunds.
+- Phase 10: x402 paid API endpoints.
+- Business: onboarding, Didit KYB, invoices, payment links, payouts, public API keys (sandbox/live), customers, investment projects.
+- Auth: change password, email verification (Resend), hashed OTPs. Kenya default country.
+- IvoryPay retired behind `IVORYPAY_RETIRED`.
+- E2E fixes: Prisma exception filter (bad ids → 400/404 not 500); user-specific GETs no longer cached; prose fields no longer rejected by safe-input pipe; failed payouts keep amount/method; Paystack no longer mock-verifies without explicit local flag (prevented crediting unpaid deposits).
+- Mkulima: `search_hotels` + `propose_hotel_booking` tools (LiteAPI). New AI action `book_hotel` (category Hotels); the user confirms in chat with their PIN, guest details come from the profile, FARM is held and the sandbox/live booking is created via the normal hotel flow. Users must allow `book_hotel` in Assistant settings.
+- Flights: default provider is now PKFARE (`TRAVEL_FLIGHT_PROVIDER`/`FLIGHT_PROVIDER`, default `pkfare`); Duffel is an optional legacy adapter. With no credentials flights report not configured and Mkulima replies that flights are not available yet.
+- Receive on Algorand: custodial addresses now also detect incoming **ALGO** (indexer payments, idempotent by txid). ALGO is credited as FARM at a live ALGO→KSh rate (`ALGO_KES_RATE_*`) minus the shared `USDC_KES_SPREAD_BPS`; without a rate it waits in `pending_rate`. The funder's provisioning payment, funder top-ups, reserve, other custodial and self payments are ignored. App: address screen reworded with QR + network warning, "Receive on Algorand" on the Receive panel (not tied to Deposits/Withdrawals; history labelled "Received"), business wallet line with copy/QR. See `docs/CHAIN_DEPOSITS.md`.
+
+## Mkulima voice input
+- New `POST /api/v1/ai/voice`, which transcribes audio with xAI STT (auth, rate limit, 2 MB/60 s limit, audio not stored). `AI_VOICE_ENABLED` flag. Chat accepts `language`; the system prompt forbids PINs in chat. See docs/MKULIMA_VOICE.md.
+
+## Fee schedule
+- DB-backed fee schedule (`fee_configurations`, additive migration `20261115090000_fee_schedule` with default rows) plus `FeesService` and public `GET /api/v1/fees` and `/fees/quote`. Hardcoded escrow, withdrawal, merchant and transfer rates were replaced. New: 3% investment fee, 5% travel commission line (FX markup default 0), 1% merchant fee on links, invoices and pay-business. Removed the dead 2% `fee_fiat` in payments. See docs/FEES.md.

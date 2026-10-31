@@ -5,7 +5,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { creditPlatformInTx, feeFor, ruleFor } from '../fees/fee-defaults';
+import { chargeConsolidationInTx } from './consolidation';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -54,6 +58,7 @@ export class MarketplaceService {
     private readonly prisma: PrismaService,
     private readonly auth: AuthService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   sectors() {
@@ -185,6 +190,11 @@ export class MarketplaceService {
           documents: docs,
           updates: p.updates,
           released_amount: Number(p.released_amount ?? 0),
+          consolidation_fee: Number(p.consolidation_fee ?? 0),
+          consolidation_reserve:
+            Number(p.consolidation_fee ?? 0) -
+            Number(p.consolidation_refunded ?? 0) -
+            Number(p.consolidation_released ?? 0),
           milestones: p.milestones.map((m) => ({
             ...m,
             amount: Number(m.amount),
@@ -198,8 +208,24 @@ export class MarketplaceService {
             version: RISK_DISCLOSURE_VERSION,
             points: RISK_DISCLOSURE_TEXT,
           },
+          fees: await this.investorFees(),
         },
       ),
+    };
+  }
+
+  /** Live fee terms shown to investors before they invest. */
+  async investorFees() {
+    const inv = await ruleFor(this.fees, 'investment');
+    const cons = await ruleFor(this.fees, 'project_listing');
+    return {
+      investment_percent: inv.percent,
+      consolidation_percent: cons.percent,
+      points: [
+        `A ${inv.percent}% investment fee is added on top of the amount you invest. It is not refunded, even if the project is cancelled.`,
+        `When the funding round closes, ${cons.percent}% of the total raised is held by FARM as this project's consolidation fund (a reserve, like insurance). It is not mixed with other projects' reserves.`,
+        `If the project is cancelled or makes a loss, you get your share of this reserve back, plus (if cancelled) your share of any funds not yet released to the business. If the project completes successfully, the reserve is kept by FARM.`,
+      ],
     };
   }
 
@@ -319,6 +345,9 @@ export class MarketplaceService {
       },
     });
 
+    // Marketplace fee (default 3%) is added on top of each investment.
+    const fee = await feeFor(this.fees, 'investment', amount);
+    const totalDebit = Number((amount + fee).toFixed(2));
     const result = await this.prisma.$transaction(async (tx) => {
       // Atomic capacity claim: never oversubscribe, only while still investable.
       const claimed = await tx.$executeRaw`
@@ -335,8 +364,8 @@ export class MarketplaceService {
         );
       // Atomic debit: funds move into platform custody until the admin settles the round.
       const debited = await tx.$executeRaw`
-        UPDATE wallets SET balance = balance - ${amount}, updated_at = now()
-         WHERE id = ${wallet.id}::uuid AND balance - COALESCE(locked_balance,0) >= ${amount}`;
+        UPDATE wallets SET balance = balance - ${totalDebit}, updated_at = now()
+         WHERE id = ${wallet.id}::uuid AND balance - COALESCE(locked_balance,0) >= ${totalDebit}`;
       if (debited !== 1) throw new BadRequestException('Insufficient balance');
       const txn = await tx.transactions.create({
         data: {
@@ -345,7 +374,7 @@ export class MarketplaceService {
           transaction_type: 'investment',
           status: 'completed',
           amount,
-          fee: 0,
+          fee,
           net_amount: amount,
           description: `Investment: ${project.project_name}`,
           metadata: {
@@ -362,10 +391,21 @@ export class MarketplaceService {
           transaction_id: txn.id,
           wallet_id: wallet.id,
           entry_type: 'debit',
-          amount,
-          description: `Investment in ${project.project_name}`,
+          amount: totalDebit,
+          description:
+            fee > 0
+              ? `Investment in ${project.project_name} (incl. ${fee} FARM fee)`
+              : `Investment in ${project.project_name}`,
         },
       });
+      if (fee > 0) {
+        await creditPlatformInTx(
+          tx,
+          fee,
+          `Investment fee: ${project.project_name}`,
+          txn.id,
+        );
+      }
       const inv = await tx.user_investments.create({
         data: {
           user_id: userId,
@@ -380,11 +420,14 @@ export class MarketplaceService {
         where: { id: projectId },
         select: { raised_amount: true, target_amount: true },
       });
-      if (after && Number(after.raised_amount) >= Number(after.target_amount))
+      if (after && Number(after.raised_amount) >= Number(after.target_amount)) {
         await tx.investment_projects.update({
           where: { id: projectId },
           data: { status: 'funded' },
         });
+        // Round closed by reaching its target: take the consolidation fund fee once.
+        await chargeConsolidationInTx(tx, this.fees, projectId);
+      }
       return inv;
     });
 
@@ -440,7 +483,7 @@ export class MarketplaceService {
       byProject.set(r.project_id, h);
     }
     const holdings = [...byProject.values()];
-    let legacy: any[] = [];
+    let legacy: any[];
     try {
       legacy = await this.prisma.project_investments.findMany({
         where: { user_id: userId },

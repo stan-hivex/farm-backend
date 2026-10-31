@@ -1,3 +1,5 @@
+> Note: IvoryPay is retired — see docs/IVORYPAY_RETIREMENT.md.
+
 # Backend Security & Testing Hardening Guide
 
 This guide provides concrete, actionable steps to make your NestJS backend production-ready.

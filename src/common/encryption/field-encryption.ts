@@ -10,7 +10,7 @@ const logger = new Logger('FieldEncryption');
  */
 export class FieldEncryption {
   private encryptionKey: Buffer;
-  private algorithm = 'aes-256-gcm';
+  private algorithm = 'aes-256-gcm' as const;
 
   constructor(encryptionKeyHex: string) {
     if (!encryptionKeyHex) {
@@ -34,9 +34,16 @@ export class FieldEncryption {
 
     try {
       const iv = crypto.randomBytes(16); // 128-bit IV
-      const cipher = crypto.createCipheriv(this.algorithm, this.encryptionKey, iv);
+      const cipher = crypto.createCipheriv(
+        this.algorithm,
+        this.encryptionKey,
+        iv,
+      );
 
-      const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+      const encrypted = Buffer.concat([
+        cipher.update(plaintext, 'utf8'),
+        cipher.final(),
+      ]);
       // typings may not include getAuthTag; cast to any
       const tag = (cipher as any).getAuthTag();
 
@@ -65,12 +72,19 @@ export class FieldEncryption {
       const tag = combined.slice(16, 32);
       const ciphertext = combined.slice(32);
 
-      const decipher = crypto.createDecipheriv(this.algorithm, this.encryptionKey, iv);
+      const decipher = crypto.createDecipheriv(
+        this.algorithm,
+        this.encryptionKey,
+        iv,
+        { authTagLength: 16 },
+      );
       // typings may not include setAuthTag; cast to any
       (decipher as any).setAuthTag(tag);
 
       const decrypted = Buffer.concat([
-        (decipher as any).update ? (decipher as any).update(ciphertext) : decipher.update(ciphertext),
+        (decipher as any).update
+          ? (decipher as any).update(ciphertext)
+          : decipher.update(ciphertext),
         decipher.final(),
       ]);
 

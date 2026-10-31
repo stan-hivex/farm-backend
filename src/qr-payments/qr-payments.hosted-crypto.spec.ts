@@ -97,10 +97,10 @@ describe('QrPaymentsService hosted NOWPayments checkout', () => {
       },
       qr_payments: [{ merchant_id: 'merchant-1' }],
     };
-    const transactionUpdate = jest
+    const transactionUpdate = jest.fn().mockResolvedValue({ count: 1 });
+    const merchantWalletUpdate = jest
       .fn()
-      .mockResolvedValue({ count: 1 });
-    const merchantWalletUpdate = jest.fn().mockResolvedValue({ balance: 7.425 });
+      .mockResolvedValue({ balance: 7.425 });
     const superadminWalletUpdate = jest
       .fn()
       .mockResolvedValue({ balance: 1.075 });

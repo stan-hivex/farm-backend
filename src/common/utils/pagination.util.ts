@@ -7,9 +7,20 @@ export interface PaginationMeta {
   has_prev: boolean;
 }
 
-export function paginate(total: number, page: number, limit: number): PaginationMeta {
+export function paginate(
+  total: number,
+  page: number,
+  limit: number,
+): PaginationMeta {
   const last_page = Math.ceil(total / limit) || 1;
-  return { total, page, limit, last_page, has_next: page < last_page, has_prev: page > 1 };
+  return {
+    total,
+    page,
+    limit,
+    last_page,
+    has_next: page < last_page,
+    has_prev: page > 1,
+  };
 }
 
 export function paginationParams(page: any, limit: any) {

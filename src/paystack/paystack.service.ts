@@ -2,7 +2,6 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import {
-  getBankCode,
   normalizeKenyanPhoneNumber,
   type KenyanBankEnvironment,
 } from './ke-bank-mapper';
@@ -15,6 +14,14 @@ export class PaystackTransferInitiationError extends Error {
     super(message);
     this.name = PaystackTransferInitiationError.name;
   }
+}
+
+export function paystackMockVerifyAllowed(env = process.env): boolean {
+  return (
+    env.PAYSTACK_MOCK_VERIFY === 'true' &&
+    env.NODE_ENV !== 'production' &&
+    env.RENDER !== 'true'
+  );
 }
 
 @Injectable()
@@ -63,7 +70,7 @@ export class PaystackService {
     if (rawBankMap) {
       try {
         this.bankCodeMap = JSON.parse(rawBankMap);
-      } catch (e) {
+      } catch {
         this.logger.warn(
           'PAYSTACK_BANK_CODE_MAP is not valid JSON. Ignoring configured bank mapping.',
         );
@@ -166,7 +173,8 @@ export class PaystackService {
           apiData?.meta?.nextStep ||
           'Please enable the required channel in your Paystack dashboard or contact Paystack support.';
         const channelHint = options.channels?.some(
-          (channel: string) => channel === 'bank' || channel === 'bank_transfer',
+          (channel: string) =>
+            channel === 'bank' || channel === 'bank_transfer',
         )
           ? 'The Paystack bank channel (including Pesalink) is not enabled for this account. Enable it in Paystack or contact Paystack support.'
           : 'Please verify your Paystack channel configuration for the requested payment method.';
@@ -183,9 +191,13 @@ export class PaystackService {
   async verifyTransaction(reference: string) {
     if (!this.secretKey) {
       this.logger.warn(
-        'PAYSTACK_SECRET_KEY not configured, returning mock verify',
+        'PAYSTACK_SECRET_KEY not configured, cannot verify transaction',
       );
-      return { status: 'success', reference };
+      // Never report success without a real verification: the stuck-deposit
+      // sweeper would otherwise credit FARM for unpaid deposits. Local tests
+      // can opt in explicitly (never honoured in production).
+      if (paystackMockVerifyAllowed()) return { status: 'success', reference };
+      return { status: 'unverified', reference };
     }
 
     try {

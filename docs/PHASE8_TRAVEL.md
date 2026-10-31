@@ -33,7 +33,7 @@ Travel is off by default. It turns on only when `TRAVEL_ENABLED=true` and a flig
   - Final bookings are refused (409).
 
 ## Settlement (approved)
-Travel FARM settles to the platform, and the platform pays Duffel from its prepaid USD balance. USD fares carry a 2% FX markup (`TRAVEL_FX_MARKUP_BPS=200`), with no flat fee (`TRAVEL_SERVICE_FEE_FARM=0`). Hotels will use LiteAPI later (not built yet).
+Travel FARM settles to the platform, and the platform pays Duffel from its prepaid USD balance. USD fares are converted at the mid rate (`TRAVEL_FX_MARKUP_BPS` default 0); the FARM fee is the `travel_commission` rate from the fee schedule (default 5%, see docs/FEES.md) shown as a separate line, plus optional flat `TRAVEL_SERVICE_FEE_FARM`. Hotels will use LiteAPI later (not built yet).
 
 ## Mkulima hooks
 - `search_flights` is read-only.
@@ -51,7 +51,7 @@ Travel FARM settles to the platform, and the platform pays Duffel from its prepa
 | DUFFEL_API_TOKEN | (secret) | `duffel_test_…` for sandbox |
 | DUFFEL_BASE_URL | https://api.duffel.com | |
 | TRAVEL_ALLOW_LIVE | false | required for `duffel_live_` tokens |
-| TRAVEL_FX_MARKUP_BPS | 200 | 2% over mid, max 1000 |
+| TRAVEL_FX_MARKUP_BPS | 0 | optional FX markup over mid, max 1000 |
 | TRAVEL_SERVICE_FEE_FARM | 0 | flat FARM fee per booking |
 
 ## Migration

@@ -1,5 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
 
 export class CreateAdminDto {
   @ApiProperty({ example: 'Ada' })
@@ -14,7 +20,9 @@ export class CreateAdminDto {
 
   @ApiProperty({ example: 'ada' })
   @IsNotEmpty()
-  @Matches(/^[a-z0-9_]+$/, { message: 'username: lowercase letters, numbers, underscores only' })
+  @Matches(/^[a-z0-9_]+$/, {
+    message: 'username: lowercase letters, numbers, underscores only',
+  })
   username!: string;
 
   @ApiProperty({ example: '+254700123456' })
@@ -30,7 +38,8 @@ export class CreateAdminDto {
   @ApiProperty({ minLength: 12 })
   @IsNotEmpty()
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\da-zA-Z]).{12,}$/, {
-    message: 'Password must be at least 12 characters and include uppercase, lowercase, number, and symbol',
+    message:
+      'Password must be at least 12 characters and include uppercase, lowercase, number, and symbol',
   })
   password!: string;
 

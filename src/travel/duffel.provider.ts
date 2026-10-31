@@ -32,8 +32,20 @@ export class DuffelProvider implements FlightProvider {
     return this.env.TRAVEL_ALLOW_LIVE === 'true';
   }
 
-  private async call(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<J> {
-    const base = (this.env.DUFFEL_BASE_URL ?? 'https://api.duffel.com').replace(/\/+$/, '');
+  isSandbox() {
+    return !this.token.startsWith('duffel_live_');
+  }
+
+  private async call(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs = 30000,
+  ): Promise<J> {
+    const base = (this.env.DUFFEL_BASE_URL ?? 'https://api.duffel.com').replace(
+      /\/+$/,
+      '',
+    );
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     let res: Response;
@@ -50,15 +62,19 @@ export class DuffelProvider implements FlightProvider {
         body: body ? JSON.stringify({ data: body }) : undefined,
       });
     } catch (e) {
-      throw new ProviderUnknownError(`Duffel unreachable: ${(e as Error).name}`);
+      throw new ProviderUnknownError(
+        `Duffel unreachable: ${(e as Error).name}`,
+      );
     } finally {
       clearTimeout(t);
     }
     const json = (await res.json().catch(() => ({}))) as J;
     if (res.ok) return json.data as J;
     const msg = json?.errors?.[0]?.message ?? `HTTP ${res.status}`;
-    if (res.status === 404) throw new NotFoundException('Offer not found or expired');
-    if (res.status >= 500 || res.status === 429) throw new ProviderUnknownError(`Duffel ${res.status}: ${msg}`);
+    if (res.status === 404)
+      throw new NotFoundException('Offer not found or expired');
+    if (res.status >= 500 || res.status === 429)
+      throw new ProviderUnknownError(`Duffel ${res.status}: ${msg}`);
     throw new ProviderRejectedError(msg);
   }
 
@@ -81,27 +97,47 @@ export class DuffelProvider implements FlightProvider {
           departing_at: g.departing_at,
           arriving_at: g.arriving_at,
           carrier: g.marketing_carrier?.name ?? '',
-          operating_carrier: g.operating_carrier?.name ?? g.marketing_carrier?.name ?? '',
+          operating_carrier:
+            g.operating_carrier?.name ?? g.marketing_carrier?.name ?? '',
           flight_number: `${g.marketing_carrier?.iata_code ?? ''}${g.marketing_carrier_flight_number ?? ''}`,
           duration: g.duration ?? null,
         })),
       })),
-      passengers: (o.passengers ?? []).map((p: J) => ({ id: p.id, type: p.type ?? null })),
+      passengers: (o.passengers ?? []).map((p: J) => ({
+        id: p.id,
+        type: p.type ?? null,
+      })),
       refundable: o.conditions?.refund_before_departure?.allowed ?? null,
       changeable: o.conditions?.change_before_departure?.allowed ?? null,
-      requires_instant_payment: o.payment_requirements?.requires_instant_payment ?? null,
+      requires_instant_payment:
+        o.payment_requirements?.requires_instant_payment ?? null,
       documents_required: o.passenger_identity_documents_required ?? null,
       live_mode: !!o.live_mode,
     };
   }
 
   async searchFlights(q: FlightSearch): Promise<FlightOffer[]> {
-    const slices = [{ origin: q.origin, destination: q.destination, departure_date: q.departure_date }];
-    if (q.return_date) slices.push({ origin: q.destination, destination: q.origin, departure_date: q.return_date });
+    const slices = [
+      {
+        origin: q.origin,
+        destination: q.destination,
+        departure_date: q.departure_date,
+      },
+    ];
+    if (q.return_date)
+      slices.push({
+        origin: q.destination,
+        destination: q.origin,
+        departure_date: q.return_date,
+      });
     const data = await this.call(
       'POST',
       '/air/offer_requests?return_offers=true&supplier_timeout=15000',
-      { slices, passengers: Array.from({ length: q.adults }, () => ({ type: 'adult' })), cabin_class: q.cabin_class ?? 'economy' },
+      {
+        slices,
+        passengers: Array.from({ length: q.adults }, () => ({ type: 'adult' })),
+        cabin_class: q.cabin_class ?? 'economy',
+      },
       40000,
     );
     return ((data.offers ?? []) as J[])
@@ -111,18 +147,30 @@ export class DuffelProvider implements FlightProvider {
   }
 
   async getOffer(id: string) {
-    return DuffelProvider.mapOffer(await this.call('GET', `/air/offers/${encodeURIComponent(id)}`));
+    return DuffelProvider.mapOffer(
+      await this.call('GET', `/air/offers/${encodeURIComponent(id)}`),
+    );
   }
 
-  async createOrder(offer: FlightOffer, passengers: Passenger[], idempotencyKey: string): Promise<FlightOrder> {
+  async createOrder(
+    offer: FlightOffer,
+    passengers: Passenger[],
+    idempotencyKey: string,
+  ): Promise<FlightOrder> {
     const data = await this.call(
       'POST',
       '/air/orders',
       {
         type: 'instant',
         selected_offers: [offer.id],
-        passengers,
-        payments: [{ type: 'balance', currency: offer.total_currency, amount: offer.total_amount.toFixed(2) }],
+        passengers: passengers.map(({ nationality: _n, ...p }) => p),
+        payments: [
+          {
+            type: 'balance',
+            currency: offer.total_currency,
+            amount: offer.total_amount.toFixed(2),
+          },
+        ],
         metadata: { farm_booking: idempotencyKey.slice(0, 50) },
       },
       60000,

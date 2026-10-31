@@ -49,7 +49,10 @@ export class AuditLogService {
       });
     } catch (error) {
       // Log errors but don't throw - audit logging should not break the app
-      this.logger.error(`Failed to log audit entry: ${JSON.stringify(entry)}`, error);
+      this.logger.error(
+        `Failed to log audit entry: ${JSON.stringify(entry)}`,
+        error,
+      );
     }
   }
 

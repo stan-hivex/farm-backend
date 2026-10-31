@@ -13,9 +13,7 @@ export interface WebhookQueueJob {
 export class PaymentProcessor {
   private readonly logger = new Logger(PaymentProcessor.name);
 
-  constructor(
-    private readonly webhookService: WebhookService,
-  ) {}
+  constructor(private readonly webhookService: WebhookService) {}
 
   async process(job: WebhookQueueJob) {
     if (!job || !job.provider) {
@@ -34,7 +32,9 @@ export class PaymentProcessor {
         this.logger.warn(`Unsupported webhook provider: ${job.provider}`);
       }
     } catch (error) {
-      this.logger.error(`Failed to process webhook job: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Failed to process webhook job: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw error;
     }
   }

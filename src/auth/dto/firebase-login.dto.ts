@@ -1,18 +1,24 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString } from 'class-validator';
 
 export class FirebaseLoginDto {
-  @ApiPropertyOptional({ description: 'Phone number or identifier linked to the account' })
+  @ApiPropertyOptional({
+    description: 'Phone number or identifier linked to the account',
+  })
   @IsOptional()
   @IsString()
   identifier?: string;
 
-  @ApiPropertyOptional({ description: 'Firebase ID token returned after phone verification' })
+  @ApiPropertyOptional({
+    description: 'Firebase ID token returned after phone verification',
+  })
   @IsOptional()
   @IsString()
   firebase_token?: string;
 
-  @ApiPropertyOptional({ description: 'Alternate Firebase ID token field used by the Flutter client' })
+  @ApiPropertyOptional({
+    description: 'Alternate Firebase ID token field used by the Flutter client',
+  })
   @IsOptional()
   @IsString()
   firebaseIdToken?: string;

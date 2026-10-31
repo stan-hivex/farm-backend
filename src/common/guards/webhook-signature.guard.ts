@@ -1,6 +1,9 @@
 import {
-  CanActivate, ExecutionContext, Injectable,
-  UnauthorizedException, Logger,
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
@@ -45,13 +48,15 @@ export class WebhookSignatureGuard implements CanActivate {
     // Paystack signs the raw body with HMAC-SHA512
     const rawBody = (req as any).rawBody;
     if (!rawBody) {
-      this.logger.error('Raw body not available — ensure rawBody middleware is configured');
-      throw new UnauthorizedException('Cannot verify signature without raw body');
+      this.logger.error(
+        'Raw body not available — ensure rawBody middleware is configured',
+      );
+      throw new UnauthorizedException(
+        'Cannot verify signature without raw body',
+      );
     }
 
-    const expected = createHmac('sha512', secret)
-      .update(rawBody)
-      .digest('hex');
+    const expected = createHmac('sha512', secret).update(rawBody).digest('hex');
 
     try {
       const sigBuffer = Buffer.from(paystackSignature, 'hex');
@@ -83,29 +88,43 @@ export class WebhookSignatureGuard implements CanActivate {
     }
 
     const signature = req.headers['x-ivorypay-signature'] as string;
-    if (!signature) throw new UnauthorizedException('Missing Ivorypay signature header');
+    if (!signature)
+      throw new UnauthorizedException('Missing Ivorypay signature header');
 
     const rawBody = (req as any).rawBody;
-    if (!rawBody) throw new UnauthorizedException('Cannot verify signature without raw body');
+    if (!rawBody)
+      throw new UnauthorizedException(
+        'Cannot verify signature without raw body',
+      );
 
     let payloadData: string;
     try {
-      const parsed = typeof rawBody === 'string' ? JSON.parse(rawBody) : JSON.parse(rawBody.toString('utf8'));
+      const parsed =
+        typeof rawBody === 'string'
+          ? JSON.parse(rawBody)
+          : JSON.parse(rawBody.toString('utf8'));
       if (!Object.prototype.hasOwnProperty.call(parsed, 'data')) {
         throw new Error('Missing IvoryPay webhook data');
       }
       payloadData = JSON.stringify(parsed.data);
-    } catch (e) {
-      this.logger.error('Ivorypay signature verification failed: invalid JSON payload');
+    } catch {
+      this.logger.error(
+        'Ivorypay signature verification failed: invalid JSON payload',
+      );
       throw new UnauthorizedException('Ivorypay signature verification failed');
     }
 
-    const expected = createHmac('sha512', secret).update(payloadData).digest('hex');
+    const expected = createHmac('sha512', secret)
+      .update(payloadData)
+      .digest('hex');
 
     try {
       const sigBuffer = Buffer.from(signature, 'hex');
       const expectedBuffer = Buffer.from(expected, 'hex');
-      if (sigBuffer.length !== expectedBuffer.length || !timingSafeEqual(sigBuffer, expectedBuffer)) {
+      if (
+        sigBuffer.length !== expectedBuffer.length ||
+        !timingSafeEqual(sigBuffer, expectedBuffer)
+      ) {
         throw new UnauthorizedException('Ivorypay signature mismatch');
       }
     } catch (e) {
@@ -128,9 +147,7 @@ export class WebhookSignatureGuard implements CanActivate {
       return true;
     }
     if (!secret) {
-      this.logger.error(
-        'NOWPAYMENTS_IPN_SECRET not set — rejecting webhook',
-      );
+      this.logger.error('NOWPAYMENTS_IPN_SECRET not set — rejecting webhook');
       throw new UnauthorizedException('Webhook secret not configured');
     }
     const signature = req.headers['x-nowpayments-sig'];
@@ -144,12 +161,10 @@ export class WebhookSignatureGuard implements CanActivate {
     const sortObject = (value: unknown): unknown => {
       if (Array.isArray(value)) return value.map(sortObject);
       if (!value || typeof value !== 'object') return value;
-      return Object.keys(value as Record<string, unknown>)
+      return Object.keys(value)
         .sort()
         .reduce<Record<string, unknown>>((sorted, key) => {
-          sorted[key] = sortObject(
-            (value as Record<string, unknown>)[key],
-          );
+          sorted[key] = sortObject((value as Record<string, unknown>)[key]);
           return sorted;
         }, {});
     };

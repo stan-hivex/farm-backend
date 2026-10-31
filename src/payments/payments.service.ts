@@ -90,8 +90,6 @@ export class PaymentsService {
       : undefined;
     const rate = await this.getExchangeRate(dto.currency, 'FARM');
     const amount_farm = dto.amount_fiat / rate;
-    const fee_fiat = dto.amount_fiat * 0.02;
-    const total_fiat = dto.amount_fiat + fee_fiat;
 
     const fraud = await this.assessFraudRisk(userId, {
       amount_fiat: dto.amount_fiat,

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -280,13 +279,18 @@ export class BusinessFinanceService {
         amount: Number(r.amount ?? 0),
         method: r.method ?? null,
         status:
-          p.status === 'submitted' ? String(r.status ?? 'PROCESSING') : p.status === 'failed' ? 'FAILED' : 'PROCESSING',
+          p.status === 'submitted'
+            ? String(r.status ?? 'PROCESSING')
+            : p.status === 'failed'
+              ? 'FAILED'
+              : 'PROCESSING',
         error: p.status === 'failed' ? p.error : null,
         created_at: p.created_at,
         automatic: true,
       };
     });
-    if (!a.business.merchant_id) return { data: auto, meta: paginate(auto.length, 1, 100) };
+    if (!a.business.merchant_id)
+      return { data: auto, meta: paginate(auto.length, 1, 100) };
     const { skip, take, page, limit } = paginationParams(q.page, q.limit);
     const where = { merchant_id: a.business.merchant_id };
     const [items, total] = await Promise.all([

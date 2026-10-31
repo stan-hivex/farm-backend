@@ -111,7 +111,9 @@ describe('QrService merchant QR validation', () => {
         },
         merchants: { update: jest.fn().mockResolvedValue({}) },
         qr_payments: { create: jest.fn().mockResolvedValue({}) },
-        ledger_entries: { createMany: jest.fn().mockResolvedValue({ count: 3 }) },
+        ledger_entries: {
+          createMany: jest.fn().mockResolvedValue({ count: 3 }),
+        },
       };
       const prisma: any = {
         merchants: { findUnique: jest.fn().mockResolvedValue(merchant) },

@@ -9,11 +9,7 @@ describe('ReceiptsService merchant ownership', () => {
         create: jest.fn().mockResolvedValue(receipt),
       },
     };
-    const service = new ReceiptsService(
-      {} as any,
-      {} as any,
-      {} as any,
-    );
+    const service = new ReceiptsService({} as any, {} as any, {} as any);
     const createdAt = new Date('2026-10-13T10:00:00Z');
 
     await expect(
@@ -66,11 +62,7 @@ describe('ReceiptsService merchant ownership', () => {
         count: jest.fn().mockResolvedValue(1),
       },
     };
-    const service = new ReceiptsService(
-      prisma as any,
-      {} as any,
-      {} as any,
-    );
+    const service = new ReceiptsService(prisma as any, {} as any, {} as any);
 
     const result = await service.listForMerchantOwner('owner-1', {
       page: 1,
@@ -100,11 +92,7 @@ describe('ReceiptsService merchant ownership', () => {
         findFirst: jest.fn().mockResolvedValue(null),
       },
     };
-    const service = new ReceiptsService(
-      prisma as any,
-      {} as any,
-      {} as any,
-    );
+    const service = new ReceiptsService(prisma as any, {} as any, {} as any);
 
     await expect(
       service.getForMerchantOwner('owner-1', 'receipt-from-another-merchant'),
@@ -128,11 +116,7 @@ describe('ReceiptsService merchant ownership', () => {
         }),
       },
     };
-    const service = new ReceiptsService(
-      prisma as any,
-      {} as any,
-      {} as any,
-    );
+    const service = new ReceiptsService(prisma as any, {} as any, {} as any);
 
     await expect(
       service.getPublicDownloadUrlForTransaction('transaction-1'),

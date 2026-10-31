@@ -30,20 +30,20 @@ export class ApiKeyHashService {
    * Use this when verifying incoming API keys
    */
   static hashKey(key: string): string {
-    return require('crypto')
-      .createHash('sha256')
-      .update(key)
-      .digest('hex');
+    return require('crypto').createHash('sha256').update(key).digest('hex');
   }
 
   /**
    * Compare incoming key with stored hash
    */
-  static async compareKeys(incomingKey: string, storedHash: string): Promise<boolean> {
+  static async compareKeys(
+    incomingKey: string,
+    storedHash: string,
+  ): Promise<boolean> {
     try {
       const incomingHash = this.hashKey(incomingKey);
       return incomingHash === storedHash;
-    } catch (error) {
+    } catch {
       return false;
     }
   }

@@ -20,7 +20,9 @@ describe('validateSecurityEnvironment', () => {
   });
 
   it('throws in production when required secrets are missing', () => {
-    expect(() => validateSecurityEnvironment()).toThrow(/Production security validation failed/);
+    expect(() => validateSecurityEnvironment()).toThrow(
+      /Production security validation failed/,
+    );
     expect(process.env.QR_HMAC_SECRET).toBeUndefined();
     expect(process.env.FIELD_ENCRYPTION_KEY).toBeUndefined();
     expect(process.env.JWT_ACCESS_SECRET).toBeUndefined();

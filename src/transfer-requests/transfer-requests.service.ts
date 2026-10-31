@@ -4,7 +4,10 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { computeFee, ruleFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -24,6 +27,7 @@ export class TransferRequestsService {
     private notificationsService: NotificationsService,
     private securityService: SecurityService,
     private websocket: WebsocketGateway,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────
@@ -115,14 +119,29 @@ export class TransferRequestsService {
           amount: dto.amount,
           currency: 'FARM',
           description:
-            dto.description || `Money request from ${senderUser?.username ?? 'a user'}`,
+            dto.description ||
+            `Money request from ${senderUser?.username ?? 'a user'}`,
           status: 'pending',
           expires_at: expiresAt,
           ip_address: ip,
         },
         include: {
-          users_requester: { select: { id: true, username: true, first_name: true, last_name: true } },
-          users_sender: { select: { id: true, username: true, first_name: true, last_name: true } },
+          users_requester: {
+            select: {
+              id: true,
+              username: true,
+              first_name: true,
+              last_name: true,
+            },
+          },
+          users_sender: {
+            select: {
+              id: true,
+              username: true,
+              first_name: true,
+              last_name: true,
+            },
+          },
         },
       });
 
@@ -154,10 +173,15 @@ export class TransferRequestsService {
             amount: dto.amount,
           },
         }),
-        this.notificationsService.sendPush(request.users_sender.id, title, body, {
-          request_id: request.id,
-          type: 'transfer_request',
-        }),
+        this.notificationsService.sendPush(
+          request.users_sender.id,
+          title,
+          body,
+          {
+            request_id: request.id,
+            type: 'transfer_request',
+          },
+        ),
       ]);
     }
 
@@ -244,19 +268,32 @@ export class TransferRequestsService {
   // ──────────────────────────────────────────────────────────────────────
   async acceptAndTransfer(
     senderUserId: string,
-    dto: { request_id: string; pin?: string; biometric_auth?: boolean; device_fingerprint?: string },
+    dto: {
+      request_id: string;
+      pin?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
+    },
     ip: string,
   ) {
     // Support biometric authorization: verify device fingerprint when requested
     if (dto.biometric_auth) {
-      const deviceFingerprint = dto.device_fingerprint || (dto as any).deviceFingerprint;
-      if (!deviceFingerprint) throw new BadRequestException('Device fingerprint required for biometric authorization');
-      const verified = await this.securityService.verifyDevice(senderUserId, deviceFingerprint);
+      const deviceFingerprint =
+        dto.device_fingerprint || (dto as any).deviceFingerprint;
+      if (!deviceFingerprint)
+        throw new BadRequestException(
+          'Device fingerprint required for biometric authorization',
+        );
+      const verified = await this.securityService.verifyDevice(
+        senderUserId,
+        deviceFingerprint,
+      );
       if (!verified || (verified as any).trusted !== true) {
         throw new BadRequestException('Biometric device verification failed');
       }
     } else {
-      if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
+      if (!dto.pin)
+        throw new BadRequestException('Transaction PIN is required');
       await this.authService.verifyPin(senderUserId, dto.pin);
     }
 
@@ -292,28 +329,18 @@ export class TransferRequestsService {
       if (!request.wallets_sender)
         throw new NotFoundException('Sender wallet not found');
       if (request.wallets_sender.is_frozen)
-        throw new ForbiddenException(
-          'Your wallet is frozen. Contact support.',
-        );
+        throw new ForbiddenException('Your wallet is frozen. Contact support.');
 
       const senderWallet = request.wallets_sender;
       const requesterWallet = request.wallets_requester;
       const amount = request.amount;
 
       // Get fee configuration
-      const feeCfg = await tx.fee_configurations.findFirst({
-        where: { transaction_type: 'transfer', is_active: true },
-      });
-      const pctFee = feeCfg ? Number(feeCfg.percentage_fee) / 100 : 0;
-      const flatFee = feeCfg ? Number(feeCfg.flat_fee) : 0;
-      let fee = new Prisma.Decimal(flatFee);
-      if (feeCfg) {
-        fee = amount.mul(pctFee).plus(flatFee);
-        fee = Prisma.Decimal.max(
-          new Prisma.Decimal(feeCfg.minimum_fee ?? 0),
-          Prisma.Decimal.min(new Prisma.Decimal(feeCfg.maximum_fee ?? 999999), fee),
-        );
-      }
+      // P2P transfer fee from the fee schedule (default 0%)
+      const transferRule = await ruleFor(this.fees, 'transfer');
+      const fee = new Prisma.Decimal(
+        computeFee(transferRule, Number(amount), 8),
+      );
       const totalOut = amount.plus(fee);
 
       // Check sufficient balance
@@ -338,7 +365,9 @@ export class TransferRequestsService {
           fee,
           net_amount: amount.minus(fee),
           currency: 'FARM',
-          description: request.description || `Transfer from ${request.users_sender?.username}`,
+          description:
+            request.description ||
+            `Transfer from ${request.users_sender?.username}`,
           ip_address: ip,
           metadata: { request_id: request.id },
         },
@@ -355,7 +384,8 @@ export class TransferRequestsService {
       });
 
       // Create ledger entries
-      const requesterBalance = requesterWallet!.balance ?? new Prisma.Decimal(0);
+      const requesterBalance =
+        requesterWallet!.balance ?? new Prisma.Decimal(0);
       await tx.ledger_entries.createMany({
         data: [
           {
@@ -450,10 +480,7 @@ export class TransferRequestsService {
   // ──────────────────────────────────────────────────────────────────────
   // REJECT TRANSFER REQUEST (Sender rejects)
   // ──────────────────────────────────────────────────────────────────────
-  async rejectRequest(
-    senderUserId: string,
-    requestId: string,
-  ) {
+  async rejectRequest(senderUserId: string, requestId: string) {
     const request = await this.prisma.transfer_requests.findUnique({
       where: { id: requestId },
     });
@@ -474,15 +501,21 @@ export class TransferRequestsService {
       },
     });
 
-    await this.notificationsService.sendNotification(request.requester_user_id!, {
-      type: 'request_declined',
-      entityId: request.id,
-      title: 'Transfer Request Declined',
-      body: 'Your transfer request was declined.',
-    });
+    await this.notificationsService.sendNotification(
+      request.requester_user_id!,
+      {
+        type: 'request_declined',
+        entityId: request.id,
+        title: 'Transfer Request Declined',
+        body: 'Your transfer request was declined.',
+      },
+    );
 
     return {
-      data: { status: 'rejected', request_reference: updated.request_reference },
+      data: {
+        status: 'rejected',
+        request_reference: updated.request_reference,
+      },
       message: 'Transfer request rejected',
     };
   }
@@ -490,10 +523,7 @@ export class TransferRequestsService {
   // ──────────────────────────────────────────────────────────────────────
   // CANCEL TRANSFER REQUEST (Requester cancels their own request)
   // ──────────────────────────────────────────────────────────────────────
-  async cancelRequest(
-    requesterUserId: string,
-    requestId: string,
-  ) {
+  async cancelRequest(requesterUserId: string, requestId: string) {
     const request = await this.prisma.transfer_requests.findUnique({
       where: { id: requestId },
     });
@@ -515,7 +545,10 @@ export class TransferRequestsService {
     });
 
     return {
-      data: { status: 'cancelled', request_reference: updated.request_reference },
+      data: {
+        status: 'cancelled',
+        request_reference: updated.request_reference,
+      },
       message: 'Transfer request cancelled',
     };
   }
@@ -539,28 +572,38 @@ export class TransferRequestsService {
         const amount = Number((request as any).amount ?? 0);
         await Promise.all([
           request.requester_user_id
-            ? this.notificationsService.sendNotification(request.requester_user_id, {
-                type: 'transfer_request_expired',
-                entityId: request.id,
-                title: 'Transfer Request Expired',
-                body: `Your transfer request for ${amount} FARM has expired.`,
-                metadata: { request_id: request.id, amount },
-              })
+            ? this.notificationsService.sendNotification(
+                request.requester_user_id,
+                {
+                  type: 'transfer_request_expired',
+                  entityId: request.id,
+                  title: 'Transfer Request Expired',
+                  body: `Your transfer request for ${amount} FARM has expired.`,
+                  metadata: { request_id: request.id, amount },
+                },
+              )
             : Promise.resolve(null),
           request.sender_user_id
-            ? this.notificationsService.sendNotification(request.sender_user_id, {
-                type: 'transfer_request_expired',
-                entityId: request.id,
-                title: 'Transfer Request Expired',
-                body: `A transfer request you received for ${amount} FARM has expired.`,
-                metadata: { request_id: request.id, amount },
-              })
+            ? this.notificationsService.sendNotification(
+                request.sender_user_id,
+                {
+                  type: 'transfer_request_expired',
+                  entityId: request.id,
+                  title: 'Transfer Request Expired',
+                  body: `A transfer request you received for ${amount} FARM has expired.`,
+                  metadata: { request_id: request.id, amount },
+                },
+              )
             : Promise.resolve(null),
-        ]).catch((err) => this.logger.error('Transfer request expiry notification failed', err));
+        ]).catch((err) =>
+          this.logger.error('Transfer request expiry notification failed', err),
+        );
 
         processed++;
       } catch (e) {
-        this.logger.error(`Failed to process expiry for request ${request.id}: ${e}`);
+        this.logger.error(
+          `Failed to process expiry for request ${request.id}: ${e}`,
+        );
       }
     }
 
@@ -570,10 +613,7 @@ export class TransferRequestsService {
   // ──────────────────────────────────────────────────────────────────────
   // GET REQUEST DETAILS
   // ──────────────────────────────────────────────────────────────────────
-  async getRequestDetails(
-    userId: string,
-    requestId: string,
-  ) {
+  async getRequestDetails(userId: string, requestId: string) {
     const request = await this.prisma.transfer_requests.findUnique({
       where: { id: requestId },
       include: {
@@ -624,10 +664,7 @@ export class TransferRequestsService {
 
     const requests = await this.prisma.transfer_requests.findMany({
       where: {
-        OR: [
-          { requester_user_id: userId },
-          { sender_user_id: userId },
-        ],
+        OR: [{ requester_user_id: userId }, { sender_user_id: userId }],
       },
       include: {
         users_requester: {
@@ -655,10 +692,7 @@ export class TransferRequestsService {
 
     const total = await this.prisma.transfer_requests.count({
       where: {
-        OR: [
-          { requester_user_id: userId },
-          { sender_user_id: userId },
-        ],
+        OR: [{ requester_user_id: userId }, { sender_user_id: userId }],
       },
     });
 

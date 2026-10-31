@@ -5,10 +5,7 @@ import { WebsocketGateway } from './websocket.gateway';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [
-    AuthModule,
-    ConfigModule,
-  ],
+  imports: [AuthModule, ConfigModule],
   providers: [WebsocketGateway],
   exports: [WebsocketGateway],
 })

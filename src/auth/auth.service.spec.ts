@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../database/prisma.service';
@@ -51,6 +52,7 @@ const createPrismaMock = () => {
   return prisma;
 };
 
+let afterCreate: () => void = () => undefined;
 describe('AuthService', () => {
   let service: AuthService;
   let module: TestingModule;
@@ -204,33 +206,48 @@ describe('AuthService', () => {
   });
 
   it.each([
-    [{ id: 'existing-user', phone: '+254700123456', username: 'new_user' }, '+254700123456', 'new_user', 'new@example.com', 'Phone already registered'],
-    [{ id: 'existing-user', phone: '+254711111111', username: 'taken_user' }, '+254700123456', 'taken_user', 'new@example.com', 'Username already registered'],
-    [{ id: 'existing-user', phone: '+254711111111', username: 'other_user' }, '+254700123456', 'new_user', 'taken@example.com', 'Email already registered'],
-  ])('rejects a duplicate registration field', async (
-    existing,
-    phone,
-    username,
-    email,
-    message,
-  ) => {
-    const prisma = module.get(PrismaService);
-    jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(existing as any);
+    [
+      { id: 'existing-user', phone: '+254700123456', username: 'new_user' },
+      '+254700123456',
+      'new_user',
+      'new@example.com',
+      'Phone already registered',
+    ],
+    [
+      { id: 'existing-user', phone: '+254711111111', username: 'taken_user' },
+      '+254700123456',
+      'taken_user',
+      'new@example.com',
+      'Username already registered',
+    ],
+    [
+      { id: 'existing-user', phone: '+254711111111', username: 'other_user' },
+      '+254700123456',
+      'new_user',
+      'taken@example.com',
+      'Email already registered',
+    ],
+  ])(
+    'rejects a duplicate registration field',
+    async (existing, phone, username, email, message) => {
+      const prisma = module.get(PrismaService);
+      jest.spyOn(prisma.users, 'findFirst').mockResolvedValue(existing as any);
 
-    await expect(
-      service.register(
-        {
-          first_name: 'Test',
-          last_name: 'User',
-          username,
-          phone,
-          email,
-          password: 'NewSecure1!Password',
-        } as any,
-        '203.0.113.1',
-      ),
-    ).rejects.toThrow(message);
-  });
+      await expect(
+        service.register(
+          {
+            first_name: 'Test',
+            last_name: 'User',
+            username,
+            phone,
+            email,
+            password: 'NewSecure1!Password',
+          } as any,
+          '203.0.113.1',
+        ),
+      ).rejects.toThrow(message);
+    },
+  );
 
   it('translates database unique races into a field-specific conflict', async () => {
     const prisma = module.get(PrismaService);
@@ -264,17 +281,29 @@ describe('AuthService', () => {
     const prisma = module.get(PrismaService);
     const notifications = module.get(NotificationsService);
     jest.spyOn(prisma.otp_verifications, 'findFirst').mockResolvedValue(null);
-    jest.spyOn(prisma.otp_verifications, 'create').mockResolvedValue({} as any);
+    const create = jest
+      .spyOn(prisma.otp_verifications, 'create')
+      .mockResolvedValue({} as any);
+    jest
+      .spyOn(module.get(ConfigService), 'get')
+      .mockImplementation((k: string) =>
+        k === 'JWT_ACCESS_SECRET' ? 'access-secret' : undefined,
+      );
     jest.spyOn(prisma.user_settings, 'findUnique').mockResolvedValue({
       push_notifications: true,
     } as any);
     jest
       .spyOn(notifications, 'sendPush')
       .mockReturnValue(new Promise(() => {}) as any);
+    afterCreate = () => {
+      const stored = (create.mock.calls[0][0] as any).data.otp_code;
+      expect(stored).toMatch(/^h1:[0-9a-f]{64}$/);
+    };
 
     await expect(
       service.sendOtp('user-1', '+254700123456', 'phone_verification', true),
     ).resolves.toEqual({ message: 'OTP delivery started' });
+    afterCreate();
   });
 
   it('sends a Firebase-generated reset link through the configured email service', async () => {
@@ -576,7 +605,7 @@ describe('AuthService', () => {
       {
         identifier: '+254700123456',
         password: 'secret123',
-      } as any,
+      },
       '127.0.0.1',
       'jest',
     );
@@ -586,6 +615,19 @@ describe('AuthService', () => {
     expect(result.data.access_token).toBeUndefined();
     expect(result.data.refresh_token).toBeUndefined();
     expect(prisma.user_sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed login body with 400, not a crash', async () => {
+    for (const body of [
+      {},
+      { identifier: 'a@b.co' },
+      { password: 'x' },
+      { identifier: '  ', password: 'x' },
+    ]) {
+      await expect(
+        service.login(body as any, '127.0.0.1', 'jest'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
   });
 
   it('issues a session directly when phone verification is explicitly disabled', async () => {
@@ -628,7 +670,7 @@ describe('AuthService', () => {
     jest.spyOn(jwt, 'signAsync').mockResolvedValue('token');
 
     const result: any = await service.login(
-      { identifier: '+254700123456', password: 'secret123' } as any,
+      { identifier: '+254700123456', password: 'secret123' },
       '127.0.0.1',
       'jest',
     );
@@ -689,7 +731,7 @@ describe('AuthService', () => {
       {
         identifier: '+254710000000',
         password: 'secret123',
-      } as any,
+      },
       '127.0.0.1',
       'jest',
     );
@@ -746,7 +788,7 @@ describe('AuthService', () => {
       email: 'ada@example.com',
       password: 'Abc123!@#qwe123',
       country: 'Kenya',
-    } as any);
+    });
 
     expect(result.message).toContain('Admin account created');
     expect(createdUserRole).toBe('admin');

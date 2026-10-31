@@ -14,14 +14,19 @@ export class IdempotencyMiddleware implements NestMiddleware {
     // Only enforce idempotency for unsafe methods when client provided an Idempotency-Key
     if (!['POST', 'PUT', 'PATCH'].includes(method)) return next();
 
-    const keyHeader = req.headers['idempotency-key'] || req.headers['Idempotency-Key'] || req.headers['Idempotency-key'];
+    const keyHeader =
+      req.headers['idempotency-key'] ||
+      req.headers['Idempotency-Key'] ||
+      req.headers['Idempotency-key'];
     if (!keyHeader) return next();
 
     const key = `idempotency:${String(keyHeader)}`;
     const ttl = Number(process.env.IDEMPOTENCY_KEY_TTL_MS || 60000);
     const client = this.redis?.getClient();
     if (!client) {
-      this.logger.warn('Idempotency middleware: no Redis client available, proceeding without lock');
+      this.logger.warn(
+        'Idempotency middleware: no Redis client available, proceeding without lock',
+      );
       return next();
     }
 
@@ -33,7 +38,7 @@ export class IdempotencyMiddleware implements NestMiddleware {
         return;
       }
     } catch (e) {
-      this.logger.warn('Failed to acquire idempotency lock', e as any);
+      this.logger.warn('Failed to acquire idempotency lock', e);
       return next();
     }
 
@@ -44,7 +49,7 @@ export class IdempotencyMiddleware implements NestMiddleware {
           await client.del(key);
         }
       } catch (e) {
-        this.logger.debug('Failed to release idempotency lock', e as any);
+        this.logger.debug('Failed to release idempotency lock', e);
       }
     };
 

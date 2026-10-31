@@ -5,9 +5,9 @@ import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-	imports: [AuthModule, NotificationsModule],
-	controllers: [KycController],
-	providers: [KycService],
-	exports: [KycService],
+  imports: [AuthModule, NotificationsModule],
+  controllers: [KycController],
+  providers: [KycService],
+  exports: [KycService],
 })
 export class KycModule {}

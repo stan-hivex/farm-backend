@@ -10,7 +10,14 @@ import { NowpaymentsModule } from '../nowpayments/nowpayments.module';
 import { NowpaymentsWalletController } from './deposit.controller';
 
 @Module({
-  imports: [forwardRef(() => IvorypayModule), WebsocketModule, forwardRef(() => PaystackModule), NotificationsModule, CurrencyModule, NowpaymentsModule],
+  imports: [
+    forwardRef(() => IvorypayModule),
+    WebsocketModule,
+    forwardRef(() => PaystackModule),
+    NotificationsModule,
+    CurrencyModule,
+    NowpaymentsModule,
+  ],
   controllers: [DepositController, NowpaymentsWalletController],
   providers: [DepositService],
   exports: [DepositService],

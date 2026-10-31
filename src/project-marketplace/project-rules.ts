@@ -76,13 +76,14 @@ export const ADMIN_TRANSITIONS: Record<
 };
 
 /** Bump when the disclosure text changes; investors must accept the current version. */
-export const RISK_DISCLOSURE_VERSION = '2026-10-v1';
+export const RISK_DISCLOSURE_VERSION = '2026-10-v2';
 export const RISK_DISCLOSURE_TEXT = [
   'Investing in projects is risky. You can lose some or all of the money you invest.',
   'Returns are not guaranteed. Any figures a business shares are its own estimates, not promises by FARM.',
   'Your investment may be hard or impossible to sell or withdraw before the project ends.',
   'FARM reviews projects before listing them, but this is not investment advice or an endorsement.',
   'Only invest money you can afford to lose, and spread your money across different investments.',
+  "Fees: an investment fee is added on top of what you invest and is not refunded. When the round closes, part of the total raised is held as this project's consolidation fund (a reserve); if the project is cancelled or makes a loss, investors get their share of that reserve back; if it completes successfully, FARM keeps it. Current rates are shown with each project.",
 ];
 
 /**

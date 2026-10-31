@@ -38,26 +38,31 @@ export function enrichAdminListItem<T extends Record<string, any>>(
 ): T & AdminListItemShape {
   const metadata = (item.metadata as Record<string, any> | undefined) ?? {};
   const relatedUser = user ?? item.user ?? null;
-  const userId = (
-    relatedUser?.id ??
-    metadata.user_id ??
-    metadata.userId ??
-    item.user_id ??
-    item.userId ??
-    null
-  )?.toString() ?? null;
-  const username = (
-    relatedUser?.username ??
-    metadata.username ??
-    item.username ??
-    null
-  )?.toString() ?? null;
-  const userName = [
-    relatedUser?.first_name ?? item.first_name,
-    relatedUser?.last_name ?? item.last_name,
-  ]
-    .filter(Boolean)
-    .join(' ') || item.user_name?.toString() || null;
+  const userId =
+    (
+      relatedUser?.id ??
+      metadata.user_id ??
+      metadata.userId ??
+      item.user_id ??
+      item.userId ??
+      null
+    )?.toString() ?? null;
+  const username =
+    (
+      relatedUser?.username ??
+      metadata.username ??
+      item.username ??
+      null
+    )?.toString() ?? null;
+  const userName =
+    [
+      relatedUser?.first_name ?? item.first_name,
+      relatedUser?.last_name ?? item.last_name,
+    ]
+      .filter(Boolean)
+      .join(' ') ||
+    item.user_name?.toString() ||
+    null;
 
   const rawMethod =
     metadata.payment_method ??
@@ -71,7 +76,8 @@ export function enrichAdminListItem<T extends Record<string, any>>(
     metadata.payment_provider ??
     metadata.provider ??
     null;
-  const normalizedMethod = rawMethod?.toString().trim().toUpperCase() || 'UNKNOWN';
+  const normalizedMethod =
+    rawMethod?.toString().trim().toUpperCase() || 'UNKNOWN';
   const rawProvider =
     metadata.payment_provider ??
     metadata.provider ??
@@ -82,10 +88,21 @@ export function enrichAdminListItem<T extends Record<string, any>>(
   const rawStatus = item.status?.toString().trim().toLowerCase() ?? '';
   const statusValue = rawStatus || 'unknown';
 
-  const createdAt = item.created_at ?? item.createdAt ?? item.processed_at ?? item.processedAt ?? null;
+  const createdAt =
+    item.created_at ??
+    item.createdAt ??
+    item.processed_at ??
+    item.processedAt ??
+    null;
   const dateTime = createdAt ? new Date(createdAt) : null;
-  const dateValue = dateTime && !Number.isNaN(dateTime.getTime()) ? dateTime.toISOString().slice(0, 10) : null;
-  const timeValue = dateTime && !Number.isNaN(dateTime.getTime()) ? dateTime.toISOString().slice(11, 19) : null;
+  const dateValue =
+    dateTime && !Number.isNaN(dateTime.getTime())
+      ? dateTime.toISOString().slice(0, 10)
+      : null;
+  const timeValue =
+    dateTime && !Number.isNaN(dateTime.getTime())
+      ? dateTime.toISOString().slice(11, 19)
+      : null;
   const amount = item.amount != null ? Number(item.amount) : null;
   const currency = item.currency?.toString().trim() || 'FARM';
 

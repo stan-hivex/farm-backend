@@ -1,5 +1,12 @@
 // src/deposit/deposit.service.ts
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  Optional,
+} from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { computeFee, ruleFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { PaystackService } from '../paystack/paystack.service';
 import { IvorypayService } from '../ivorypay/ivorypay.service';
@@ -26,6 +33,7 @@ export class DepositService {
     private notificationsService: NotificationsService,
     private readonly currencyConversion: CurrencyConversionService,
     private readonly nowpayments: NowpaymentsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   async getNowpaymentsCurrencies() {
@@ -124,8 +132,7 @@ export class DepositService {
         'The selected cryptocurrency is not currently available',
       );
     }
-    const minimum =
-      await this.nowpayments.getMinimumPaymentAmount(payCurrency);
+    const minimum = await this.nowpayments.getMinimumPaymentAmount(payCurrency);
     const estimatedCryptoAmount = await this.nowpayments.estimateAmount(
       priceAmount,
       'usd',
@@ -145,7 +152,9 @@ export class DepositService {
     }
     const amountFarm = await this.currencyConversion.usdToFarm(priceAmount);
     if (!Number.isFinite(amountFarm) || amountFarm <= 0) {
-      throw new BadRequestException('The USD/FARM exchange rate is unavailable');
+      throw new BadRequestException(
+        'The USD/FARM exchange rate is unavailable',
+      );
     }
 
     const reference = uuidv4();
@@ -341,11 +350,17 @@ export class DepositService {
     ) {
       await this.prisma.$transaction([
         this.prisma.deposit.updateMany({
-          where: { reference: transaction.transaction_reference, status: 'PENDING' },
+          where: {
+            reference: transaction.transaction_reference,
+            status: 'PENDING',
+          },
           data: { status: 'FAILED' },
         }),
         this.prisma.transactions.updateMany({
-          where: { id: transaction.id, status: { in: ['pending', 'processing'] } },
+          where: {
+            id: transaction.id,
+            status: { in: ['pending', 'processing'] },
+          },
           data: { status: 'failed', processed_at: new Date() },
         }),
       ]);
@@ -742,7 +757,7 @@ export class DepositService {
         } catch (e) {
           this.logger.warn(
             `finalizeSuccessfulDeposit: paystack verify failed for ${reference} - aborting credit`,
-            e as any,
+            e,
           );
           return false;
         }
@@ -759,7 +774,9 @@ export class DepositService {
             verified.order_id?.toString() !== reference ||
             verified.price_currency?.toString().toLowerCase() !== 'usd' ||
             verified.pay_currency?.toString().toLowerCase() !==
-              String(metadata.pay_currency ?? metadata.crypto ?? '').toLowerCase() ||
+              String(
+                metadata.pay_currency ?? metadata.crypto ?? '',
+              ).toLowerCase() ||
             !Number.isFinite(expectedUsd) ||
             !Number.isFinite(actualUsd) ||
             Math.abs(expectedUsd - actualUsd) > 0.01
@@ -787,7 +804,7 @@ export class DepositService {
       }
       this.logger.debug(
         'finalizeSuccessfulDeposit: provider verification skipped due to error',
-        e as any,
+        e,
       );
     }
 
@@ -795,10 +812,11 @@ export class DepositService {
       const metadata = transaction.metadata as any;
       const userId = metadata?.user_id;
       const metadataProvider = metadata?.provider?.toString()?.toLowerCase();
-      const paymentMethod =
-        ['ivorypay', 'nowpayments'].includes(metadataProvider)
-          ? 'CRYPTO'
-          : 'CARD';
+      const paymentMethod = ['ivorypay', 'nowpayments'].includes(
+        metadataProvider,
+      )
+        ? 'CRYPTO'
+        : 'CARD';
       if (!userId) {
         this.logger.warn(
           `Deposit missing for reference ${reference} but transaction metadata.user_id is unavailable`,
@@ -933,6 +951,7 @@ export class DepositService {
       );
     }
 
+    const merchantRule = await ruleFor(this.fees, 'merchant');
     const result = await this.prisma.$transaction(async (tx) => {
       const merchant = await tx.merchants.findUnique({
         where: { id: merchantId },
@@ -975,7 +994,7 @@ export class DepositService {
       }
 
       const amount = this.normalizeAmount(Number(deposit.amount));
-      const fee = this.normalizeAmount(amount * 0.01);
+      const fee = this.normalizeAmount(computeFee(merchantRule, amount, 8));
       const merchantNet = this.normalizeAmount(amount - fee);
       const merchantBalanceBefore = this.normalizeAmount(
         Number(merchantWallet.balance ?? 0),
@@ -986,7 +1005,7 @@ export class DepositService {
       const settledMetadata = {
         ...metadata,
         platform_fee_type: 'merchant_sale',
-        platform_fee_percent: 1,
+        platform_fee_percent: merchantRule.percent,
         platform_fee: fee,
       };
 
@@ -1177,7 +1196,7 @@ export class DepositService {
     } catch (e) {
       this.logger.debug(
         'Failed to emit websocket update for failed deposit',
-        e as any,
+        e,
       );
     }
 

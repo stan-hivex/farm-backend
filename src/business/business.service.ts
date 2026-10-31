@@ -53,7 +53,7 @@ export class BusinessService {
     });
     return {
       data: {
-        business: business ? this.serialize(business) : null,
+        business: business ? this.ownerView(this.serialize(business)) : null,
         eligibility: this.eligibility(merchant, business),
       },
     };
@@ -89,7 +89,7 @@ export class BusinessService {
     });
     if (existing) {
       return {
-        data: this.serialize(existing),
+        data: this.ownerView(this.serialize(existing)),
         message: 'Business application already exists.',
       };
     }
@@ -127,7 +127,7 @@ export class BusinessService {
     });
     await this.audit(userId, 'business.upgrade_started', business.id);
     return {
-      data: this.serialize(business),
+      data: this.ownerView(this.serialize(business)),
       message: 'Business draft created.',
     };
   }
@@ -196,7 +196,10 @@ export class BusinessService {
         include: DETAIL_INCLUDE,
       });
     });
-    return { data: this.serialize(updated), message: 'Draft saved.' };
+    return {
+      data: this.ownerView(this.serialize(updated)),
+      message: 'Draft saved.',
+    };
   }
 
   async submit(userId: string) {
@@ -245,7 +248,10 @@ export class BusinessService {
       });
     });
     await this.audit(userId, 'business.submitted', business.id);
-    return { data: this.serialize(updated), message: 'Submitted for review.' };
+    return {
+      data: this.ownerView(this.serialize(updated)),
+      message: 'Submitted for review.',
+    };
   }
 
   // ---------------------------------------------------------------- admin
@@ -311,7 +317,16 @@ export class BusinessService {
       },
     });
     if (!business) throw new NotFoundException('Business not found.');
-    return { data: this.serialize(business) };
+    const out = this.serialize(business);
+    // Advisory Didit KYB result for the reviewer. Never auto-approves.
+    out.didit_kyb = {
+      session_id: business.didit_kyb_session_id ?? null,
+      status: business.didit_kyb_status ?? 'none',
+      entity_status: business.didit_kyb_entity_status ?? null,
+      updated_at: business.didit_kyb_updated_at ?? null,
+      result: business.didit_kyb_result ?? null,
+    };
+    return { data: out };
   }
 
   async adminReview(adminId: string, id: string, dto: ReviewBusinessDto) {
@@ -442,6 +457,13 @@ export class BusinessService {
         'No business application found. Start the upgrade first.',
       );
     return business;
+  }
+
+  /** Owners see their KYB status but not the raw provider payload. */
+  private ownerView(b: any) {
+    const out = { ...b };
+    delete out.didit_kyb_result;
+    return out;
   }
 
   private snapshot(b: any) {

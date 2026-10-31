@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
@@ -12,9 +17,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly config: ConfigService) {}
 
   async onModuleInit(): Promise<void> {
-    const redisUrl = this.config.get<string>('REDIS_URL')?.trim() || process.env.REDIS_URL?.trim();
+    const redisUrl =
+      this.config.get<string>('REDIS_URL')?.trim() ||
+      process.env.REDIS_URL?.trim();
     if (!redisUrl) {
-      throw new Error('REDIS_URL is required and must point to an external managed Redis instance');
+      throw new Error(
+        'REDIS_URL is required and must point to an external managed Redis instance',
+      );
     }
 
     await this.initFromUrl(redisUrl);
@@ -47,16 +56,20 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
       this.client.on('connect', () => this.logger.log('Redis connecting...'));
       this.client.on('ready', () => this.logger.log('Redis ready'));
-      this.client.on('close', () => this.logger.warn('Redis connection closed'));
+      this.client.on('close', () =>
+        this.logger.warn('Redis connection closed'),
+      );
 
       const pong = await this.client.ping();
       if (pong !== 'PONG') {
         throw new Error(`Unexpected PING response from Redis: ${String(pong)}`);
       }
 
-      this.logger.log(`Redis connection established to ${url.hostname} (TLS: ${isTls})`);
+      this.logger.log(
+        `Redis connection established to ${url.hostname} (TLS: ${isTls})`,
+      );
     } catch (error) {
-      this.logger.error('Failed to initialize Redis client', error as any);
+      this.logger.error('Failed to initialize Redis client', error);
       throw error;
     }
   }
@@ -82,7 +95,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         this.client = null;
       }
     } catch (e) {
-      this.logger.warn('Error quitting Redis client', e as any);
+      this.logger.warn('Error quitting Redis client', e);
     }
   }
 

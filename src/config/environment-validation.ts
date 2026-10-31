@@ -9,11 +9,15 @@ const logger = new Logger('EnvironmentValidation');
  */
 export function validateSecurityEnvironment() {
   const nodeEnv = process.env.NODE_ENV || 'development';
-  const isProduction = nodeEnv === 'production' || process.env.RENDER === 'true';
+  const isProduction =
+    nodeEnv === 'production' || process.env.RENDER === 'true';
 
   const validateSecret = (secretName: string, minLength = 32) => {
     const currentValue = process.env[secretName];
-    const isMissingOrWeak = !currentValue || currentValue.length < minLength || currentValue === 'farm-secret';
+    const isMissingOrWeak =
+      !currentValue ||
+      currentValue.length < minLength ||
+      currentValue === 'farm-secret';
 
     if (!isMissingOrWeak) {
       return;
@@ -31,21 +35,29 @@ export function validateSecurityEnvironment() {
     validateSecret('FIELD_ENCRYPTION_KEY');
 
     if (!process.env.TURNSTILE_SECRET_KEY) {
-      throw new Error('Production security validation failed: TURNSTILE_SECRET_KEY must be set (get from https://dash.cloudflare.com/).');
+      throw new Error(
+        'Production security validation failed: TURNSTILE_SECRET_KEY must be set (get from https://dash.cloudflare.com/).',
+      );
     }
 
     if (!process.env.DATABASE_URL) {
-      throw new Error('Production security validation failed: DATABASE_URL must be set.');
+      throw new Error(
+        'Production security validation failed: DATABASE_URL must be set.',
+      );
     }
 
     if (!process.env.REDIS_URL?.trim()) {
-      throw new Error('Production security validation failed: REDIS_URL must point to an external managed Redis instance.');
+      throw new Error(
+        'Production security validation failed: REDIS_URL must point to an external managed Redis instance.',
+      );
     }
 
     logger.log('✅ Security environment validation completed.');
   } else {
     if (!process.env.JWT_ACCESS_SECRET) {
-      throw new Error('JWT_ACCESS_SECRET must be set (no insecure default is used).');
+      throw new Error(
+        'JWT_ACCESS_SECRET must be set (no insecure default is used).',
+      );
     }
     if (!process.env.QR_HMAC_SECRET) {
       logger.warn(

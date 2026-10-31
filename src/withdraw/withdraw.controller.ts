@@ -1,3 +1,4 @@
+import type { AuthRequest } from '../common/types/auth-user';
 import {
   BadRequestException,
   Body,
@@ -17,7 +18,6 @@ import { WithdrawService } from './withdraw.service';
 import { KycGuard } from '../common/guards/kyc.guard';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 import { CreateWithdrawDto } from './dto/create-withdraw.dto';
 import { TransferWithdrawDto } from './dto/transfer-withdraw.dto';
@@ -27,9 +27,7 @@ import { TransferWithdrawDto } from './dto/transfer-withdraw.dto';
   version: '1',
 })
 export class WithdrawController {
-  constructor(
-    private readonly withdrawService: WithdrawService,
-  ) {}
+  constructor(private readonly withdrawService: WithdrawService) {}
 
   @Permissions('withdraw:write')
   @UseGuards(JwtAuthGuard, KycGuard)
@@ -40,14 +38,8 @@ export class WithdrawController {
     },
   })
   @Post('create')
-  async create(
-    @Req() req,
-    @Body() dto: CreateWithdrawDto,
-  ) {
-    return this.withdrawService.createWithdrawal(
-      req.user.id,
-      dto,
-    );
+  async create(@Req() req, @Body() dto: CreateWithdrawDto) {
+    return this.withdrawService.createWithdrawal(req.user.id, dto);
   }
 
   @Permissions('withdraw:write')
@@ -77,15 +69,16 @@ export class WithdrawController {
   @UseGuards(JwtAuthGuard)
   @Get('history')
   async history(@Req() req) {
-    return this.withdrawService.getUserWithdrawals(
-      req.user.id,
-    );
+    return this.withdrawService.getUserWithdrawals(req.user.id);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('status/:reference')
   async getStatus(@Req() req, @Param('reference') reference: string) {
-    const status = await this.withdrawService.getWithdrawalStatus(reference, req.user.id);
+    const status = await this.withdrawService.getWithdrawalStatus(
+      reference,
+      req.user.id,
+    );
     if (!status) {
       return { success: false, message: 'Withdrawal not found' };
     }
@@ -111,7 +104,7 @@ export class WithdrawController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('crypto')
   async createNowpaymentsCrypto(
-    @Req() req: any,
+    @Req() req: AuthRequest,
     @Body() dto: CreateWithdrawDto,
   ) {
     return this.withdrawService.createNowpaymentsCryptoWithdrawal(
@@ -143,7 +136,7 @@ export class WithdrawController {
   @RequireOwnership('id')
   @UseGuards(JwtAuthGuard)
   @Get(':id')
-  async getOne(@Param('id') id: string, @Req() req: any) {
+  async getOne(@Param('id') id: string, @Req() req: AuthRequest) {
     return this.withdrawService.getWithdrawal(id, req.user?.id);
   }
 }

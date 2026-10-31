@@ -1,3 +1,5 @@
+> Note: IvoryPay is retired — see docs/IVORYPAY_RETIREMENT.md.
+
 # Production Readiness: FARM Stack Audit
 
 **Date:** 2026-06-25  

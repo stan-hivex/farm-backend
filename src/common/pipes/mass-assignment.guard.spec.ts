@@ -1,4 +1,3 @@
-import { BadRequestException } from '@nestjs/common';
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
 
@@ -43,7 +42,9 @@ describe('Mass Assignment Protection', () => {
 
     // With excludeExtraneousValues: true, extra fields are removed
     // Only properties that exist on the class are kept
-    expect(Object.keys(dto).length).toBeLessThanOrEqual(Object.keys(payload).length);
+    expect(Object.keys(dto).length).toBeLessThanOrEqual(
+      Object.keys(payload).length,
+    );
     // Verify that unauthorized fields are NOT present
     expect(dto).not.toHaveProperty('role');
     expect(dto).not.toHaveProperty('isActive');

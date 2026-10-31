@@ -269,7 +269,7 @@ describe('AdminService.broadcastNotification', () => {
       title: 'Platform notice',
       body: 'This is a test announcement',
       audience: 'verified',
-    } as any);
+    });
 
     expect(prisma.users.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -968,7 +968,7 @@ describe('AdminService.broadcastNotification recipient targeting', () => {
       title: 'Direct notice',
       body: 'Sent to selected recipients',
       recipientIds: ['user-2'],
-    } as any);
+    });
 
     expect(prisma.users.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -999,13 +999,17 @@ describe('AdminService exchange rates', () => {
   it('caches exchange rates and reuses them on repeated reads', async () => {
     const prisma = {
       exchange_rates: {
-        findMany: jest.fn().mockResolvedValue([{ base_currency: 'USD', target_currency: 'FARM', rate: 130 }]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { base_currency: 'USD', target_currency: 'FARM', rate: 130 },
+          ]),
       },
     };
     const cache = createCacheStub();
-    cache.cacheGet
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ data: [{ base_currency: 'USD', target_currency: 'FARM', rate: 130 }] });
+    cache.cacheGet.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      data: [{ base_currency: 'USD', target_currency: 'FARM', rate: 130 }],
+    });
 
     const service = new AdminService(
       prisma as any,
@@ -1019,9 +1023,48 @@ describe('AdminService exchange rates', () => {
     const first = await service.getExchangeRates();
     const second = await service.getExchangeRates();
 
-    expect(first).toEqual({ data: [{ base_currency: 'USD', target_currency: 'FARM', rate: 130 }] });
+    expect(first).toEqual({
+      data: [{ base_currency: 'USD', target_currency: 'FARM', rate: 130 }],
+    });
     expect(second).toEqual(first);
     expect(prisma.exchange_rates.findMany).toHaveBeenCalledTimes(1);
-    expect(cache.cacheSet).toHaveBeenCalledWith('exchange-rates:all', expect.any(Object), 300);
+    expect(cache.cacheSet).toHaveBeenCalledWith(
+      'exchange-rates:all',
+      expect.any(Object),
+      300,
+    );
+  });
+});
+
+describe('AdminService exchange-rate cache invalidation', () => {
+  it('drops the cached exchange-rate list after an update', async () => {
+    const prisma = {
+      exchange_rates: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'rate-1' }),
+      },
+    };
+    const cache = { cacheDelete: jest.fn().mockResolvedValue(undefined) };
+    const service = new AdminService(
+      prisma as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      cache as any,
+    );
+
+    await service.updateExchangeRates(
+      [{ base_currency: 'usd', target_currency: 'farm', rate: 130 }],
+      'admin-1',
+    );
+
+    expect(prisma.exchange_rates.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        base_currency: 'USD',
+        target_currency: 'FARM',
+      }),
+    });
+    expect(cache.cacheDelete).toHaveBeenCalledWith('exchange-rates:all');
   });
 });

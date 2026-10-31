@@ -1,11 +1,7 @@
 import { Request, Response } from 'express';
 
-export const getGrowthHistory = async (
-  req: Request,
-  res: Response
-) => {
+export const getGrowthHistory = async (req: Request, res: Response) => {
   try {
-
     // Example dynamic data
     // Replace with real DB queries later
 
@@ -28,9 +24,7 @@ export const getGrowthHistory = async (
         history,
       },
     });
-
   } catch (error) {
-
     console.error(error);
 
     return res.status(500).json({

@@ -40,7 +40,7 @@ export class ExpiryTasksProcessor implements OnModuleInit {
         this.logger.log('Expiry-run repeatable job already exists');
       }
     } catch (e) {
-      this.logger.error('Failed to ensure repeatable expiry job', e as any);
+      this.logger.error('Failed to ensure repeatable expiry job', e);
     }
   }
 
@@ -49,18 +49,21 @@ export class ExpiryTasksProcessor implements OnModuleInit {
     this.logger.debug('Expiry-run job triggered');
     try {
       const tr = await this.transferRequests.processExpiredRequests();
-      if (tr > 0) this.logger.log(`Processed ${tr} expired transfer request(s)`);
+      if (tr > 0)
+        this.logger.log(`Processed ${tr} expired transfer request(s)`);
     } catch (e) {
-      this.logger.error('Error processing expired transfer requests', e as any);
+      this.logger.error('Error processing expired transfer requests', e);
     }
 
     try {
       // Resolved lazily (strict: false) to avoid a module import cycle.
-      const paymentRequests = this.moduleRef.get(PaymentRequestsService, { strict: false });
+      const paymentRequests = this.moduleRef.get(PaymentRequestsService, {
+        strict: false,
+      });
       const pr = await paymentRequests.processExpiredRequests();
       if (pr > 0) this.logger.log(`Processed ${pr} expired payment request(s)`);
     } catch (e) {
-      this.logger.error('Error processing expired payment requests', e as any);
+      this.logger.error('Error processing expired payment requests', e);
     }
 
     try {
@@ -69,7 +72,7 @@ export class ExpiryTasksProcessor implements OnModuleInit {
         this.logger.log(`Auto-released ${released} escrow(s)`);
       }
     } catch (e) {
-      this.logger.error('Error processing escrow auto-releases', e as any);
+      this.logger.error('Error processing escrow auto-releases', e);
     }
   }
 }

@@ -4,7 +4,10 @@ import {
   BadGatewayException,
   BadRequestException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { FeesService } from '../fees/fees.service';
+import { feeFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
@@ -53,6 +56,7 @@ export class WithdrawService {
     private readonly currencyConversionService: CurrencyConversionService,
     private readonly websocket: WebsocketGateway,
     private readonly nowpayments: NowpaymentsService,
+    @Optional() private readonly fees?: FeesService,
   ) {}
 
   /**
@@ -105,8 +109,6 @@ export class WithdrawService {
       dto.walletAddress ??
       dto.walletaddress ??
       dto.wallet_address;
-    const cryptoAsset = dto.cryptoAsset ?? dto.token;
-    const normalizedNetwork = dto.network?.trim();
     const method = dto.method;
 
     const originalMethodMinima = {
@@ -171,9 +173,8 @@ export class WithdrawService {
       );
     }
 
-    // Platform withdrawal fee: enforce 1.5% for all withdrawal methods
-    const feePercent = 0.015;
-    const fee = Number((amount * feePercent).toFixed(8));
+    // Platform withdrawal fee from the fee schedule (default 1.5%, all methods)
+    const fee = await feeFor(this.fees, 'withdrawal', amount, 8);
     const settlement = Number((amount - fee).toFixed(8));
     const reference = uuidv4();
     const normalizedNetworkValue = dto.network ?? '';
@@ -253,11 +254,11 @@ export class WithdrawService {
       return created;
     });
 
-    setImmediate(() =>
-      this.processWithdrawal(reference).catch((error) =>
+    setImmediate(() => {
+      void this.processWithdrawal(reference).catch((error) =>
         this.logger.error(error?.message ?? error),
-      ),
-    );
+      );
+    });
 
     await this.cache.cacheInvalidatePattern(`wallet:${userId}:balance`);
     await this.cache.cacheInvalidatePattern(`dashboard:${userId}`);
@@ -297,7 +298,9 @@ export class WithdrawService {
     opts: { preAuthorized?: string } = {},
   ) {
     if (opts.preAuthorized) {
-      this.logger.log(`Crypto withdrawal pre-authorised by ${opts.preAuthorized}`);
+      this.logger.log(
+        `Crypto withdrawal pre-authorised by ${opts.preAuthorized}`,
+      );
     } else if (dto.biometric_auth) {
       const fingerprint = dto.device_fingerprint;
       if (!fingerprint) {
@@ -359,7 +362,7 @@ export class WithdrawService {
       throw new BadRequestException('Insufficient balance for this withdrawal');
     }
 
-    const fee = Number((amount * 0.015).toFixed(8));
+    const fee = await feeFor(this.fees, 'withdrawal', amount, 8);
     const settlement = Number((amount - fee).toFixed(8));
     const rate = await this.currencyConversionService.getCurrentRate();
     const farmUsdRate = Number(rate.farm_usd_rate ?? 0);
@@ -466,15 +469,16 @@ export class WithdrawService {
       this.cache.cacheInvalidatePattern(`transactions:${userId}:*`),
     ]);
     this.websocket.emitBalanceUpdate(userId, availableBalance - amount);
-    setImmediate(() =>
-      this.submitNowpaymentsPayout(reference, 'system:auto').catch((error) =>
-        this.logger.warn(
-          `Automatic NOWPayments payout for ${reference} did not complete: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        ),
-      ),
-    );
+    setImmediate(() => {
+      void this.submitNowpaymentsPayout(reference, 'system:auto').catch(
+        (error) =>
+          this.logger.warn(
+            `Automatic NOWPayments payout for ${reference} did not complete: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+      );
+    });
     return {
       success: true,
       reference,
@@ -506,8 +510,9 @@ export class WithdrawService {
     const pending = transactions.filter((transaction) => {
       const metadata =
         (transaction.metadata as Record<string, unknown> | null) ?? {};
-      const payoutStatus = String(
-        metadata.nowpayments_payout_status ?? '',
+      const rawPayoutStatus = metadata.nowpayments_payout_status;
+      const payoutStatus = (
+        typeof rawPayoutStatus === 'string' ? rawPayoutStatus : ''
       ).toLowerCase();
       return (
         metadata.provider === 'nowpayments' &&

@@ -203,12 +203,10 @@ describe('WithdrawService security (race, idempotency, refunds)', () => {
       getPayoutMinimum: jest.fn().mockResolvedValue(0.0001),
       estimatePayoutFee: jest.fn().mockResolvedValue(0.00001),
       validatePayoutAddress: jest.fn().mockResolvedValue(true),
-      createPayout: jest
-        .fn()
-        .mockResolvedValue({
-          id: 'np-batch-1',
-          withdrawals: [{ status: 'creating' }],
-        }),
+      createPayout: jest.fn().mockResolvedValue({
+        id: 'np-batch-1',
+        withdrawals: [{ status: 'creating' }],
+      }),
       findPayoutByExternalId: jest.fn().mockResolvedValue(null),
       getPayout: jest.fn(),
       verifyPayout: jest.fn().mockResolvedValue({ status: 'processing' }),
@@ -236,13 +234,11 @@ describe('WithdrawService security (race, idempotency, refunds)', () => {
         {
           provide: CurrencyConversionService,
           useValue: {
-            getCurrentRate: jest
-              .fn()
-              .mockResolvedValue({
-                farm_kes_rate: 1,
-                farm_usd_rate: 0.01,
-                usd_kes_rate: 130,
-              }),
+            getCurrentRate: jest.fn().mockResolvedValue({
+              farm_kes_rate: 1,
+              farm_usd_rate: 0.01,
+              usd_kes_rate: 130,
+            }),
           },
         },
         {
@@ -333,20 +329,32 @@ describe('WithdrawService security (race, idempotency, refunds)', () => {
 
   it('business-API pre-authorised withdrawals skip only the PIN: same lock and daily limits', async () => {
     await build(10_000);
-    jest.spyOn(service as any, 'processWithdrawal').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'processWithdrawal')
+      .mockResolvedValue(undefined);
     process.env.WITHDRAWAL_DAILY_MAX_COUNT = '0';
-    const noPin = { ...fiat(3_000), pin: undefined } as any;
-    await expect(service.createWithdrawal('user-1', noPin)).rejects.toThrow(/PIN is required/);
+    const noPin = { ...fiat(3_000), pin: undefined };
+    await expect(service.createWithdrawal('user-1', noPin)).rejects.toThrow(
+      /PIN is required/,
+    );
     const results = await Promise.allSettled(
       Array.from({ length: 5 }, () =>
-        service.createWithdrawal('user-1', noPin, { preAuthorized: 'business_api_key:k1' }),
+        service.createWithdrawal('user-1', noPin, {
+          preAuthorized: 'business_api_key:k1',
+        }),
       ),
     );
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
     expect(db.wallet.locked_balance).toBe(9_000);
     process.env.WITHDRAWAL_DAILY_MAX_AMOUNT = '9000';
     await expect(
-      service.createWithdrawal('user-1', { ...noPin, amount: 1_500 } as any, { preAuthorized: 'k' }),
+      service.createWithdrawal(
+        'user-1',
+        { ...noPin, amount: 1_500 },
+        {
+          preAuthorized: 'k',
+        },
+      ),
     ).rejects.toThrow(/Daily withdrawal amount limit|Insufficient/);
   });
 

@@ -14,18 +14,18 @@ import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard'
 import { NowpaymentsModule } from '../nowpayments/nowpayments.module';
 
 @Module({
-	imports: [
-		WebsocketModule,
-		forwardRef(() => WebhookModule),
-		IvorypayModule,
-		AuthModule,
-		forwardRef(() => PaystackModule),
-		forwardRef(() => WithdrawModule),
-		CurrencyModule,
-		NowpaymentsModule,
-	],
-	controllers: [PaymentsController, PaymentsWebhookController],
-	providers: [PaymentsService, KycGuard, WebhookSignatureGuard],
-	exports: [PaymentsService],
+  imports: [
+    WebsocketModule,
+    forwardRef(() => WebhookModule),
+    IvorypayModule,
+    AuthModule,
+    forwardRef(() => PaystackModule),
+    forwardRef(() => WithdrawModule),
+    CurrencyModule,
+    NowpaymentsModule,
+  ],
+  controllers: [PaymentsController, PaymentsWebhookController],
+  providers: [PaymentsService, KycGuard, WebhookSignatureGuard],
+  exports: [PaymentsService],
 })
 export class PaymentsModule {}

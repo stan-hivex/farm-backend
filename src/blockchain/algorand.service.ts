@@ -12,12 +12,18 @@ export class AlgorandService {
   constructor(private cfg: ConfigService) {
     this.algodClient = new algosdk.Algodv2(
       cfg.get<string>('ALGORAND_TOKEN', ''),
-      cfg.get<string>('ALGORAND_NODE_URL', 'https://testnet-api.algonode.cloud'),
+      cfg.get<string>(
+        'ALGORAND_NODE_URL',
+        'https://testnet-api.algonode.cloud',
+      ),
       '',
     );
     this.indexerClient = new algosdk.Indexer(
       '',
-      cfg.get<string>('ALGORAND_INDEXER_URL', 'https://testnet-idx.algonode.cloud'),
+      cfg.get<string>(
+        'ALGORAND_INDEXER_URL',
+        'https://testnet-idx.algonode.cloud',
+      ),
       '',
     );
     this.farmAsaId = Number(cfg.get<string>('FARM_ASA_ID', '0'));
@@ -26,12 +32,20 @@ export class AlgorandService {
   async getFarmBalance(address: string): Promise<number> {
     try {
       const info = await this.algodClient.accountInformation(address).do();
-      const asset = (info.assets ?? []).find((a: any) => a['asset-id'] === this.farmAsaId);
+      const asset = (info.assets ?? []).find(
+        (a: any) => a['asset-id'] === this.farmAsaId,
+      );
       return asset ? Number(asset.amount) / Math.pow(10, 6) : 0;
-    } catch { return 0; }
+    } catch {
+      return 0;
+    }
   }
 
-  async transferFarm(fromMnemonic: string, toAddress: string, amount: number): Promise<string> {
+  async transferFarm(
+    fromMnemonic: string,
+    toAddress: string,
+    amount: number,
+  ): Promise<string> {
     const fromAccount = algosdk.mnemonicToSecretKey(fromMnemonic);
     const suggestedParams = await this.algodClient.getTransactionParams().do();
     const amountMicroFarm = Math.round(amount * Math.pow(10, 6));
@@ -50,7 +64,9 @@ export class AlgorandService {
 
     // algosdk v3: txid (lowercase) instead of txId
     await algosdk.waitForConfirmation(this.algodClient, response.txid, 4);
-    this.logger.log(`Algorand transfer: ${response.txid} | ${amount} FARM → ${toAddress}`);
+    this.logger.log(
+      `Algorand transfer: ${response.txid} | ${amount} FARM → ${toAddress}`,
+    );
     return response.txid;
   }
 

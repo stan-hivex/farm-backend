@@ -21,7 +21,9 @@ export class CurrencyConversionService {
     try {
       // Cast regclass to text: Prisma can't deserialize the regclass type, which
       // made this check throw (and log prisma:error) on every rate lookup.
-      const rows = await this.prisma.$queryRaw<Array<{ exists: string | null }>>`
+      const rows = await this.prisma.$queryRaw<
+        Array<{ exists: string | null }>
+      >`
         SELECT to_regclass('public.currency_rates')::text AS exists;
       `;
       const exists = Boolean(rows?.[0]?.exists);
@@ -89,12 +91,16 @@ export class CurrencyConversionService {
 
   async farmToKes(amount: number): Promise<number> {
     const current = await this.getCurrentRate();
-    return this.round(this.toNumber(amount) * this.toNumber(current.farm_kes_rate, 1));
+    return this.round(
+      this.toNumber(amount) * this.toNumber(current.farm_kes_rate, 1),
+    );
   }
 
   async farmToUsd(amount: number): Promise<number> {
     const current = await this.getCurrentRate();
-    return this.round(this.toNumber(amount) * this.toNumber(current.farm_usd_rate, 0));
+    return this.round(
+      this.toNumber(amount) * this.toNumber(current.farm_usd_rate, 0),
+    );
   }
 
   async farmToUsdc(amount: number): Promise<number> {
@@ -135,7 +141,9 @@ export class CurrencyConversionService {
     await this.ensureCurrencyRatesTable();
     const parsedRate = Number(usdKesRate);
     if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
-      throw new BadRequestException('USD/KES conversion rate must be a positive number');
+      throw new BadRequestException(
+        'USD/KES conversion rate must be a positive number',
+      );
     }
 
     await this.prisma.currency_rates.updateMany({

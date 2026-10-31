@@ -58,7 +58,7 @@ describe('PaystackService Kenyan payout destinations', () => {
           },
         ],
       },
-    } as any);
+    });
 
     const destinations = await service.getBanks('KES', 'kepss');
 
@@ -98,7 +98,7 @@ describe('PaystackService Kenyan payout destinations', () => {
           },
         ],
       },
-    } as any);
+    });
 
     await expect(service.getBankCodeByName('KCB')).resolves.toBe('KEPS_01');
     expect(get).toHaveBeenCalledWith(
@@ -128,7 +128,7 @@ describe('PaystackService Kenyan payout destinations', () => {
           },
         ],
       },
-    } as any);
+    });
 
     await expect(service.getBanks('KES', 'mobile_money')).resolves.toEqual([
       expect.objectContaining({
@@ -147,7 +147,7 @@ describe('PaystackService Kenyan payout destinations', () => {
         status: true,
         data: { type: 'mobile_money', recipient_code: 'RCP_test' },
       },
-    } as any);
+    });
 
     await service.createTransferRecipient({
       type: 'mobile_money',
@@ -173,7 +173,7 @@ describe('PaystackService Kenyan payout destinations', () => {
         status: true,
         data: { type: 'kepss', recipient_code: 'RCP_KEPS' },
       },
-    } as any);
+    });
 
     await service.createTransferRecipient({
       type: 'kepss',
@@ -219,7 +219,7 @@ describe('PaystackService Kenyan payout destinations', () => {
           transfer_code: 'TRF_test',
         },
       },
-    } as any);
+    });
 
     await expect(
       service.getTransferByReference('withdrawal-ref'),

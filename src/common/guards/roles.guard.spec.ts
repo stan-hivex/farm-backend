@@ -15,7 +15,9 @@ describe('RolesGuard', () => {
       }),
     } as unknown as Reflector;
     const jwtService = {
-      verifyAsync: jest.fn().mockResolvedValue({ sub: 'admin-1', role: 'admin' }),
+      verifyAsync: jest
+        .fn()
+        .mockResolvedValue({ sub: 'admin-1', role: 'admin' }),
     } as unknown as JwtService;
     const configService = {
       get: jest.fn().mockReturnValue('test-secret'),
@@ -83,12 +85,20 @@ describe('RolesGuard', () => {
 
   it('rejects when JwtGuard has not populated req.user', async () => {
     const reflector = { getAllAndOverride: jest.fn() } as unknown as Reflector;
-    const guard = new RolesGuard(reflector, {} as JwtService, {} as ConfigService);
+    const guard = new RolesGuard(
+      reflector,
+      {} as JwtService,
+      {} as ConfigService,
+    );
     const context = {
-      switchToHttp: () => ({ getRequest: () => ({ headers: { authorization: 'Bearer forged' } }) }),
+      switchToHttp: () => ({
+        getRequest: () => ({ headers: { authorization: 'Bearer forged' } }),
+      }),
       getHandler: () => ({}),
       getClass: () => ({}),
     } as unknown as ExecutionContext;
-    await expect(guard.canActivate(context)).rejects.toThrow('Authentication token is required');
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'Authentication token is required',
+    );
   });
 });

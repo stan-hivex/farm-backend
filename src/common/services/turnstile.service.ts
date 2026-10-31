@@ -14,7 +14,8 @@ export interface TurnstileVerifyResponse {
 @Injectable()
 export class TurnstileService {
   private readonly logger = new Logger(TurnstileService.name);
-  private readonly TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+  private readonly TURNSTILE_VERIFY_URL =
+    'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
   constructor(private cfg: ConfigService) {}
 
@@ -24,7 +25,10 @@ export class TurnstileService {
    * @param remoteIp - Client IP for additional validation
    * @throws BadRequestException if token is missing or invalid
    */
-  async verifyToken(token?: string, remoteIp?: string): Promise<TurnstileVerifyResponse> {
+  async verifyToken(
+    token?: string,
+    remoteIp?: string,
+  ): Promise<TurnstileVerifyResponse> {
     if (!token) {
       throw new BadRequestException('Turnstile token required');
     }
@@ -53,16 +57,24 @@ export class TurnstileService {
 
       if (!data.success) {
         const errors = data['error-codes']?.join(', ') || 'unknown error';
-        this.logger.warn(`Turnstile verification failed: ${errors} for IP=${remoteIp}`);
+        this.logger.warn(
+          `Turnstile verification failed: ${errors} for IP=${remoteIp}`,
+        );
         throw new BadRequestException(`Captcha validation failed: ${errors}`);
       }
 
-      this.logger.debug(`Turnstile verified for hostname=${data.hostname} challenge_ts=${data.challenge_ts}`);
+      this.logger.debug(
+        `Turnstile verified for hostname=${data.hostname} challenge_ts=${data.challenge_ts}`,
+      );
       return data;
     } catch (error) {
       if (axios.isAxiosError(error)) {
-        this.logger.error(`Turnstile API error: ${error.message} status=${error.response?.status}`);
-        throw new BadRequestException('Captcha verification service unavailable');
+        this.logger.error(
+          `Turnstile API error: ${error.message} status=${error.response?.status}`,
+        );
+        throw new BadRequestException(
+          'Captcha verification service unavailable',
+        );
       }
       throw error;
     }
@@ -82,8 +94,12 @@ export class TurnstileService {
     const result = await this.verifyToken(token, remoteIp);
 
     if (result.score !== undefined && result.score < minScore) {
-      this.logger.warn(`Turnstile score too low: ${result.score} < ${minScore}`);
-      throw new BadRequestException('Captcha score too low, possible bot activity');
+      this.logger.warn(
+        `Turnstile score too low: ${result.score} < ${minScore}`,
+      );
+      throw new BadRequestException(
+        'Captcha score too low, possible bot activity',
+      );
     }
 
     return result;

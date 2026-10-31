@@ -1,10 +1,4 @@
-import {
-  Body,
-  Controller,
-  Put,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Put, Req, UseGuards } from '@nestjs/common';
 
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsIn } from 'class-validator';
@@ -27,31 +21,17 @@ class UpdateThemeDto {
 @Controller('settings')
 @UseGuards(AuthGuard('jwt'))
 export class SettingsController {
-  constructor(
-    private readonly settingsService: SettingsService,
-  ) {}
+  constructor(private readonly settingsService: SettingsService) {}
 
   @Permissions('settings:write')
   @Put('language')
-  async updateLanguage(
-    @Req() req,
-    @Body() dto: UpdateLanguageDto,
-  ) {
-    return this.settingsService.updateLanguage(
-      req.user.id,
-      dto.language,
-    );
+  async updateLanguage(@Req() req, @Body() dto: UpdateLanguageDto) {
+    return this.settingsService.updateLanguage(req.user.id, dto.language);
   }
 
   @Permissions('settings:write')
   @Put('theme')
-  async updateTheme(
-    @Req() req,
-    @Body() dto: UpdateThemeDto,
-  ) {
-    return this.settingsService.updateTheme(
-      req.user.id,
-      dto.theme,
-    );
+  async updateTheme(@Req() req, @Body() dto: UpdateThemeDto) {
+    return this.settingsService.updateTheme(req.user.id, dto.theme);
   }
 }

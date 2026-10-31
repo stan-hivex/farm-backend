@@ -1,3 +1,4 @@
+import type { AuthUser } from '../common/types/auth-user';
 import {
   Controller,
   Get,
@@ -38,7 +39,7 @@ export class ProjectsController {
 
   @Permissions('projects:write')
   @Post()
-  create(@Body() dto: CreateProjectDto, @CurrentUser() user: any) {
+  create(@Body() dto: CreateProjectDto, @CurrentUser() user: AuthUser) {
     return this.svc.create(dto, user.id);
   }
 
@@ -46,7 +47,7 @@ export class ProjectsController {
   @Post('invest')
   invest(
     @Body() dto: InvestProjectDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ) {
     return this.svc.invest(user.id, dto, req.ip || '');
