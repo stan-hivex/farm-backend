@@ -9,6 +9,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { SecurityModule } from '../security/security.module';
 import { CurrencyModule } from '../currency/currency.module';
 import { KycGuard } from '../common/guards/kyc.guard';
+import { WebsocketModule } from '../websocket/websocket.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { KycGuard } from '../common/guards/kyc.guard';
     IvorypayModule,
     SecurityModule,
     CurrencyModule,
+    WebsocketModule,
   ],
   controllers: [WithdrawController],
   providers: [WithdrawService, KycGuard],
