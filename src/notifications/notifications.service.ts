@@ -14,16 +14,10 @@ export class NotificationsService {
   private mailer: nodemailer.Transporter;
   private twilioClient: any;
 
-  constructor(
-    private prisma: PrismaService,
-    private cfg: ConfigService,
-    private firebase: FirebaseService,
-  ) {
-    const smtpPort = Number(cfg.get('SMTP_PORT')) || 587;
+  constructor(private prisma: PrismaService, private cfg: ConfigService, private firebase: FirebaseService) {
     this.mailer = nodemailer.createTransport({
       host: cfg.get('SMTP_HOST'),
-      port: smtpPort,
-      secure: smtpPort === 465,
+      port: cfg.get<number>('SMTP_PORT', 587),
       auth: { user: cfg.get('SMTP_USER'), pass: cfg.get('SMTP_PASS') },
     });
 
@@ -45,9 +39,7 @@ export class NotificationsService {
   }
 
   async getDeviceTokens(userId: string) {
-    const tokens = await (this.prisma as any).device_tokens.findMany({
-      where: { user_id: userId, is_active: true },
-    });
+    const tokens = await (this.prisma as any).device_tokens.findMany({ where: { user_id: userId, is_active: true } });
     return tokens.map((t) => t.token);
   }
 
@@ -92,68 +84,76 @@ export class NotificationsService {
   }
 
   async getSettings(userId: string) {
-    const settings = await this.prisma.user_settings.findUnique({
+
+  const settings =
+    await this.prisma.user_settings.findUnique({
       where: {
         user_id: userId,
       },
     });
 
-    return {
-      success: true,
-      data: settings,
-    };
-  }
+  return {
+    success: true,
+    data: settings,
+  };
+}
 
-  async updateSettings(userId: string, body: any) {
-    const settings = await this.prisma.user_settings.upsert({
+async updateSettings(userId: string, body: any) {
+
+  const settings =
+    await this.prisma.user_settings.upsert({
+
       where: {
         user_id: userId,
       },
 
       update: {
-        push_notifications: body.push_notifications,
+        push_notifications:
+          body.push_notifications,
 
-        email_notifications: body.email_notifications,
+        email_notifications:
+          body.email_notifications,
 
-        sms_notifications: body.sms_notifications,
+        sms_notifications:
+          body.sms_notifications,
 
-        sound_enabled: body.sound_enabled,
+        sound_enabled:
+          body.sound_enabled,
 
-        vibration_enabled: body.vibration_enabled,
+        vibration_enabled:
+          body.vibration_enabled,
       },
 
       create: {
+
         user_id: userId,
 
-        push_notifications: body.push_notifications,
+        push_notifications:
+          body.push_notifications,
 
-        email_notifications: body.email_notifications,
+        email_notifications:
+          body.email_notifications,
 
-        sms_notifications: body.sms_notifications,
+        sms_notifications:
+          body.sms_notifications,
 
-        sound_enabled: body.sound_enabled,
+        sound_enabled:
+          body.sound_enabled,
 
-        vibration_enabled: body.vibration_enabled,
+        vibration_enabled:
+          body.vibration_enabled,
       },
     });
 
-    return {
-      success: true,
-      data: settings,
-    };
-  }
+  return {
+    success: true,
+    data: settings,
+  };
+}
 
-  async createInApp(
-    userId: string,
-    dto: {
-      // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents -- documents the known enum values
-      type: notification_type | string;
-      title: string;
-      body: string;
-      metadata?: any;
-      entityId?: string;
-    },
-  ) {
+  async createInApp(userId: string, dto: {
+    type: notification_type | string; title: string; body: string; metadata?: any; entityId?: string;
+  }) {
     return this.prisma.notifications.create({
       data: {
         user_id: userId,
@@ -171,10 +171,7 @@ export class NotificationsService {
   }
 
   async getNotifications(userId: string, query: any) {
-    const { skip, take, page, limit } = paginationParams(
-      query.page,
-      query.limit,
-    );
+    const { skip, take, page, limit } = paginationParams(query.page, query.limit);
     const [items, total] = await Promise.all([
       this.prisma.notifications.findMany({
         where: { user_id: userId },
@@ -218,15 +215,9 @@ export class NotificationsService {
     return { message: 'All notifications deleted', deletedCount: result.count };
   }
 
-  /** Sends via the SMTP mailer. Never throws; returns whether it was accepted. */
-  async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
+  async sendEmail(to: string, subject: string, html: string) {
     try {
-      await this.mailer.sendMail({
-        from: this.cfg.get('SMTP_FROM'),
-        to,
-        subject,
-        html,
-      });
+      await this.mailer.sendMail({ from: this.cfg.get('SMTP_FROM'), to, subject, html });
       return true;
     } catch (e) {
       this.logger.error(`Email failed to ${to}: ${e}`);
@@ -234,7 +225,6 @@ export class NotificationsService {
     }
   }
 
-  /** True when the transactional email API (Resend) has a key and sender. */
   isTransactionalEmailConfigured(): boolean {
     const apiKey = this.cfg.get<string>('RESEND_API_KEY');
     const from =
@@ -247,7 +237,7 @@ export class NotificationsService {
     subject: string,
     html: string,
     text: string,
-  ) {
+  ): Promise<void> {
     const apiKey = this.cfg.get<string>('RESEND_API_KEY');
     const from =
       this.cfg.get<string>('RESEND_FROM') || this.cfg.get<string>('SMTP_FROM');
@@ -284,7 +274,6 @@ export class NotificationsService {
       this.logger.error(
         `Transactional email API delivery failed${status ? ` (HTTP ${status})` : ''}${providerCode ? ` (${providerCode})` : ''}`,
       );
-      // eslint-disable-next-line preserve-caught-error -- provider error is deliberately not chained (may carry request details)
       throw new Error(
         status
           ? `Transactional email provider rejected the request (HTTP ${status})`
@@ -311,7 +300,7 @@ export class NotificationsService {
     paidAt: string;
     downloadUrl: string;
     viewUrl: string;
-  }) {
+  }): Promise<void> {
     const apiKey = this.cfg.get<string>('RESEND_API_KEY');
     const from =
       this.cfg.get<string>('RESEND_FROM') || this.cfg.get<string>('SMTP_FROM');
@@ -335,71 +324,38 @@ export class NotificationsService {
       minimumFractionDigits: 2,
       maximumFractionDigits: 8,
     })} ${escapeHtml(input.currency)}`;
-    const merchantDetails = [
+    const details = [
       ['Business', input.merchantName],
       ...(input.merchantEmail ? [['Email', input.merchantEmail]] : []),
       ...(input.merchantPhone ? [['Phone', input.merchantPhone]] : []),
       ...(input.merchantLocation ? [['Location', input.merchantLocation]] : []),
-    ];
-    const detailRows = merchantDetails
+    ]
       .map(
         ([label, value]) =>
-          `<tr><td style="padding:8px 0;color:#647067;font-size:14px;">${escapeHtml(label)}</td><td style="padding:8px 0;color:#17251c;font-size:14px;text-align:right;">${escapeHtml(value)}</td></tr>`,
+          `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`,
       )
       .join('');
-    const downloadUrl = escapeHtml(input.downloadUrl);
-    const viewUrl = escapeHtml(input.viewUrl);
     const receiptNumber = escapeHtml(input.receiptNumber);
     const transactionId = escapeHtml(input.transactionId);
     const paymentMethod = escapeHtml(input.paymentMethod);
     const paidAt = escapeHtml(input.paidAt);
+    const downloadUrl = escapeHtml(input.downloadUrl);
+    const viewUrl = escapeHtml(input.viewUrl);
     const logoCid = 'farm-brand-logo';
-    const html = `<!doctype html>
-<html lang="en">
-  <body style="margin:0;padding:0;background:#f3f6f4;font-family:Arial,Helvetica,sans-serif;color:#17251c;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f6f4;padding:32px 12px;">
-      <tr><td align="center">
-        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;">
-          <tr><td style="padding:24px 32px;background:#10251a;text-align:center;">
-            <img src="cid:${logoCid}" alt="FARM" width="100" style="display:block;width:100px;height:auto;margin:0 auto 12px;border:0;">
-            <div style="color:#ffffff;font-size:13px;letter-spacing:2px;font-weight:bold;">PAYMENT RECEIPT</div>
-          </td></tr>
-          <tr><td style="padding:32px;">
-            <div style="font-size:22px;font-weight:bold;color:#167346;margin-bottom:8px;">Payment successful</div>
-            <div style="font-size:15px;line-height:1.6;color:#536157;">This payment to your FARM business was successfully processed.</div>
-            <div style="margin:24px 0;padding:20px;background:#f1f8f3;border:1px solid #dcebe0;border-radius:12px;text-align:center;">
-              <div style="font-size:13px;color:#536157;margin-bottom:6px;">Amount paid</div>
-              <div style="font-size:30px;font-weight:bold;color:#145d38;">${amount}</div>
-              ${input.creditedAmount == null ? '' : `<div style="margin-top:8px;font-size:13px;color:#536157;">Credited to merchant wallet: ${input.creditedAmount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} FARM</div>`}
-            </div>
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-              <tr><td colspan="2" style="padding:8px 0 12px;border-bottom:1px solid #e7ece8;font-size:16px;font-weight:bold;">Receipt details</td></tr>
-              <tr><td style="padding:8px 0;color:#647067;font-size:14px;">Receipt number</td><td style="padding:8px 0;color:#17251c;font-size:14px;text-align:right;">${receiptNumber}</td></tr>
-              <tr><td style="padding:8px 0;color:#647067;font-size:14px;">Transaction ID</td><td style="padding:8px 0;color:#17251c;font-size:14px;text-align:right;word-break:break-all;">${transactionId}</td></tr>
-              <tr><td style="padding:8px 0;color:#647067;font-size:14px;">Payment method</td><td style="padding:8px 0;color:#17251c;font-size:14px;text-align:right;">${paymentMethod}</td></tr>
-              <tr><td style="padding:8px 0;color:#647067;font-size:14px;">Date</td><td style="padding:8px 0;color:#17251c;font-size:14px;text-align:right;">${paidAt}</td></tr>
-              ${detailRows}
-            </table>
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:28px;">
-              <tr>
-                <td align="center" style="padding:0 6px 10px;">
-                  <a href="${downloadUrl}" style="display:inline-block;background:#167346;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:13px 18px;border-radius:8px;">Download Receipt (PDF)</a>
-                </td>
-                <td align="center" style="padding:0 6px 10px;">
-                  <a href="${viewUrl}" style="display:inline-block;background:#ffffff;color:#167346;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 18px;border:1px solid #167346;border-radius:8px;">View Receipt Online</a>
-                </td>
-              </tr>
-            </table>
-            <div style="margin-top:20px;padding-top:20px;border-top:1px solid #e7ece8;font-size:13px;line-height:1.7;color:#647067;">
-              Need help? Contact <a href="mailto:support@farmapp.africa" style="color:#167346;">support@farmapp.africa</a> or visit <a href="https://farmapp.africa" style="color:#167346;">farmapp.africa</a>.
-            </div>
-          </td></tr>
-          <tr><td style="padding:16px 32px;background:#f7f9f7;text-align:center;color:#879189;font-size:12px;">Thank you for using FARM.</td></tr>
-        </table>
-      </td></tr>
-    </table>
-  </body>
-</html>`;
+    const html = `<!doctype html><html lang="en"><body>
+      <img src="cid:${logoCid}" alt="FARM">
+      <h1>Payment successful</h1>
+      <p>Amount paid: ${amount}</p>
+      ${input.creditedAmount == null ? '' : `<p>Credited to merchant wallet: ${input.creditedAmount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} FARM</p>`}
+      <p>Receipt number: ${receiptNumber}</p>
+      <p>Transaction ID: ${transactionId}</p>
+      <p>Payment method: ${paymentMethod}</p>
+      <p>Date: ${paidAt}</p>
+      <table>${details}</table>
+      <p><a href="${downloadUrl}">Download Receipt (PDF)</a></p>
+      <p><a href="${viewUrl}">View Receipt Online</a></p>
+      <p>Need help? Contact support@farmapp.africa or visit https://farmapp.africa.</p>
+    </body></html>`;
     const text = [
       'Payment successful',
       `Amount paid: ${input.amount} ${input.currency}`,
@@ -428,10 +384,7 @@ export class NotificationsService {
           html,
           text,
           attachments: [
-            {
-              filename: `${input.receiptNumber}.pdf`,
-              content: input.pdfBase64,
-            },
+            { filename: `${input.receiptNumber}.pdf`, content: input.pdfBase64 },
             {
               filename: 'farm-logo.png',
               content: input.logoBase64,
@@ -454,7 +407,6 @@ export class NotificationsService {
       this.logger.error(
         `Receipt email delivery failed${status ? ` (HTTP ${status})` : ''}`,
       );
-      // eslint-disable-next-line preserve-caught-error -- provider error is deliberately not chained (may carry request details)
       throw new Error(
         status
           ? `Receipt email provider rejected the request (HTTP ${status})`
@@ -467,14 +419,8 @@ export class NotificationsService {
     // Avoid logging message contents (OTP) to stdout.
     if (this.twilioClient) {
       try {
-        const from =
-          this.cfg.get<string>('TWILIO_SENDER') ||
-          this.cfg.get<string>('TWILIO_FROM');
-        await this.twilioClient.messages.create({
-          body: message,
-          from,
-          to: phone,
-        });
+        const from = this.cfg.get<string>('TWILIO_SENDER') || this.cfg.get<string>('TWILIO_FROM');
+        await this.twilioClient.messages.create({ body: message, from, to: phone });
         this.logger.debug(`[SMS → ${phone}]: sent`);
         return true;
       } catch (e) {
@@ -488,12 +434,7 @@ export class NotificationsService {
     return false;
   }
 
-  async sendPush(
-    userId: string,
-    title: string,
-    body: string,
-    data?: Record<string, any>,
-  ) {
+  async sendPush(userId: string, title: string, body: string, data?: Record<string, any>) {
     if (!this.firebase) {
       this.logger.debug('FirebaseService not available; skipping push send');
       return false;
@@ -508,9 +449,10 @@ export class NotificationsService {
       if (!tokens || tokens.length === 0) return false;
       const timestamp = new Date().toISOString();
       const payloadData: Record<string, string> = Object.fromEntries(
-        Object.entries({ ...data, title, body, timestamp }).map(
-          ([key, value]) => [key, value == null ? '' : String(value)],
-        ),
+        Object.entries({ ...data, title, body, timestamp }).map(([key, value]) => [
+          key,
+          value == null ? '' : String(value),
+        ]),
       );
       const payload: any = {
         notification: { title, body },
@@ -518,25 +460,17 @@ export class NotificationsService {
         tokens,
         android: {
           priority: 'high',
-          notification: {
-            channelId: 'farm_notifications',
-            sound: 'default',
-          },
+          notification: { channelId: 'farm_notifications' },
         },
-        apns: {
-          headers: { 'apns-priority': '10' },
-          payload: { aps: { sound: 'default' } },
-        },
+        apns: { headers: { 'apns-priority': '10' } },
       };
-      const resp = await messaging.sendEachForMulticast(payload);
+      const resp = await messaging.sendEachForMulticast(payload as any);
       const invalidTokens = resp.responses
         .map((result, index) => ({ result, token: tokens[index] }))
         .filter(({ result }) => {
           const code = result.error?.code;
-          return (
-            code === 'messaging/registration-token-not-registered' ||
-            code === 'messaging/invalid-registration-token'
-          );
+          return code === 'messaging/registration-token-not-registered' ||
+              code === 'messaging/invalid-registration-token';
         })
         .map(({ token }) => token);
       if (invalidTokens.length > 0) {
@@ -545,9 +479,7 @@ export class NotificationsService {
           data: { is_active: false },
         });
       }
-      this.logger.debug(
-        `FCM sent: success=${resp.successCount} failure=${resp.failureCount}`,
-      );
+      this.logger.debug(`FCM sent: success=${resp.successCount} failure=${resp.failureCount}`);
       return resp.successCount > 0;
     } catch (e) {
       this.logger.error('FCM send failed: ' + e);
@@ -555,75 +487,35 @@ export class NotificationsService {
     }
   }
 
-  async notifyTransfer(
-    senderId: string,
-    receiverId: string,
-    amount: number,
-    reference: string,
-  ) {
-    // Show the counterparty's @username (fall back to full name, then phone).
-    // Balances are intentionally not included in the notification text.
-    const nameOf = (u: any): string | null => {
-      if (!u) return null;
-      if (u.username) return `@${String(u.username).replace(/^@/, '')}`;
-      const full = [u.first_name, u.last_name].filter(Boolean).join(' ');
-      return full || u.phone || null;
-    };
-    let senderName: string | null = null;
-    let receiverName: string | null = null;
-    try {
-      const select = {
-        first_name: true,
-        last_name: true,
-        username: true,
-        phone: true,
-      };
-      const [s, r] = await Promise.all([
-        this.prisma.users.findUnique({
-          where: { id: senderId },
-          select,
-        } as any),
-        this.prisma.users.findUnique({
-          where: { id: receiverId },
-          select,
-        } as any),
-      ]);
-      senderName = nameOf(s);
-      receiverName = nameOf(r);
-    } catch (e) {
-      this.logger.warn(
-        `notifyTransfer enrichment failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+  async notifyTransfer(senderId: string, receiverId: string, amount: number, reference: string) {
+    const sender = await this.prisma.users.findUnique({
+      where: { id: senderId },
+      select: { first_name: true, last_name: true, username: true },
+    });
+    const senderName =
+      (sender?.username && `@${sender.username}`) ||
+      [sender?.first_name, sender?.last_name].filter(Boolean).join(' ') ||
+      'Someone';
+
     await Promise.all([
       this.sendNotification(senderId, {
-        type: 'transfer_sent',
-        entityId: reference,
-        title: '✅ Transfer Successful',
-        body: `You sent ${amount} FARM${receiverName ? ` to ${receiverName}` : ''}.`,
+        type: 'transfer_sent', entityId: reference, title: 'Transfer Successful',
+        body: `You sent ${amount} FARM.`,
       }),
       this.sendNotification(receiverId, {
-        type: 'transfer_received',
-        entityId: reference,
-        title: '💰 Money Received',
-        body: senderName
-          ? `${senderName} sent you ${amount} FARM.`
-          : `You received ${amount} FARM.`,
+        type: 'transfer_received', entityId: reference, title: '💰 Money Received',
+        body: `${senderName} sent you ${amount} FARM.`,
       }),
     ]);
   }
 
-  async sendNotification(
-    userId: string,
-    dto: {
-      // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents -- documents the known enum values
-      type: notification_type | string;
-      title: string;
-      body: string;
-      entityId?: string;
-      metadata?: Record<string, any>;
-    },
-  ) {
+  async sendNotification(userId: string, dto: {
+    type: notification_type | string;
+    title: string;
+    body: string;
+    entityId?: string;
+    metadata?: Record<string, any>;
+  }) {
     const timestamp = new Date().toISOString();
     const metadata = {
       ...(dto.metadata ?? {}),

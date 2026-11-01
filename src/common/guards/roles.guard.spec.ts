@@ -1,7 +1,5 @@
 import { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
 import { RolesGuard } from './roles.guard';
 import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
 import { PrismaService } from '../../database/prisma.service';
@@ -14,15 +12,7 @@ describe('RolesGuard', () => {
         return undefined;
       }),
     } as unknown as Reflector;
-    const jwtService = {
-      verifyAsync: jest
-        .fn()
-        .mockResolvedValue({ sub: 'admin-1', role: 'admin' }),
-    } as unknown as JwtService;
-    const configService = {
-      get: jest.fn().mockReturnValue('test-secret'),
-    } as unknown as ConfigService;
-    const guard = new RolesGuard(reflector, jwtService, configService);
+    const guard = new RolesGuard(reflector);
     const context = {
       switchToHttp: () => ({
         getRequest: () => ({
@@ -50,21 +40,13 @@ describe('RolesGuard', () => {
       }),
     } as unknown as Reflector;
 
-    const jwtService = {
-      verifyAsync: jest.fn().mockResolvedValue({ sub: 'user-1', role: 'user' }),
-    } as unknown as JwtService;
-
-    const configService = {
-      get: jest.fn().mockReturnValue('test-secret'),
-    } as unknown as ConfigService;
-
     const prisma = {
       merchants: {
         findFirst: jest.fn().mockResolvedValue({ id: 'merchant-1' }),
       },
     } as unknown as PrismaService;
 
-    const guard = new RolesGuard(reflector, jwtService, configService, prisma);
+    const guard = new RolesGuard(reflector, prisma);
 
     const req: any = {
       headers: { authorization: 'Bearer test-token' },
@@ -85,11 +67,7 @@ describe('RolesGuard', () => {
 
   it('rejects when JwtGuard has not populated req.user', async () => {
     const reflector = { getAllAndOverride: jest.fn() } as unknown as Reflector;
-    const guard = new RolesGuard(
-      reflector,
-      {} as JwtService,
-      {} as ConfigService,
-    );
+    const guard = new RolesGuard(reflector);
     const context = {
       switchToHttp: () => ({
         getRequest: () => ({ headers: { authorization: 'Bearer forged' } }),
