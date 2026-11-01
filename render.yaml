@@ -66,9 +66,9 @@ services:
       - key: JWT_REFRESH_EXPIRATION
         value: 604800
       
-      # Refresh-session lifetime in days (rotated on each refresh; 1-365)
+      # Use 0 for sessions that end only through logout/revocation; otherwise 1-365 days.
       - key: REFRESH_TOKEN_TTL_DAYS
-        value: 30
+        value: 0
       
       # Cloudinary Configuration
       - key: CLOUDINARY_CLOUD_NAME

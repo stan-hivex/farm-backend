@@ -108,6 +108,36 @@ describe('AuthService', () => {
     expect(service).toBeDefined();
   });
 
+  it('removes expiry from existing active sessions when configured as zero', async () => {
+    const prisma = module.get(PrismaService);
+    const config = module.get(ConfigService);
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    jest
+      .spyOn(config, 'get')
+      .mockImplementation((key: string) =>
+        key === 'REFRESH_TOKEN_TTL_DAYS' ? '0' : undefined,
+      );
+    jest.spyOn(prisma.user_sessions, 'updateMany').mockResolvedValue({
+      count: 2,
+    } as any);
+
+    try {
+      await service.onModuleInit();
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = previousNodeEnv;
+      }
+    }
+
+    expect(prisma.user_sessions.updateMany).toHaveBeenCalledWith({
+      where: { OR: [{ is_revoked: false }, { is_revoked: null }] },
+      data: { expires_at: null },
+    });
+  });
+
   it('returns from registration without waiting for Firebase account linking', async () => {
     const prisma = module.get(PrismaService);
     const config = module.get(ConfigService);
@@ -710,6 +740,7 @@ describe('AuthService', () => {
     jest.spyOn(prisma.activity_logs, 'create').mockResolvedValue({} as any);
     jest.spyOn(prisma.user_sessions, 'create').mockResolvedValue({} as any);
     jest.spyOn(config, 'get').mockImplementation((key: string) => {
+      if (key === 'REFRESH_TOKEN_TTL_DAYS') return '0';
       if (key === 'JWT_ACCESS_SECRET') return 'access-secret';
       if (key === 'JWT_REFRESH_SECRET') return 'refresh-secret';
       return undefined;
@@ -739,7 +770,77 @@ describe('AuthService', () => {
     expect(result.data.requiresPhoneVerification).toBe(false);
     expect(result.data.access_token).toBe('access-token');
     expect(result.data.refresh_token).toBe('refresh-token');
-    expect(prisma.user_sessions.create).toHaveBeenCalled();
+    expect(prisma.user_sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ expires_at: null }),
+      }),
+    );
+    expect(jwt.signAsync).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        secret: 'refresh-secret',
+        expiresIn: undefined,
+      }),
+    );
+  });
+
+  it('refreshes active sessions with no expiry and keeps them non-expiring', async () => {
+    const prisma = module.get(PrismaService);
+    const jwt = module.get(JwtService);
+    const config = module.get(ConfigService);
+    jest.spyOn(config, 'get').mockImplementation((key: string) => {
+      if (key === 'REFRESH_TOKEN_TTL_DAYS') return '0';
+      if (key === 'BCRYPT_ROUNDS') return '4';
+      if (key === 'JWT_ACCESS_SECRET') return 'access-secret';
+      if (key === 'JWT_REFRESH_SECRET') return 'refresh-secret';
+      return undefined;
+    });
+    jest
+      .spyOn(jwt, 'signAsync')
+      .mockImplementation(async (_payload, options: any) =>
+        options?.secret === 'refresh-secret'
+          ? 'next-refresh-token'
+          : 'next-access-token',
+      );
+    const storedRefreshToken = await bcrypt.hash('current-refresh-token', 4);
+    jest.spyOn(prisma.user_sessions, 'findMany').mockResolvedValue([
+      {
+        id: 'session-1',
+        refresh_token: storedRefreshToken,
+        used_at: null,
+        trusted_device_id: null,
+        users: { wallets: [], role: 'user' },
+      },
+    ] as any);
+    jest.spyOn(prisma.user_sessions, 'updateMany').mockResolvedValue({
+      count: 1,
+    } as any);
+    jest.spyOn(prisma.user_sessions, 'create').mockResolvedValue({} as any);
+
+    const result = await service.refresh('user-1', 'current-refresh-token');
+
+    expect(prisma.user_sessions.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          user_id: 'user-1',
+          AND: [
+            {
+              OR: [
+                { expires_at: { gt: expect.any(Date) } },
+                { expires_at: null },
+              ],
+            },
+            { OR: [{ is_revoked: false }, { is_revoked: null }] },
+          ],
+        },
+      }),
+    );
+    expect(prisma.user_sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ expires_at: null }),
+      }),
+    );
+    expect(result.data.refresh_token).toBe('next-refresh-token');
   });
 
   it('creates admin accounts with the admin role only', async () => {
