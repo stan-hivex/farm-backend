@@ -739,7 +739,13 @@ describe('AuthService', () => {
     expect(result.data.requiresPhoneVerification).toBe(false);
     expect(result.data.access_token).toBe('access-token');
     expect(result.data.refresh_token).toBe('refresh-token');
-    expect(prisma.user_sessions.create).toHaveBeenCalled();
+    expect(prisma.user_sessions.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ expires_at: null }),
+    });
+    expect(jwt.signAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'admin-1' }),
+      { secret: 'refresh-secret', expiresIn: undefined },
+    );
   });
 
   it('creates admin accounts with the admin role only', async () => {

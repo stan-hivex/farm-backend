@@ -3,6 +3,13 @@
 ## Overview
 This implementation adds **Refresh Token Rotation** security feature to prevent token theft and replay attacks. When a refresh token is used, it's invalidated and a new one is issued.
 
+## Session Lifetime
+Refresh tokens do not expire on a timer. Active sessions are retained until the
+user logs out, a session is explicitly revoked, or the account is deleted.
+Access tokens remain short-lived and are renewed through refresh-token rotation.
+On startup, existing non-revoked database sessions are migrated to have no
+expiry; already-deleted sessions cannot be restored.
+
 ## Key Security Features
 
 ### 1. **Token Rotation**

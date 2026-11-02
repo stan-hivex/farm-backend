@@ -32,6 +32,18 @@ services:
 
       - key: CACHE_TTL_SECONDS
         value: "60"
+
+      # Mkulima AI uses xAI. Configure the secret in the Render dashboard.
+      - key: AI_ASSISTANT_ENABLED
+        value: "true"
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_BASE_URL
+        value: https://api.x.ai/v1
+      - key: AI_MODEL
+        value: grok-4.3
+      - key: AI_VOICE_ENABLED
+        value: "true"
       
       # CORS configuration
       - key: CORS_ORIGINS
@@ -65,10 +77,6 @@ services:
       
       - key: JWT_REFRESH_EXPIRATION
         value: 604800
-      
-      # Refresh-session lifetime in days (rotated on each refresh; 1-365)
-      - key: REFRESH_TOKEN_TTL_DAYS
-        value: 30
       
       # Cloudinary Configuration
       - key: CLOUDINARY_CLOUD_NAME

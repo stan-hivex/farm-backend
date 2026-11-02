@@ -51,34 +51,28 @@ import {
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
 
-  /** Refresh-session lifetime in days (REFRESH_TOKEN_TTL_DAYS, default 30). */
-  private refreshTtlDays(): number {
-    const days = Number(this.cfg.get('REFRESH_TOKEN_TTL_DAYS', '30'));
-    return Number.isFinite(days) && days > 0 && days <= 365 ? days : 30;
-  }
-
   /**
-   * Graceful migration from the old 10-year sessions: cap any session that
-   * outlives the TTL to "now + TTL". Only ever shortens; nobody is logged out.
+   * Keep existing active sessions persistent when upgrading from expiring
+   * refresh tokens. Explicitly revoked sessions remain revoked.
    */
   async onModuleInit() {
     if (process.env.NODE_ENV === 'test') return;
     try {
-      const days = this.refreshTtlDays();
-      const capped = new Date(Date.now() + days * 86_400_000);
-      const margin = new Date(capped.getTime() + 86_400_000);
       const result = await this.prisma.user_sessions.updateMany({
-        where: { expires_at: { gt: margin } },
-        data: { expires_at: capped },
+        where: {
+          expires_at: { not: null },
+          OR: [{ is_revoked: false }, { is_revoked: null }],
+        },
+        data: { expires_at: null },
       });
       if (result.count > 0) {
         this.logger.log(
-          `Capped ${result.count} long-lived refresh session(s) to ${days} days`,
+          `Made ${result.count} active refresh session(s) persistent`,
         );
       }
     } catch (error) {
       this.logger.warn(
-        `Could not cap long-lived refresh sessions: ${error instanceof Error ? error.message : String(error)}`,
+        `Could not migrate active refresh sessions: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -484,7 +478,7 @@ export class AuthService implements OnModuleInit {
           jwt_id: tokens.jti,
           ip_address: ip,
           user_agent: userAgent,
-          expires_at: this.refreshSessionExpiry(),
+          expires_at: null,
         },
       });
 
@@ -638,7 +632,7 @@ export class AuthService implements OnModuleInit {
           jwt_id: tokens.jti,
           ip_address: ip,
           user_agent: userAgent,
-          expires_at: this.refreshSessionExpiry(),
+          expires_at: null,
         },
       });
       return this.firebaseLoginResponse(user, tokens, false);
@@ -817,7 +811,7 @@ export class AuthService implements OnModuleInit {
         jwt_id: tokens.jti,
         ip_address: ip,
         user_agent: userAgent,
-        expires_at: this.refreshSessionExpiry(),
+        expires_at: null,
       },
     });
 
@@ -1491,8 +1485,10 @@ export class AuthService implements OnModuleInit {
     const sessions = (await this.prisma.user_sessions.findMany({
       where: {
         user_id: userId,
-        expires_at: { gt: new Date() },
-        OR: [{ is_revoked: false }, { is_revoked: null }],
+        AND: [
+          { OR: [{ expires_at: null }, { expires_at: { gt: new Date() } }] },
+          { OR: [{ is_revoked: false }, { is_revoked: null }] },
+        ],
       },
       orderBy: { created_at: 'desc' },
       include: {
@@ -1620,7 +1616,7 @@ export class AuthService implements OnModuleInit {
         user_agent: session.user_agent, // Keep same user agent
         device_name: session.device_name,
         device_os: session.device_os,
-        expires_at: this.refreshSessionExpiry(),
+        expires_at: null,
       },
     });
 
@@ -2079,15 +2075,12 @@ export class AuthService implements OnModuleInit {
       }),
       this.jwt.signAsync(payload, {
         secret: refreshSecret,
-        expiresIn: `${this.refreshTtlDays()}d`,
+        // Override JwtModule's access-token default; refresh lifetime is
+        // controlled by the revocable database session, not a JWT expiry.
+        expiresIn: undefined,
       }),
     ]);
     return { access_token, refresh_token, jti };
-  }
-
-  private refreshSessionExpiry(): Date {
-    const days = this.refreshTtlDays();
-    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 
   private async handleTokenTheft(userId: string, session: any, ip?: string) {

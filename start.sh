@@ -5,6 +5,8 @@ cd "$SCRIPT_DIR"
 export NODE_ENV=${NODE_ENV:-production}
 export WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
 
+node ./node_modules/prisma/build/index.js migrate deploy
+
 if [ -f dist/main.js ]; then
   node dist/main.js
 elif [ -f dist/src/main.js ]; then

@@ -106,7 +106,6 @@ Generated from a scan of `process.env` / ConfigService usage in `src/`. **Never 
 | `RATE_LIMIT` | app.module.ts | optional | — |  |
 | `RATE_LIMIT_TTL` | app.module.ts | optional | — |  |
 | `REDIS_URL` | app.module.ts, common, config | **prod** | — |  |
-| `REFRESH_TOKEN_TTL_DAYS` | auth | optional | — (secret) | secret — store in Render env only |
 | `REQUIRE_PHONE_VERIFICATION` | auth | optional | — |  |
 | `RESEND_API_KEY` | auth, notifications | optional | — (secret) | secret — store in Render env only |
 | `RESEND_FROM` | auth, notifications | optional | this.cfg.get<string>('SMTP_FROM' |  |

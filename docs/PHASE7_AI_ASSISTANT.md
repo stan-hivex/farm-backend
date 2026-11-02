@@ -1,6 +1,6 @@
 # Phase 7 — Mkulima AI assistant
 
-Off by default. It turns on only when `AI_ASSISTANT_ENABLED=true` and `AI_API_KEY` is set. The chosen provider is **xAI**: `AI_BASE_URL` defaults to `https://api.x.ai/v1` and `AI_MODEL` to `grok-4.3` (function calling; $1.25 in / $2.50 out per 1M tokens, https://docs.x.ai/docs/models). For the most capable model set `AI_MODEL=grok-4.7` ($2 / $6). When it is off, `POST /v1/ai/chat` returns 503 and `GET /v1/ai/status` returns `enabled:false`.
+It turns on only when `AI_ASSISTANT_ENABLED=true` and `AI_API_KEY` is set. The Render blueprint enables the feature and declares the xAI provider settings; set `AI_API_KEY` as a secret in the Render dashboard. The chosen provider is **xAI**: `AI_BASE_URL` defaults to `https://api.x.ai/v1` and `AI_MODEL` to `grok-4.3` (function calling; $1.25 in / $2.50 out per 1M tokens, https://docs.x.ai/docs/models). For the most capable model set `AI_MODEL=grok-4.7` ($2 / $6). When it is off, `POST /v1/ai/chat` returns 503 and `GET /v1/ai/status` returns `enabled:false`.
 
 ## Provider
 The assistant works with any OpenAI-compatible `/chat/completions` endpoint that supports tool calling, such as OpenAI, xAI, Groq, OpenRouter, Together, or a self-hosted vLLM or Ollama server.
