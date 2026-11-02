@@ -22,7 +22,7 @@ export class TransactionsService {
 
   async findAll(userId: string, query: any) {
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const { skip, take, page, limit } = paginationParams(
@@ -35,6 +35,7 @@ export class TransactionsService {
           OR: [
             { sender_wallet_id: wallet.id },
             { receiver_wallet_id: wallet.id },
+            { ledger_entries: { some: { wallet_id: wallet.id } } },
           ],
         },
         { status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES } },
@@ -168,7 +169,7 @@ export class TransactionsService {
 
   async findOne(userId: string, txId: string) {
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -185,6 +186,7 @@ export class TransactionsService {
             OR: [
               { sender_wallet_id: wallet?.id },
               { receiver_wallet_id: wallet?.id },
+              { ledger_entries: { some: { wallet_id: wallet?.id } } },
             ],
           },
         ],

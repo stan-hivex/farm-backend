@@ -152,7 +152,7 @@ export class WithdrawService {
     }
 
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId, is_active: true },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     if (!wallet) {
       throw new BadRequestException('Active wallet not found');
@@ -360,7 +360,7 @@ export class WithdrawService {
     }
 
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId, is_active: true },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     if (!wallet) {
       throw new BadRequestException('Active wallet not found');
@@ -1388,7 +1388,11 @@ export class WithdrawService {
       where: { transaction_reference: reference },
     });
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: withdrawal.userId, is_active: true },
+      where: {
+        user_id: withdrawal.userId,
+        is_active: true,
+        wallet_type: 'user',
+      },
     });
     if (!wallet) return false;
 
@@ -1603,7 +1607,11 @@ export class WithdrawService {
       where: { transaction_reference: reference },
     });
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: withdrawal.userId, is_active: true },
+      where: {
+        user_id: withdrawal.userId,
+        is_active: true,
+        wallet_type: 'user',
+      },
     });
     if (!wallet) return false;
 

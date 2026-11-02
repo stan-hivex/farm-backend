@@ -126,12 +126,6 @@ All existing tests pass with the new implementation:
 3. **Rate Limiting**: Consider additional rate limits on refresh endpoints
 4. **User Notification**: Implement alerts when sessions are revoked
 5. **Backup Codes**: Consider implementing backup authentication methods
-6. **Session lifetime**: Set `REFRESH_TOKEN_TTL_DAYS=0` for refresh sessions that
-   do not expire. Refresh tokens continue rotating and remain revocable on logout,
-   account security events, or detected token reuse. Without this setting, the
-   default refresh-session lifetime remains 30 days (maximum 365).
-   Non-revoked sessions already in the database are migrated to non-expiring at
-   service startup.
 
 ## Migration
 

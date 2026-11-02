@@ -25,7 +25,10 @@ const DEFAULT_PUBLIC_PAY_SUCCESS_URL = `${PUBLIC_CHECKOUT_BASE_URL}/pay/success`
 
 type QrProvider = 'paystack' | 'ivorypay' | 'nowpayments';
 
-import { settlementWalletFor } from '../business-ops/business-wallet';
+import {
+  personalWalletOf,
+  settlementWalletFor,
+} from '../business-ops/business-wallet';
 
 @Injectable()
 export class QrPaymentsService {
@@ -709,12 +712,41 @@ export class QrPaymentsService {
       if (!wallet || !ownerId) {
         throw new BadRequestException('Merchant wallet is unavailable');
       }
+      const personalWallet =
+        wallet.wallet_type === 'merchant'
+          ? await personalWalletOf(tx, ownerId)
+          : wallet;
+      if (!personalWallet) {
+        throw new BadRequestException(
+          'Merchant personal wallet is unavailable',
+        );
+      }
       const balanceBefore = Number(wallet.balance ?? 0);
       const updatedWallet = await tx.wallets.update({
         where: { id: wallet.id },
         data: { balance: { increment: merchantNet } },
         select: { balance: true },
       });
+      let updatedPersonalWallet = updatedWallet;
+      if (personalWallet.id !== wallet.id) {
+        const personalBalanceBefore = Number(personalWallet.balance ?? 0);
+        updatedPersonalWallet = await tx.wallets.update({
+          where: { id: personalWallet.id },
+          data: { balance: { increment: merchantNet } },
+          select: { balance: true },
+        });
+        await tx.ledger_entries.create({
+          data: {
+            transaction_id: transaction.id,
+            wallet_id: personalWallet.id,
+            entry_type: 'credit',
+            amount: merchantNet,
+            balance_before: personalBalanceBefore,
+            balance_after: Number(updatedPersonalWallet.balance),
+            description: 'Public QR payment after 1% platform sales fee',
+          },
+        });
+      }
       await tx.ledger_entries.create({
         data: {
           transaction_id: transaction.id,
@@ -778,7 +810,7 @@ export class QrPaymentsService {
       );
       return {
         userId: ownerId,
-        balance: Number(updatedWallet.balance),
+        balance: Number(updatedPersonalWallet.balance),
         amount,
         saleFee,
         merchantNet,

@@ -314,7 +314,11 @@ describe('DepositService', () => {
 
     expect(paystack.verifyTransaction).toHaveBeenCalledWith(deposit.reference);
     expect(tx.wallets.findFirst).toHaveBeenCalledWith({
-      where: { user_id: deposit.userId, is_active: true },
+      where: {
+        user_id: deposit.userId,
+        is_active: true,
+        wallet_type: 'user',
+      },
     });
     expect(tx.wallets.update).toHaveBeenCalledTimes(1);
     expect(tx.wallets.update).toHaveBeenCalledWith({

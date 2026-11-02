@@ -81,6 +81,132 @@ describe('QrService merchant QR validation', () => {
   });
 
   describe('QrService merchant QR settlement fees', () => {
+    it('credits both the business and personal wallets when business wallets are enabled', async () => {
+      const previousFlag = process.env.BUSINESS_WALLET_ENABLED;
+      process.env.BUSINESS_WALLET_ENABLED = 'true';
+      try {
+        const merchant = {
+          id: 'merchant-1',
+          user_id: 'merchant-owner-1',
+          status: 'approved',
+          business_name: 'Test Merchant',
+          transaction_fee_percent: 0,
+        };
+        const businessWallet = {
+          id: 'business-wallet',
+          wallet_type: 'merchant',
+          balance: 20,
+        };
+        const personalWallet = {
+          id: 'personal-wallet',
+          user_id: merchant.user_id,
+          wallet_type: 'user',
+          balance: 30,
+        };
+        const tx: any = {
+          transactions: {
+            create: jest.fn().mockResolvedValue({ id: 'transaction-1' }),
+          },
+          wallets: {
+            update: jest
+              .fn()
+              .mockResolvedValueOnce({ balance: 398 })
+              .mockResolvedValueOnce({ balance: 119 })
+              .mockResolvedValueOnce({ balance: 129 })
+              .mockResolvedValueOnce({ balance: 101 }),
+            findFirst: jest.fn().mockResolvedValue(null),
+          },
+          users: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: 'superadmin-1',
+              wallets: [{ id: 'superadmin-wallet-1' }],
+            }),
+          },
+          merchants: { update: jest.fn().mockResolvedValue({}) },
+          qr_payments: { create: jest.fn().mockResolvedValue({}) },
+          ledger_entries: { createMany: jest.fn().mockResolvedValue({}) },
+        };
+        const prisma: any = {
+          merchants: { findUnique: jest.fn().mockResolvedValue(merchant) },
+          businesses: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: 'business-1',
+              wallet_id: businessWallet.id,
+              owner_user_id: merchant.user_id,
+              status: 'approved',
+              trading_name: merchant.business_name,
+            }),
+          },
+          wallets: {
+            findFirst: jest
+              .fn()
+              .mockResolvedValueOnce({ id: 'customer-wallet', balance: 500 })
+              .mockResolvedValueOnce(personalWallet),
+            findUnique: jest.fn().mockResolvedValue(businessWallet),
+          },
+          users: {
+            findUnique: jest.fn().mockResolvedValue({ username: 'payer' }),
+          },
+          $transaction: jest.fn((callback) => callback(tx)),
+        };
+        const service = new QrService(
+          prisma,
+          { verifyPin: jest.fn().mockResolvedValue(undefined) } as any,
+          {} as any,
+          {} as any,
+          { sendNotification: jest.fn().mockResolvedValue(undefined) } as any,
+          {
+            emitBalanceUpdate: jest.fn(),
+            emitTransactionUpdate: jest.fn(),
+          } as any,
+          {
+            invalidateWallet: jest.fn().mockResolvedValue(undefined),
+            cacheDelete: jest.fn().mockResolvedValue(undefined),
+          } as any,
+        );
+        jest.spyOn(service, 'validate').mockResolvedValue({
+          data: {
+            valid: true,
+            type: 'merchant',
+            merchant_id: merchant.id,
+          },
+        } as any);
+
+        await service.merchantPay('customer-1', {
+          qr_payload: 'merchant-qr',
+          amount: 100,
+          pin: '1234',
+        });
+
+        expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
+          where: { id: businessWallet.id },
+          data: { balance: { increment: 99 } },
+        });
+        expect(tx.wallets.update).toHaveBeenNthCalledWith(3, {
+          where: { id: personalWallet.id },
+          data: { balance: { increment: 99 } },
+        });
+        expect(tx.ledger_entries.createMany).toHaveBeenCalledWith({
+          data: expect.arrayContaining([
+            expect.objectContaining({
+              wallet_id: businessWallet.id,
+              amount: 99,
+            }),
+            expect.objectContaining({
+              wallet_id: personalWallet.id,
+              amount: 99,
+            }),
+          ]),
+        });
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env.BUSINESS_WALLET_ENABLED;
+        } else {
+          process.env.BUSINESS_WALLET_ENABLED = previousFlag;
+        }
+      }
+    });
+
     it('deducts 1% from the sale, credits superadmin, and preserves buyer surcharge', async () => {
       const merchant = {
         id: 'merchant-1',

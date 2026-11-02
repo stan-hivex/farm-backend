@@ -51,32 +51,20 @@ import {
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
 
-  /** A zero refresh-session lifetime means no expiry; logout/revocation remains enforced. */
-  private refreshTtlDays(): number | null {
-    const configuredDays =
-      this.cfg.get<string>('REFRESH_TOKEN_TTL_DAYS', '30')?.trim() ?? '30';
-    if (configuredDays === '0') return null;
-    const days = configuredDays === '' ? Number.NaN : Number(configuredDays);
+  /** Refresh-session lifetime in days (REFRESH_TOKEN_TTL_DAYS, default 30). */
+  private refreshTtlDays(): number {
+    const days = Number(this.cfg.get('REFRESH_TOKEN_TTL_DAYS', '30'));
     return Number.isFinite(days) && days > 0 && days <= 365 ? days : 30;
   }
 
-  /** Applies a configured refresh-session lifetime to currently active sessions. */
+  /**
+   * Graceful migration from the old 10-year sessions: cap any session that
+   * outlives the TTL to "now + TTL". Only ever shortens; nobody is logged out.
+   */
   async onModuleInit() {
     if (process.env.NODE_ENV === 'test') return;
     try {
       const days = this.refreshTtlDays();
-      if (days === null) {
-        const result = await this.prisma.user_sessions.updateMany({
-          where: { OR: [{ is_revoked: false }, { is_revoked: null }] },
-          data: { expires_at: null },
-        });
-        if (result.count > 0) {
-          this.logger.log(
-            `Made ${result.count} active refresh session(s) non-expiring`,
-          );
-        }
-        return;
-      }
       const capped = new Date(Date.now() + days * 86_400_000);
       const margin = new Date(capped.getTime() + 86_400_000);
       const result = await this.prisma.user_sessions.updateMany({
@@ -90,7 +78,7 @@ export class AuthService implements OnModuleInit {
       }
     } catch (error) {
       this.logger.warn(
-        `Could not migrate refresh sessions: ${error instanceof Error ? error.message : String(error)}`,
+        `Could not cap long-lived refresh sessions: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -1503,10 +1491,8 @@ export class AuthService implements OnModuleInit {
     const sessions = (await this.prisma.user_sessions.findMany({
       where: {
         user_id: userId,
-        AND: [
-          { OR: [{ expires_at: { gt: new Date() } }, { expires_at: null }] },
-          { OR: [{ is_revoked: false }, { is_revoked: null }] },
-        ],
+        expires_at: { gt: new Date() },
+        OR: [{ is_revoked: false }, { is_revoked: null }],
       },
       orderBy: { created_at: 'desc' },
       include: {
@@ -2086,7 +2072,6 @@ export class AuthService implements OnModuleInit {
     }
     const jti = randomBytes(16).toString('hex');
     const payload = { sub: userId, role, wallet_id: walletId, jti };
-    const refreshTtlDays = this.refreshTtlDays();
     const [access_token, refresh_token] = await Promise.all([
       this.jwt.signAsync(payload, {
         secret: accessSecret,
@@ -2094,15 +2079,14 @@ export class AuthService implements OnModuleInit {
       }),
       this.jwt.signAsync(payload, {
         secret: refreshSecret,
-        expiresIn: refreshTtlDays === null ? undefined : `${refreshTtlDays}d`,
+        expiresIn: `${this.refreshTtlDays()}d`,
       }),
     ]);
     return { access_token, refresh_token, jti };
   }
 
-  private refreshSessionExpiry(): Date | null {
+  private refreshSessionExpiry(): Date {
     const days = this.refreshTtlDays();
-    if (days === null) return null;
     return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 

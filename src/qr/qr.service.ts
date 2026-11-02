@@ -23,7 +23,10 @@ import {
   PUBLIC_CHECKOUT_BASE_URL,
 } from './merchant-checkout.constants';
 
-import { settlementWalletFor } from '../business-ops/business-wallet';
+import {
+  personalWalletOf,
+  settlementWalletFor,
+} from '../business-ops/business-wallet';
 
 @Injectable()
 export class QrService {
@@ -94,7 +97,7 @@ export class QrService {
 
   async generateReceiveQr(userId: string, amount?: number) {
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId, is_active: true },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const payload = JSON.stringify({
@@ -326,6 +329,12 @@ export class QrService {
     });
     if (!customerWallet || !merchantWallet)
       throw new NotFoundException('Wallet not found');
+    const merchantPersonalWallet =
+      merchantWallet.wallet_type === 'merchant'
+        ? await personalWalletOf(this.prisma, merchant.user_id)
+        : merchantWallet;
+    if (!merchantPersonalWallet)
+      throw new NotFoundException('Merchant personal wallet not found');
 
     const customerFee =
       dto.amount * (Number(merchant.transaction_fee_percent || 0) / 100);
@@ -368,10 +377,20 @@ export class QrService {
         where: { id: customerWallet.id },
         data: { balance: { decrement: totalOut } },
       });
-      const updatedMerchantWallet = await tx.wallets.update({
-        where: { id: merchantWallet.id },
-        data: { balance: { increment: merchantNet } },
-      });
+      const merchantCreditWallets =
+        merchantPersonalWallet.id === merchantWallet.id
+          ? [merchantWallet]
+          : [merchantWallet, merchantPersonalWallet];
+      let updatedPersonalBalance = Number(merchantPersonalWallet.balance ?? 0);
+      for (const wallet of merchantCreditWallets) {
+        const updatedWallet = await tx.wallets.update({
+          where: { id: wallet.id },
+          data: { balance: { increment: merchantNet } },
+        });
+        if (wallet.id === merchantPersonalWallet.id) {
+          updatedPersonalBalance = Number(updatedWallet.balance);
+        }
+      }
       const superadmin = await tx.users.findFirst({
         where: { role: 'super_admin', is_deleted: false },
         include: { wallets: { where: { is_active: true }, take: 1 } },
@@ -424,13 +443,13 @@ export class QrService {
             amount: totalOut,
             description: `QR payment to ${merchant.business_name}`,
           },
-          {
+          ...merchantCreditWallets.map((wallet) => ({
             transaction_id: txn.id,
-            wallet_id: merchantWallet.id,
+            wallet_id: wallet.id,
             entry_type: 'credit',
             amount: merchantNet,
             description: 'QR payment received after 1% platform sales fee',
-          },
+          })),
           {
             transaction_id: txn.id,
             wallet_id: superadminWallet.id,
@@ -454,7 +473,7 @@ export class QrService {
       return {
         transaction: txn,
         customerBalance: Number(updatedCustomerWallet.balance),
-        merchantBalance: Number(updatedMerchantWallet.balance),
+        merchantBalance: updatedPersonalBalance,
         superadminId: superadmin.id,
         superadminBalance: Number(updatedSuperadminWallet.balance),
         merchantNet,

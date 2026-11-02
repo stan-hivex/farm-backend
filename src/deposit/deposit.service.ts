@@ -19,6 +19,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CurrencyConversionService } from '../currency/currency-conversion.service';
 import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import {
+  personalWalletOf,
+  settlementWalletFor,
+} from '../business-ops/business-wallet';
 
 const MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD = 2;
 const STALE_NOWPAYMENTS_DEPOSIT_MS = 24 * 60 * 60 * 1000;
@@ -149,7 +153,7 @@ export class DepositService {
     }
 
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId, is_active: true },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     if (!wallet) {
       throw new BadRequestException('Active wallet not found');
@@ -633,7 +637,7 @@ export class DepositService {
 
   async getWalletBalance(userId: string) {
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId, is_active: true },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     return {
       balance: wallet?.balance ?? 0,
@@ -969,16 +973,22 @@ export class DepositService {
         );
       }
 
-      const merchantWallet = await tx.wallets.findFirst({
-        where: {
-          user_id: merchant.user_id,
-          wallet_type: 'user',
-          is_active: true,
-        },
+      const merchantWallet = await settlementWalletFor(tx, {
+        merchantId: merchant.id,
+        ownerUserId: merchant.user_id,
       });
       if (!merchantWallet) {
         throw new BadRequestException(
           `Merchant wallet not found for QR payment ${reference}`,
+        );
+      }
+      const merchantPersonalWallet =
+        merchantWallet.wallet_type === 'merchant'
+          ? await personalWalletOf(tx, merchant.user_id)
+          : merchantWallet;
+      if (!merchantPersonalWallet) {
+        throw new BadRequestException(
+          `Merchant personal wallet not found for QR payment ${reference}`,
         );
       }
 
@@ -1002,12 +1012,13 @@ export class DepositService {
       const amount = this.normalizeAmount(Number(deposit.amount));
       const fee = this.normalizeAmount(computeFee(merchantRule, amount, 8));
       const merchantNet = this.normalizeAmount(amount - fee);
-      const merchantBalanceBefore = this.normalizeAmount(
-        Number(merchantWallet.balance ?? 0),
-      );
       const superadminBalanceBefore = this.normalizeAmount(
         Number(superadminWallet.balance ?? 0),
       );
+      const merchantCreditWallets =
+        merchantPersonalWallet.id === merchantWallet.id
+          ? [merchantWallet]
+          : [merchantWallet, merchantPersonalWallet];
       const settledMetadata = {
         ...metadata,
         platform_fee_type: 'merchant_sale',
@@ -1015,10 +1026,16 @@ export class DepositService {
         platform_fee: fee,
       };
 
-      await tx.wallets.update({
-        where: { id: merchantWallet.id },
-        data: { balance: { increment: merchantNet } },
-      });
+      let updatedPersonalBalance = Number(merchantPersonalWallet.balance ?? 0);
+      for (const wallet of merchantCreditWallets) {
+        const updatedWallet = await tx.wallets.update({
+          where: { id: wallet.id },
+          data: { balance: { increment: merchantNet } },
+        });
+        if (wallet.id === merchantPersonalWallet.id) {
+          updatedPersonalBalance = Number(updatedWallet.balance);
+        }
+      }
       const updatedSuperadminWallet = await tx.wallets.update({
         where: { id: superadminWallet.id },
         data: { balance: { increment: fee } },
@@ -1045,15 +1062,20 @@ export class DepositService {
       });
       await tx.ledger_entries.createMany({
         data: [
-          {
-            transaction_id: transaction.id,
-            wallet_id: merchantWallet.id,
-            entry_type: 'credit',
-            amount: merchantNet,
-            balance_before: merchantBalanceBefore,
-            balance_after: merchantBalanceBefore + merchantNet,
-            description: `Merchant QR sale received after 1% platform fee — ref: ${reference}`,
-          },
+          ...merchantCreditWallets.map((wallet) => {
+            const balanceBefore = this.normalizeAmount(
+              Number(wallet.balance ?? 0),
+            );
+            return {
+              transaction_id: transaction.id,
+              wallet_id: wallet.id,
+              entry_type: 'credit',
+              amount: merchantNet,
+              balance_before: balanceBefore,
+              balance_after: balanceBefore + merchantNet,
+              description: `Merchant QR sale received after 1% platform fee — ref: ${reference}`,
+            };
+          }),
           {
             transaction_id: transaction.id,
             wallet_id: superadminWallet.id,
@@ -1069,7 +1091,7 @@ export class DepositService {
       return {
         ok: true as const,
         merchantId: merchant.user_id,
-        merchantBalance: merchantBalanceBefore + merchantNet,
+        merchantBalance: updatedPersonalBalance,
         superadminId: superadmin.id,
         superadminBalance: Number(updatedSuperadminWallet.balance),
         amount,
@@ -1222,7 +1244,11 @@ export class DepositService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       let wallet = await tx.wallets.findFirst({
-        where: { user_id: deposit.userId, is_active: true },
+        where: {
+          user_id: deposit.userId,
+          is_active: true,
+          wallet_type: 'user',
+        },
       });
       if (!wallet) {
         wallet = await tx.wallets.create({
@@ -1317,7 +1343,11 @@ export class DepositService {
       });
       if (deposit) {
         const wallet = await this.prisma.wallets.findFirst({
-          where: { user_id: deposit.userId, is_active: true },
+          where: {
+            user_id: deposit.userId,
+            is_active: true,
+            wallet_type: 'user',
+          },
         });
         if (wallet) updates.receiver_wallet_id = wallet.id;
       }
@@ -1361,12 +1391,13 @@ export class DepositService {
             where: { id: transaction.receiver_wallet_id },
           })
         : null;
+      if (wallet?.wallet_type !== 'user') wallet = null;
 
       const metadata = transaction.metadata as any;
       const userId = metadata?.user_id;
       if (!wallet && userId) {
         wallet = await tx.wallets.findFirst({
-          where: { user_id: userId, is_active: true },
+          where: { user_id: userId, is_active: true, wallet_type: 'user' },
         });
       }
 
@@ -1472,7 +1503,11 @@ export class DepositService {
       if (updated.count === 0) return { ok: false };
 
       let wallet = await tx.wallets.findFirst({
-        where: { user_id: deposit.userId, is_active: true },
+        where: {
+          user_id: deposit.userId,
+          is_active: true,
+          wallet_type: 'user',
+        },
       });
       if (!wallet) {
         wallet = await tx.wallets.create({

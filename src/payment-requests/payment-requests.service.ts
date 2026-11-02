@@ -44,7 +44,11 @@ export class PaymentRequestsService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       const requesterWallet = await tx.wallets.findFirst({
-        where: { user_id: requesterUserId, is_active: true },
+        where: {
+          user_id: requesterUserId,
+          is_active: true,
+          wallet_type: 'user',
+        },
       });
       if (!requesterWallet)
         throw new NotFoundException('Requester wallet not found');
@@ -58,7 +62,12 @@ export class PaymentRequestsService {
           is_deleted: false,
           is_active: true,
         },
-        include: { wallets: { where: { is_active: true }, take: 1 } },
+        include: {
+          wallets: {
+            where: { is_active: true, wallet_type: 'user' },
+            take: 1,
+          },
+        },
       });
 
       let recipientWalletId: string;

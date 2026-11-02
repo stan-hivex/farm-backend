@@ -71,7 +71,7 @@ export class WalletsService {
     }
 
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId, is_active: true },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
     const available = Number(wallet.balance) - Number(wallet.locked_balance);
@@ -148,7 +148,12 @@ export class WalletsService {
         is_deleted: false,
         is_active: true,
       },
-      include: { wallets: { where: { is_active: true }, take: 1 } },
+      include: {
+        wallets: {
+          where: { is_active: true, wallet_type: 'user' },
+          take: 1,
+        },
+      },
     });
 
     let receiverUserId = receiverUser?.id;
@@ -165,7 +170,7 @@ export class WalletsService {
 
     const result = await this.prisma.$transaction(async (tx) => {
       const senderWallet = await tx.wallets.findFirst({
-        where: { user_id: senderId, is_active: true },
+        where: { user_id: senderId, is_active: true, wallet_type: 'user' },
       });
       if (!senderWallet) throw new NotFoundException('Sender wallet not found');
       if (senderWallet.is_frozen)
@@ -412,7 +417,7 @@ export class WalletsService {
       query.limit,
     );
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: userId },
+      where: { user_id: userId, is_active: true, wallet_type: 'user' },
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
 
@@ -424,6 +429,7 @@ export class WalletsService {
           OR: [
             { sender_wallet_id: wallet.id },
             { receiver_wallet_id: wallet.id },
+            { ledger_entries: { some: { wallet_id: wallet.id } } },
           ],
         },
         { status: { notIn: HIDDEN_TRANSACTION_HISTORY_STATUSES } },

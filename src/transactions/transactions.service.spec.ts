@@ -211,6 +211,11 @@ describe('TransactionsService', () => {
               OR: [
                 { sender_wallet_id: 'wallet-current' },
                 { receiver_wallet_id: 'wallet-current' },
+                {
+                  ledger_entries: {
+                    some: { wallet_id: 'wallet-current' },
+                  },
+                },
               ],
             },
           ],
@@ -285,6 +290,11 @@ describe('TransactionsService', () => {
               OR: [
                 { sender_wallet_id: 'wallet-current' },
                 { receiver_wallet_id: 'wallet-current' },
+                {
+                  ledger_entries: {
+                    some: { wallet_id: 'wallet-current' },
+                  },
+                },
               ],
             },
           ],

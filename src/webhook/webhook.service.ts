@@ -2113,7 +2113,11 @@ export class WebhookService {
     const result = await this.prisma.$transaction(
       async (tx) => {
         let wallet = await tx.wallets.findFirst({
-          where: { user_id: deposit.userId, is_active: true },
+          where: {
+            user_id: deposit.userId,
+            is_active: true,
+            wallet_type: 'user',
+          },
         });
         if (!wallet) {
           wallet = await tx.wallets.create({
@@ -2266,7 +2270,11 @@ export class WebhookService {
       });
       if (deposit) {
         const wallet = await this.prisma.wallets.findFirst({
-          where: { user_id: deposit.userId, is_active: true },
+          where: {
+            user_id: deposit.userId,
+            is_active: true,
+            wallet_type: 'user',
+          },
         });
         if (wallet) updates.receiver_wallet_id = wallet.id;
       }
@@ -2310,12 +2318,13 @@ export class WebhookService {
           where: { id: transaction.receiver_wallet_id },
         });
       }
+      if (wallet?.wallet_type !== 'user') wallet = null;
 
       const meta = transaction.metadata as any;
       const userId = meta?.user_id;
       if (!wallet && userId) {
         wallet = await tx.wallets.findFirst({
-          where: { user_id: userId, is_active: true },
+          where: { user_id: userId, is_active: true, wallet_type: 'user' },
         });
       }
 
@@ -2433,7 +2442,11 @@ export class WebhookService {
 
       // ENSURE WALLET EXISTS
       let wallet = await tx.wallets.findFirst({
-        where: { user_id: deposit.userId, is_active: true },
+        where: {
+          user_id: deposit.userId,
+          is_active: true,
+          wallet_type: 'user',
+        },
       });
 
       if (!wallet) {
@@ -2688,7 +2701,11 @@ export class WebhookService {
     }
 
     const wallet = await this.prisma.wallets.findFirst({
-      where: { user_id: withdrawal.userId, is_active: true },
+      where: {
+        user_id: withdrawal.userId,
+        is_active: true,
+        wallet_type: 'user',
+      },
     });
     if (!wallet) {
       return;
