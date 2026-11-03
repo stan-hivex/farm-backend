@@ -21,6 +21,7 @@ describe('prisma migrations (fresh DB)', () => {
     for (const n of [
       '20260826110000_bootstrap_transfer_requests',
       '20261114090000_fresh_db_reconcile_and_otp_hash',
+      '20261202090000_auth_otp_schema_compat',
     ]) {
       const sql = readFileSync(join(dir, n, 'migration.sql'), 'utf8');
       expect(sql).not.toMatch(
@@ -29,5 +30,21 @@ describe('prisma migrations (fresh DB)', () => {
       expect(sql).not.toMatch(/CREATE TABLE "(?!.*IF NOT EXISTS)/);
       expect(sql).not.toMatch(/CREATE (UNIQUE )?INDEX "/);
     }
+  });
+
+  it('keeps the OTP schema compatible with login and registration', () => {
+    const sql = readFileSync(
+      join(dir, '20261202090000_auth_otp_schema_compat', 'migration.sql'),
+      'utf8',
+    );
+    expect(sql).toMatch(
+      /ALTER TABLE "pending_login_verifications"\s+ADD COLUMN IF NOT EXISTS "trusted_device_id" UUID/,
+    );
+    expect(sql).toMatch(
+      /ALTER TABLE "user_sessions"\s+ADD COLUMN IF NOT EXISTS "trusted_device_id" UUID/,
+    );
+    expect(sql).toMatch(
+      /ALTER TABLE "otp_verifications"\s+ALTER COLUMN "otp_code" TYPE TEXT/,
+    );
   });
 });
