@@ -12,6 +12,7 @@ import { SafeInputValidationPipe } from './common/pipes/safe-input.pipe';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { BusinessApiModule } from './business-api/business-api.module';
 import { MERCHANT_CHECKOUT_URL } from './qr/merchant-checkout.constants';
+import { isCorsOriginAllowed } from './common/cors-origin';
 
 async function bootstrap() {
   // SECURITY FIRST: Validate all security-critical environment variables
@@ -142,7 +143,8 @@ async function bootstrap() {
 
   const corsOrigins = [...new Set(configuredCorsOrigins)];
 
-  const localhostCorsRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+  const allowLocalhostCors =
+    configService.get<string>('CORS_ALLOW_LOCALHOST')?.toLowerCase() === 'true';
 
   if (isProduction && corsOrigins?.includes('*')) {
     Logger.warn(
@@ -151,36 +153,12 @@ async function bootstrap() {
     );
   }
 
-  const corsOriginMatches = (origin: string) => {
-    return corsOrigins.some((allowedOrigin) => {
-      if (allowedOrigin === '*') {
-        return !isProduction;
-      }
-
-      if (allowedOrigin.startsWith('*.')) {
-        return origin.endsWith(allowedOrigin.slice(1));
-      }
-
-      if (allowedOrigin.includes('*')) {
-        const escaped = allowedOrigin.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-        // nosemgrep: detect-non-literal-regexp -- operator-set CORS_ORIGINS, fully escaped
-        const pattern = new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`);
-        return pattern.test(origin);
-      }
-
-      return origin === allowedOrigin;
-    });
-  };
-
   const isAllowedCorsOrigin = (origin?: string) => {
-    if (!origin) {
-      return true;
-    }
-
-    // Localhost origins are only allowed outside production.
-    return (
-      corsOriginMatches(origin) ||
-      (!isProduction && localhostCorsRegex.test(origin))
+    return isCorsOriginAllowed(
+      origin,
+      corsOrigins,
+      isProduction,
+      allowLocalhostCors,
     );
   };
 

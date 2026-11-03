@@ -49,6 +49,10 @@ services:
       - key: CORS_ORIGINS
         # Replace with your Cloudflare origin(s), comma-separated if multiple.
         value: https://*.algorandfarm686.workers.dev
+
+      # Flutter web development uses a localhost origin with a dynamic port.
+      - key: CORS_ALLOW_LOCALHOST
+        value: "true"
       
       # Paystack Configuration
       - key: PAYSTACK_SECRET_KEY

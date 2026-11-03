@@ -49,6 +49,7 @@ Generated from a scan of `process.env` / ConfigService usage in `src/`. **Never 
 | `CLOUD_NAME` | uploads | optional | — |  |
 | `CLOUD_SECRET` | uploads | optional | — (secret) | secret — store in Render env only |
 | `CORS_ORIGINS` | main.ts, websocket | optional | '' |  |
+| `CORS_ALLOW_LOCALHOST` | main.ts | optional | false | Set to `true` to allow localhost origins in production (for local web development). |
 | `DATABASE_URL` | config, database, main.ts | **prod** | — |  |
 | `DIDIT_API_KEY` | didit | optional | — (secret) | secret — store in Render env only |
 | `DIDIT_KYB_WORKFLOW_ID` | didit | optional | — |  |
