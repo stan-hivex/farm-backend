@@ -2075,9 +2075,6 @@ export class AuthService implements OnModuleInit {
       }),
       this.jwt.signAsync(payload, {
         secret: refreshSecret,
-        // Override JwtModule's access-token default; refresh lifetime is
-        // controlled by the revocable database session, not a JWT expiry.
-        expiresIn: undefined,
       }),
     ]);
     return { access_token, refresh_token, jti };

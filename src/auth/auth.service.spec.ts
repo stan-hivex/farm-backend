@@ -712,6 +712,7 @@ describe('AuthService', () => {
     jest.spyOn(config, 'get').mockImplementation((key: string) => {
       if (key === 'JWT_ACCESS_SECRET') return 'access-secret';
       if (key === 'JWT_REFRESH_SECRET') return 'refresh-secret';
+      if (key === 'JWT_ACCESS_EXPIRES') return '15m';
       return undefined;
     });
 
@@ -744,7 +745,11 @@ describe('AuthService', () => {
     });
     expect(jwt.signAsync).toHaveBeenCalledWith(
       expect.objectContaining({ sub: 'admin-1' }),
-      { secret: 'refresh-secret', expiresIn: undefined },
+      { secret: 'access-secret', expiresIn: '15m' },
+    );
+    expect(jwt.signAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: 'admin-1' }),
+      { secret: 'refresh-secret' },
     );
   });
 

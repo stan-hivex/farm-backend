@@ -18,9 +18,6 @@ import { DeviceBindingModule } from './device-binding/device-binding.module';
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
         secret: requireJwtAccessSecret(cfg),
-        signOptions: {
-          expiresIn: '15m' as const,
-        },
       }),
     }),
     NotificationsModule,
