@@ -11,6 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { isCorsOriginAllowed } from '../common/cors-origin';
 
 @WebSocketGateway({
   cors: {
@@ -19,24 +20,18 @@ import { ConfigService } from '@nestjs/config';
         return callback(null, true);
       }
 
-      // Flutter web's development server selects an available port at startup.
-      const localhostCorsRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
       const allowedOrigins = (process.env.CORS_ORIGINS ?? '')
         .split(',')
         .map((value) => value.trim())
         .filter(Boolean);
-      const isAllowed = allowedOrigins.some((allowedOrigin) => {
-        if (allowedOrigin === origin) return true;
-        if (!allowedOrigin.includes('*')) return false;
-
-        const escaped = allowedOrigin.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`^${escaped.replace(/\\\*/g, '.*')}$`).test(origin);
-      });
-
-      const allowLocalhost = process.env.NODE_ENV !== 'production';
       return callback(
         null,
-        isAllowed || (allowLocalhost && localhostCorsRegex.test(origin)),
+        isCorsOriginAllowed(
+          origin,
+          allowedOrigins,
+          process.env.NODE_ENV === 'production',
+          process.env.CORS_ALLOW_LOCALHOST?.toLowerCase() === 'true',
+        ),
       );
     },
   },
