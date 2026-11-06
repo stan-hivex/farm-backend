@@ -513,7 +513,7 @@ export class AuthService implements OnModuleInit {
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
           token_type: 'Bearer',
-          expires_in: 900,
+          expires_in: this.accessExpiresSeconds(),
           ...this.sessionMeta(),
           user: {
             id: user.id,
@@ -721,7 +721,7 @@ export class AuthService implements OnModuleInit {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         token_type: 'Bearer',
-        expires_in: 900,
+        expires_in: this.accessExpiresSeconds(),
         ...this.sessionMeta(),
         user: {
           id: user.id,
@@ -858,7 +858,7 @@ export class AuthService implements OnModuleInit {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         token_type: 'Bearer',
-        expires_in: 900,
+        expires_in: this.accessExpiresSeconds(),
         ...this.sessionMeta(),
         user: {
           id: user.id,
@@ -1669,7 +1669,7 @@ export class AuthService implements OnModuleInit {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         token_type: 'Bearer',
-        expires_in: 900,
+        expires_in: this.accessExpiresSeconds(),
         reauth: 'refresh',
         ...this.sessionMeta(),
       },
@@ -1683,7 +1683,7 @@ export class AuthService implements OnModuleInit {
     return {
       data: {
         long_lived_sessions: longLivedSessionsEnabled(),
-        access_expires_in: 900,
+        access_expires_in: this.accessExpiresSeconds(),
         refresh_expires_in: life?.seconds ?? null,
         refresh_ttl: life
           ? this.cfg.get<string>('JWT_REFRESH_EXPIRES') || DEFAULT_REFRESH_TTL
@@ -1807,7 +1807,7 @@ export class AuthService implements OnModuleInit {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         token_type: 'Bearer',
-        expires_in: 900,
+        expires_in: this.accessExpiresSeconds(),
         ...this.sessionMeta(),
         user: {
           id: user.id,
@@ -2333,6 +2333,11 @@ export class AuthService implements OnModuleInit {
       expiresAt: new Date(Date.now() + ms),
       seconds: Math.floor(ms / 1000),
     };
+  }
+
+  private accessExpiresSeconds() {
+    const spec = this.cfg.get<string>('JWT_ACCESS_EXPIRES') || '15m';
+    return Math.floor(parseDurationMs(spec, 15 * 60_000) / 1000);
   }
 
   private sessionMeta() {
