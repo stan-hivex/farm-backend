@@ -25,7 +25,10 @@ const DEFAULT_PUBLIC_PAY_SUCCESS_URL = `${PUBLIC_CHECKOUT_BASE_URL}/pay/success`
 
 type QrProvider = 'paystack' | 'ivorypay' | 'nowpayments';
 
-import { personalWalletOf } from '../business-ops/business-wallet';
+import {
+  personalWalletOf,
+  settlementWalletFor,
+} from '../business-ops/business-wallet';
 
 @Injectable()
 export class QrPaymentsService {
@@ -95,7 +98,10 @@ export class QrPaymentsService {
     return { data: { tokens, options } };
   }
 
-  async initialize(dto: CreateQrPaymentDto) {
+  async initialize(
+    dto: CreateQrPaymentDto,
+    opts?: { businessDocument?: 'invoice' | 'payment_link' },
+  ) {
     const merchant = await this.prisma.merchants.findUnique({
       where: { id: dto.merchantId },
       include: {
@@ -110,9 +116,15 @@ export class QrPaymentsService {
       );
     }
 
-    // QR checkout credits the owner's personal wallet. Invoices and
-    // business-address deposits are unchanged.
-    const wallet = await personalWalletOf(this.prisma, merchant.user_id);
+    // Merchant QR credits the owner's personal wallet. An invoice or payment
+    // link uses the business settlement wallet (the business wallet when
+    // BUSINESS_WALLET_ENABLED is on).
+    const wallet = opts?.businessDocument
+      ? await settlementWalletFor(this.prisma, {
+          merchantId: merchant.id,
+          ownerUserId: merchant.user_id,
+        })
+      : await personalWalletOf(this.prisma, merchant.user_id);
     if (!wallet) {
       throw new BadRequestException(
         'This merchant does not have an active wallet',
@@ -186,6 +198,9 @@ export class QrPaymentsService {
       guest_email: email,
       platform_fee_type: 'merchant_sale',
       platform_fee_percent: 1,
+      ...(opts?.businessDocument
+        ? { business_document: opts.businessDocument }
+        : {}),
       ...(amountUsd !== undefined ? { amount_usd: amountUsd } : {}),
       ...(crypto ? { requested_crypto: crypto } : {}),
     };
@@ -716,7 +731,14 @@ export class QrPaymentsService {
           'Merchant personal wallet is unavailable',
         );
       }
-      const creditWallet = personalWallet;
+      const meta =
+        (transaction.metadata as Record<string, unknown> | null) ?? {};
+      const forBusinessDocument =
+        meta.business_document === 'invoice' ||
+        meta.business_document === 'payment_link';
+      // QR sales credit personal. Invoice and payment-link checkouts credit
+      // the wallet stored when the checkout started (the business wallet).
+      const creditWallet = forBusinessDocument ? wallet : personalWallet;
       const balanceBefore = Number(creditWallet.balance ?? 0);
       const updatedPersonalWallet = await tx.wallets.update({
         where: { id: creditWallet.id },
@@ -734,7 +756,10 @@ export class QrPaymentsService {
           description: 'Public QR payment after 1% platform sales fee',
         },
       });
-      if (typeof tx.businesses?.findFirst === 'function') {
+      if (
+        !forBusinessDocument &&
+        typeof tx.businesses?.findFirst === 'function'
+      ) {
         const business = await tx.businesses.findFirst({
           where: { merchant_id: merchantId },
           select: { id: true },
@@ -876,8 +901,15 @@ export class QrPaymentsService {
       .sendNotification(settled.userId, {
         type: 'merchant',
         entityId: reference,
-        title: 'Merchant payment successful',
-        body: `Your business received ${settled.merchantNet} FARM after the 1% sales fee from a QR payment.`,
+        title:
+          (transaction.metadata as { business_document?: string } | null)
+            ?.business_document === 'invoice'
+            ? 'Invoice paid'
+            : (transaction.metadata as { business_document?: string } | null)
+                  ?.business_document === 'payment_link'
+              ? 'Payment link paid'
+              : 'Merchant payment successful',
+        body: `Your business received ${settled.merchantNet} FARM after the 1% sales fee.`,
         metadata: {
           event: 'merchant_payment_received',
           merchant_id: settled.merchantId,
