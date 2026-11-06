@@ -25,10 +25,7 @@ const DEFAULT_PUBLIC_PAY_SUCCESS_URL = `${PUBLIC_CHECKOUT_BASE_URL}/pay/success`
 
 type QrProvider = 'paystack' | 'ivorypay' | 'nowpayments';
 
-import {
-  personalWalletOf,
-  settlementWalletFor,
-} from '../business-ops/business-wallet';
+import { personalWalletOf } from '../business-ops/business-wallet';
 
 @Injectable()
 export class QrPaymentsService {
@@ -113,11 +110,9 @@ export class QrPaymentsService {
       );
     }
 
-    // BUSINESS_WALLET_ENABLED: settle into the business wallet (legacy: owner's personal wallet).
-    const wallet = await settlementWalletFor(this.prisma, {
-      merchantId: merchant.id,
-      ownerUserId: merchant.user_id,
-    });
+    // QR checkout credits the owner's personal wallet. Invoices and
+    // business-address deposits are unchanged.
+    const wallet = await personalWalletOf(this.prisma, merchant.user_id);
     if (!wallet) {
       throw new BadRequestException(
         'This merchant does not have an active wallet',
@@ -721,43 +716,44 @@ export class QrPaymentsService {
           'Merchant personal wallet is unavailable',
         );
       }
-      const balanceBefore = Number(wallet.balance ?? 0);
-      const updatedWallet = await tx.wallets.update({
-        where: { id: wallet.id },
+      const creditWallet = personalWallet;
+      const balanceBefore = Number(creditWallet.balance ?? 0);
+      const updatedPersonalWallet = await tx.wallets.update({
+        where: { id: creditWallet.id },
         data: { balance: { increment: merchantNet } },
         select: { balance: true },
       });
-      let updatedPersonalWallet = updatedWallet;
-      if (personalWallet.id !== wallet.id) {
-        const personalBalanceBefore = Number(personalWallet.balance ?? 0);
-        updatedPersonalWallet = await tx.wallets.update({
-          where: { id: personalWallet.id },
-          data: { balance: { increment: merchantNet } },
-          select: { balance: true },
-        });
-        await tx.ledger_entries.create({
-          data: {
-            transaction_id: transaction.id,
-            wallet_id: personalWallet.id,
-            entry_type: 'credit',
-            amount: merchantNet,
-            balance_before: personalBalanceBefore,
-            balance_after: Number(updatedPersonalWallet.balance),
-            description: 'Public QR payment after 1% platform sales fee',
-          },
-        });
-      }
       await tx.ledger_entries.create({
         data: {
           transaction_id: transaction.id,
-          wallet_id: wallet.id,
+          wallet_id: creditWallet.id,
           entry_type: 'credit',
           amount: merchantNet,
           balance_before: balanceBefore,
-          balance_after: Number(updatedWallet.balance),
+          balance_after: Number(updatedPersonalWallet.balance),
           description: 'Public QR payment after 1% platform sales fee',
         },
       });
+      if (typeof tx.businesses?.findFirst === 'function') {
+        const business = await tx.businesses.findFirst({
+          where: { merchant_id: merchantId },
+          select: { id: true },
+        });
+        if (business && typeof tx.business_payments?.create === 'function') {
+          await tx.business_payments.create({
+            data: {
+              business_id: business.id,
+              source: 'qr',
+              source_id: merchantId,
+              payer_user_id: ownerId,
+              amount: merchantNet,
+              transaction_reference:
+                transaction.transaction_reference ?? reference,
+              channel: 'qr',
+            },
+          });
+        }
+      }
       const superadmin = await tx.users.findFirst({
         where: { role: 'super_admin', is_deleted: false },
         include: { wallets: { where: { is_active: true }, take: 1 } },

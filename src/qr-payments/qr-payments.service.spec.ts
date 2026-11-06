@@ -541,7 +541,7 @@ describe('QrPaymentsService settlement', () => {
     );
   });
 
-  it('credits both the business and personal wallets for a QR sale', async () => {
+  it('credits only the owner personal wallet for a QR sale', async () => {
     const transaction = {
       id: 'transaction-business-qr',
       amount: 7.5,
@@ -623,22 +623,12 @@ describe('QrPaymentsService settlement', () => {
     ).resolves.toBe(true);
 
     expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
-      where: { id: 'business-wallet' },
-      data: { balance: { increment: 7.425 } },
-      select: { balance: true },
-    });
-    expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
       where: { id: 'personal-wallet' },
       data: { balance: { increment: 7.425 } },
       select: { balance: true },
     });
-    expect(tx.ledger_entries.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          wallet_id: 'business-wallet',
-          amount: 7.425,
-        }),
-      }),
+    expect(tx.wallets.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'business-wallet' } }),
     );
     expect(tx.ledger_entries.create).toHaveBeenCalledWith(
       expect.objectContaining({
