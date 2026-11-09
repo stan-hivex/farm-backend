@@ -24,6 +24,34 @@ describe('MerchantsService QR access', () => {
     service = new MerchantsService(prisma, qrService, cache as any);
   });
 
+  it('returns onboarding status when a user has not applied yet', async () => {
+    prisma.merchants.findFirst.mockResolvedValue(null);
+
+    await expect(service.getDashboard('user-1')).resolves.toEqual({
+      data: {
+        application_status: 'not_submitted',
+        message:
+          'Welcome to the Merchant Portal. Submit your business details to get started.',
+      },
+    });
+  });
+
+  it('returns review status without dashboard data while approval is pending', async () => {
+    prisma.merchants.findFirst.mockResolvedValue({
+      id: 'merchant-1',
+      user_id: 'user-1',
+      status: 'pending',
+    });
+
+    await expect(service.getDashboard('user-1')).resolves.toEqual({
+      data: {
+        application_status: 'pending',
+        message:
+          'Your merchant details are being reviewed. Please wait for an admin decision.',
+      },
+    });
+  });
+
   it('rejects QR access for a merchant that is still pending approval', async () => {
     prisma.merchants.findFirst.mockResolvedValue({
       id: 'merchant-1',

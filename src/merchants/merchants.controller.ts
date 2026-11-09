@@ -56,7 +56,9 @@ export class MerchantsController {
     return this.svc.getMyMerchant(u.id);
   }
 
-  @Permissions('merchant:read')
+  // This endpoint must be reachable before a merchant record exists so users
+  // can see and submit the onboarding form. getDashboard only returns
+  // application status until the merchant is approved.
   @Get('dashboard')
   dashboard(@CurrentUser() u: any) {
     return this.svc.getDashboard(u.id);

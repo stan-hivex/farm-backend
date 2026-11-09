@@ -92,7 +92,6 @@ export class MerchantsService {
       return {
         data: {
           application_status: merchant.status ?? 'pending',
-          merchant,
           message:
             merchant.status === 'rejected'
               ? 'Your merchant application was not approved. Please review your details and submit again.'
