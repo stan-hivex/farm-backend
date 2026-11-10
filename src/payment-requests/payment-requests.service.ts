@@ -154,17 +154,24 @@ export class PaymentRequestsService {
     if (req && req.users_requester && req.users_recipient) {
       const title = 'Payment Request';
       const body = `${req.users_requester.username ?? 'A user'} requested ${dto.amount} FARM from you.`;
-      await this.notificationsService.sendNotification(req.users_recipient.id, {
-        type: 'payment_request',
-        entityId: req.id,
-        title,
-        body,
-        metadata: {
-          request_id: req.id,
-          requester_username: req.users_requester.username,
-          amount: dto.amount,
-        },
-      });
+      try {
+        await this.notificationsService.sendNotification(req.users_recipient.id, {
+          type: 'payment_request',
+          entityId: req.id,
+          title,
+          body,
+          metadata: {
+            request_id: req.id,
+            requester_username: req.users_requester.username,
+            amount: dto.amount,
+          },
+        });
+      } catch (error) {
+        this.logger.error(
+          `Payment request ${req.id} was created, but its notification could not be sent`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
     }
 
     return { data: result.data, message: result.message };

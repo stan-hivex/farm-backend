@@ -5,7 +5,7 @@ import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 
-describe('PaymentRequestsService - expiry processing', () => {
+describe('PaymentRequestsService', () => {
   let service: PaymentRequestsService;
   let prisma: any;
   let notifications: any;
@@ -15,10 +15,17 @@ describe('PaymentRequestsService - expiry processing', () => {
       payment_requests: {
         findMany: jest.fn(),
         update: jest.fn(),
+        create: jest.fn(),
+      },
+      wallets: {
+        findFirst: jest.fn(),
+        findUnique: jest.fn(),
+      },
+      users: {
+        findFirst: jest.fn(),
       },
     };
 
-    // prisma.$transaction is not used by processExpiredRequests, but keep default shape
     prisma.$transaction = jest.fn(async (cb) => cb(prisma));
 
     notifications = {
@@ -42,6 +49,33 @@ describe('PaymentRequestsService - expiry processing', () => {
     }).compile();
 
     service = module.get(PaymentRequestsService);
+  });
+
+  it('keeps a created request successful when notification delivery fails', async () => {
+    prisma.wallets.findFirst.mockResolvedValue({ id: 'requester-wallet' });
+    prisma.users.findFirst.mockResolvedValue({
+      id: 'recipient-user',
+      wallets: [{ id: 'recipient-wallet' }],
+    });
+    prisma.payment_requests.create.mockResolvedValue({
+      id: 'request-1',
+      users_requester: { id: 'requester-user', username: 'requester' },
+      users_recipient: { id: 'recipient-user' },
+    });
+    notifications.sendNotification.mockRejectedValue(
+      new Error('Push delivery failed'),
+    );
+
+    await expect(
+      service.createRequest(
+        'requester-user',
+        { recipient_identifier: 'recipient', amount: 50 },
+        '',
+      ),
+    ).resolves.toMatchObject({
+      data: { request_id: 'request-1', status: 'pending', amount: 50 },
+      message: 'Payment request created successfully',
+    });
   });
 
   it('marks pending requests as expired and notifies users', async () => {
