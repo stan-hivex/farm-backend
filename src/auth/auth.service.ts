@@ -2085,12 +2085,8 @@ export class AuthService implements OnModuleInit {
       throw new BadRequestException('No PIN found');
     }
 
-    // Security fix: Don't concatenate userId with PIN
-    const validOldPin = await bcrypt.compare(dto.old_pin, user.pin_hash);
-
-    if (!validOldPin) {
-      throw new UnauthorizedException('Old PIN is incorrect');
-    }
+    // Same locked counter as sends. A raw compare here would bypass the lock.
+    await this.verifyPin(userId, dto.old_pin);
 
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
 
