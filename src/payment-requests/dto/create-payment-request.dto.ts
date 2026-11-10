@@ -4,6 +4,7 @@ import {
   IsNumber,
   IsPositive,
   IsOptional,
+  IsDateString,
 } from 'class-validator';
 
 export class CreatePaymentRequestDto {
@@ -18,4 +19,8 @@ export class CreatePaymentRequestDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expires_at?: string;
 }
