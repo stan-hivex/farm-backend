@@ -639,6 +639,24 @@ export class AuthController {
    * ================= FORGOT PIN =================
    */
   @UseGuards(JwtGuard)
+  @Post('forgot-pin/request-otp')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 3,
+      ttl: 300000,
+    },
+  })
+  @ApiBearerAuth('JWT')
+  @ApiOperation({
+    summary: 'Request a recovery code for a forgotten PIN',
+  })
+  @Permissions('auth:write')
+  requestForgotPinOtp(@CurrentUser() user: AuthUser) {
+    return this.authService.requestForgotPinOtp(user.id);
+  }
+
+  @UseGuards(JwtGuard)
   @Post('forgot-pin')
   @HttpCode(HttpStatus.OK)
   @Throttle({

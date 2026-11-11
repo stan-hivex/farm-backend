@@ -2203,6 +2203,19 @@ export class AuthService implements OnModuleInit {
     };
   }
 
+  async requestForgotPinOtp(userId: string) {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    });
+
+    if (!user?.phone) {
+      throw new NotFoundException('User not found');
+    }
+
+    return this.sendOtp(userId, user.phone, 'forgot_pin');
+  }
+
   // ── Send OTP ─────────────────────────────────────────────────────────────────
   async sendOtp(
     userId: string,

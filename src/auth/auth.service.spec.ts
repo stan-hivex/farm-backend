@@ -1008,6 +1008,25 @@ describe('AuthService', () => {
     });
   });
 
+  it('sends a forgotten PIN recovery code to the authenticated user phone', async () => {
+    const prisma = module.get(PrismaService);
+    jest.spyOn(prisma.users, 'findUnique').mockResolvedValue({
+      phone: '+254700123456',
+    } as any);
+    const sendOtp = jest
+      .spyOn(service, 'sendOtp')
+      .mockResolvedValue({ message: 'OTP sent to your phone' });
+
+    await expect(service.requestForgotPinOtp('user-1')).resolves.toEqual({
+      message: 'OTP sent to your phone',
+    });
+    expect(sendOtp).toHaveBeenCalledWith(
+      'user-1',
+      '+254700123456',
+      'forgot_pin',
+    );
+  });
+
   it('rejects forgotten PIN resets when the supplied phone is not the account phone', async () => {
     const prisma = module.get(PrismaService);
     jest.spyOn(prisma.users, 'findUnique').mockResolvedValue({

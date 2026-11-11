@@ -31,12 +31,43 @@ function sign(payload: unknown) {
     .digest('hex');
 }
 
+function completeBusiness(overrides: Record<string, unknown> = {}) {
+  return {
+    id: BUSINESS_ID,
+    owner_user_id: USER_ID,
+    status: 'draft',
+    didit_kyb_status: null,
+    didit_kyb_session_id: null,
+    legal_name: 'Acme Ltd',
+    registration_number: 'PVT-123',
+    registration_country: 'KE',
+    sector: 'agriculture',
+    country: 'Kenya',
+    address: '1 Road',
+    business_email: 'a@acme.co',
+    business_phone: '+254700000000',
+    persons: [{ role: 'director' }, { role: 'beneficial_owner' }],
+    documents: [
+      { doc_type: 'certificate_of_incorporation' },
+      { doc_type: 'proof_of_address' },
+    ],
+    ...overrides,
+  };
+}
+
 function webhookHarness(business: Record<string, unknown> | null) {
   const tx = {
     didit_webhook_events: { create: jest.fn().mockResolvedValue({}) },
     users: { updateMany: jest.fn() },
+    business_verifications: {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue({ id: 'verification-1' }),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    notifications: { create: jest.fn().mockResolvedValue({}) },
     businesses: {
       findUnique: jest.fn().mockResolvedValue(business),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       update: jest.fn().mockResolvedValue({}),
     },
   };
@@ -89,12 +120,15 @@ describe('Didit KYB helpers', () => {
 describe('DiditService.createKybSession', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('returns 503 and calls nothing when DIDIT_KYB_WORKFLOW_ID is unset', async () => {
+  it('returns 503 and calls nothing when KYB webhook configuration is incomplete', async () => {
     const fetch = jest.spyOn(global, 'fetch');
     const findUnique = jest.fn();
-    const service = new DiditService(config({ DIDIT_API_KEY: 'k' }), {
-      businesses: { findUnique },
-    } as unknown as PrismaService);
+    const service = new DiditService(
+      config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf-kyb' }),
+      {
+        businesses: { findUnique },
+      } as unknown as PrismaService,
+    );
     await expect(service.createKybSession(USER_ID)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
@@ -110,18 +144,19 @@ describe('DiditService.createKybSession', () => {
         session_id: 'kyb-session-1',
       }),
     } as Response);
-    const update = jest.fn().mockResolvedValue({});
+    const tx = {
+      businesses: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      business_verifications: { create: jest.fn().mockResolvedValue({}) },
+    };
     const service = new DiditService(
       config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf-kyb' }),
       {
         businesses: {
-          findUnique: jest.fn().mockResolvedValue({
-            id: BUSINESS_ID,
-            status: 'draft',
-            didit_kyb_status: null,
-          }),
-          update,
+          findUnique: jest.fn().mockResolvedValue(completeBusiness()),
         },
+        $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) =>
+          callback(tx),
+        ),
       } as unknown as PrismaService,
     );
 
@@ -133,15 +168,48 @@ describe('DiditService.createKybSession', () => {
       (fetch.mock.calls[0][1] as RequestInit).body as string,
     );
     expect(body).toEqual({ workflow_id: 'wf-kyb', vendor_data: BUSINESS_ID });
-    expect(update).toHaveBeenCalledWith({
-      where: { id: BUSINESS_ID },
+    expect(tx.businesses.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: BUSINESS_ID,
+        status: 'draft',
+        didit_kyb_session_id: null,
+      },
       data: expect.objectContaining({
         didit_kyb_session_id: 'kyb-session-1',
         didit_kyb_status: 'not_started',
+        status: 'under_review',
       }),
     });
-    // Never touches the manual review status.
-    expect(update.mock.calls[0][0].data.status).toBeUndefined();
+    expect(tx.business_verifications.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        business_id: BUSINESS_ID,
+        status: 'under_review',
+        snapshot: expect.objectContaining({ id: BUSINESS_ID }),
+      }),
+    });
+  });
+
+  it('does not create a Didit session for an incomplete application', async () => {
+    const fetch = jest.spyOn(global, 'fetch');
+    const service = new DiditService(
+      config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf' }),
+      {
+        businesses: {
+          findUnique: jest.fn().mockResolvedValue(
+            completeBusiness({ legal_name: '', documents: [] }),
+          ),
+        },
+      } as unknown as PrismaService,
+    );
+    await expect(service.createKybSession(USER_ID)).rejects.toMatchObject({
+      response: expect.objectContaining({
+        missing: expect.arrayContaining([
+          'legal_name',
+          'document:proof_of_address',
+        ]),
+      }),
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it.each(['approved', 'in_review'])(
@@ -222,6 +290,7 @@ describe('DiditService KYB webhooks', () => {
     const { tx, service } = webhookHarness({
       id: BUSINESS_ID,
       didit_kyb_session_id: 'bs-1',
+      status: 'draft',
     });
     const payload = {
       event: 'status.updated',
@@ -235,9 +304,31 @@ describe('DiditService KYB webhooks', () => {
       },
     };
     await service.processWebhook(payload, sign(payload));
-    expect(tx.businesses.update.mock.calls[0][0].data.didit_kyb_status).toBe(
-      'declined',
-    );
+    expect(tx.businesses.update.mock.calls[0][0].data).toMatchObject({
+      didit_kyb_status: 'declined',
+      status: 'rejected',
+    });
+  });
+
+  it('moves an application to under review while Didit processes it', async () => {
+    const { tx, service } = webhookHarness({
+      id: BUSINESS_ID,
+      didit_kyb_session_id: 'kyb-session-1',
+      status: 'draft',
+    });
+    const payload = {
+      ...base(),
+      webhook_type: 'status.updated',
+      session_kind: 'business',
+      session_id: 'kyb-session-1',
+      vendor_data: BUSINESS_ID,
+      status: 'In Review',
+    };
+    await service.processWebhook(payload, sign(payload));
+    expect(tx.businesses.update.mock.calls[0][0].data).toMatchObject({
+      didit_kyb_status: 'in_review',
+      status: 'under_review',
+    });
   });
 
   it('records business.status.updated as the entity status', async () => {

@@ -9,10 +9,9 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { paginationParams, paginate } from '../common/utils/pagination.util';
 import {
-  REQUIRED_DOCUMENT_TYPES,
-  ReviewBusinessDto,
   SaveBusinessDraftDto,
 } from './business.dto';
+import { missingBusinessRequirements } from './business-requirements';
 
 export type BusinessStatus =
   | 'draft'
@@ -79,13 +78,11 @@ export class BusinessService {
             ...business,
             is_active: business.status === 'approved',
             verification_method: 'didit',
-            manual_kyb_enabled: process.env.MANUAL_KYB_ENABLED === 'true',
           }
         : {
             status: 'not_started',
             is_active: false,
             verification_method: 'didit',
-            manual_kyb_enabled: process.env.MANUAL_KYB_ENABLED === 'true',
           },
     };
   }
@@ -215,59 +212,23 @@ export class BusinessService {
   }
 
   async submit(userId: string) {
-    if (process.env.MANUAL_KYB_ENABLED !== 'true') {
-      throw new ForbiddenException(
-        'Manual business verification is disabled. Start the Didit KYB workflow.',
-      );
-    }
     const business = await this.prisma.businesses.findUnique({
       where: { owner_user_id: userId },
       include: DETAIL_INCLUDE,
     });
     if (!business)
       throw new NotFoundException('No business application found.');
-    if (!EDITABLE.includes(business.status)) {
-      throw new ConflictException(
-        'This application has already been submitted.',
+    if (
+      !business.didit_kyb_session_id ||
+      !['under_review', 'approved'].includes(business.status)
+    ) {
+      throw new ForbiddenException(
+        'Start the Didit business verification before continuing.',
       );
     }
-
-    const missing = this.missingRequirements(business);
-    if (missing.length) {
-      throw new BadRequestException({
-        message: 'Business application is incomplete.',
-        missing,
-      });
-    }
-
-    const now = new Date();
-    const updated = await this.prisma.$transaction(async (tx) => {
-      // Guarded transition so double-taps cannot create two submissions.
-      const res = await tx.businesses.updateMany({
-        where: { id: business.id, status: { in: EDITABLE } },
-        data: { status: 'under_review', submitted_at: now, review_notes: null },
-      });
-      if (res.count !== 1)
-        throw new ConflictException(
-          'This application has already been submitted.',
-        );
-      await tx.business_verifications.create({
-        data: {
-          business_id: business.id,
-          status: 'under_review',
-          submitted_at: now,
-          snapshot: this.snapshot(business),
-        },
-      });
-      return tx.businesses.findUniqueOrThrow({
-        where: { id: business.id },
-        include: DETAIL_INCLUDE,
-      });
-    });
-    await this.audit(userId, 'business.submitted', business.id);
     return {
-      data: this.ownerView(this.serialize(updated)),
-      message: 'Submitted for review.',
+      data: this.ownerView(this.serialize(business)),
+      message: 'Business application is being processed by Didit.',
     };
   }
 
@@ -335,7 +296,7 @@ export class BusinessService {
     });
     if (!business) throw new NotFoundException('Business not found.');
     const out = this.serialize(business);
-    // Advisory Didit KYB result for the reviewer. Never auto-approves.
+    // The verified Didit result is the source of the business decision.
     out.didit_kyb = {
       session_id: business.didit_kyb_session_id ?? null,
       status: business.didit_kyb_status ?? 'none',
@@ -346,120 +307,10 @@ export class BusinessService {
     return { data: out };
   }
 
-  async adminReview(adminId: string, id: string, dto: ReviewBusinessDto) {
-    if (process.env.MANUAL_KYB_ENABLED !== 'true') {
-      throw new ForbiddenException(
-        'Manual KYB decisions are disabled. Business status follows the Didit workflow.',
-      );
-    }
-    const business = await this.prisma.businesses.findUnique({ where: { id } });
-    if (!business) throw new NotFoundException('Business not found.');
-    if (business.status !== 'under_review') {
-      throw new ConflictException(
-        'Only applications under review can be decided.',
-      );
-    }
-    if (business.owner_user_id === adminId) {
-      throw new ForbiddenException('You cannot review your own business.');
-    }
-    if (dto.decision !== 'approve' && !dto.notes?.trim()) {
-      throw new BadRequestException(
-        'A reason is required when requesting information or rejecting.',
-      );
-    }
-
-    const next: BusinessStatus =
-      dto.decision === 'approve'
-        ? 'approved'
-        : dto.decision === 'reject'
-          ? 'rejected'
-          : 'more_information_required';
-    const now = new Date();
-    const notes = dto.notes?.trim() || null;
-
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const res = await tx.businesses.updateMany({
-        where: { id, status: 'under_review' },
-        data: {
-          status: next,
-          reviewed_by: adminId,
-          reviewed_at: now,
-          review_notes: notes,
-          ...(next === 'approved' ? { approved_at: now } : {}),
-        },
-      });
-      if (res.count !== 1)
-        throw new ConflictException('This application was already decided.');
-      const latest = await tx.business_verifications.findFirst({
-        where: { business_id: id, reviewed_at: null },
-        orderBy: { submitted_at: 'desc' },
-      });
-      if (latest) {
-        await tx.business_verifications.update({
-          where: { id: latest.id },
-          data: {
-            status: next,
-            reviewed_by: adminId,
-            reviewed_at: now,
-            decision_notes: notes,
-          },
-        });
-      }
-      await tx.notifications.create({
-        data: {
-          user_id: business.owner_user_id,
-          type: 'merchant',
-          title: 'Business verification update',
-          body:
-            next === 'approved'
-              ? 'Your business account has been approved.'
-              : next === 'rejected'
-                ? 'Your business application was not approved.'
-                : 'More information is needed for your business application.',
-          metadata: {
-            kind: 'business_verification',
-            business_id: id,
-            status: next,
-          },
-        },
-      });
-      return tx.businesses.findUniqueOrThrow({
-        where: { id },
-        include: DETAIL_INCLUDE,
-      });
-    });
-    await this.audit(adminId, `business.review.${dto.decision}`, id);
-    return {
-      data: this.serialize(updated),
-      message: `Business ${next.replace(/_/g, ' ')}.`,
-    };
-  }
-
   // ---------------------------------------------------------------- helpers
 
   missingRequirements(b: any): string[] {
-    const missing: string[] = [];
-    const required = [
-      'legal_name',
-      'registration_number',
-      'registration_country',
-      'sector',
-      'country',
-      'address',
-      'business_email',
-      'business_phone',
-    ];
-    for (const key of required)
-      if (!String(b[key] ?? '').trim()) missing.push(key);
-    const persons = b.persons ?? [];
-    if (!persons.some((p: any) => p.role === 'director'))
-      missing.push('directors');
-    if (!persons.some((p: any) => p.role === 'beneficial_owner'))
-      missing.push('beneficial_owners');
-    const docTypes = new Set((b.documents ?? []).map((d: any) => d.doc_type));
-    for (const t of REQUIRED_DOCUMENT_TYPES)
-      if (!docTypes.has(t)) missing.push(`document:${t}`);
-    return missing;
+    return missingBusinessRequirements(b);
   }
 
   private eligibility(merchant: { status: any } | null, business: any) {
@@ -486,14 +337,6 @@ export class BusinessService {
     const out = { ...b };
     delete out.didit_kyb_result;
     return out;
-  }
-
-  private snapshot(b: any) {
-    const rest = { ...b };
-    delete rest.verifications;
-    delete rest.owner;
-    delete rest.merchant;
-    return JSON.parse(JSON.stringify(rest));
   }
 
   private serialize(b: any) {

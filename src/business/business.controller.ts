@@ -17,7 +17,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from '../common/enums';
 import { BusinessService } from './business.service';
-import { ReviewBusinessDto, SaveBusinessDraftDto } from './business.dto';
+import { SaveBusinessDraftDto } from './business.dto';
 
 @ApiTags('Business')
 @ApiBearerAuth('JWT')
@@ -59,8 +59,7 @@ export class BusinessController {
   @Post('submit')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
-    summary:
-      'Manual KYB submit. Disabled unless MANUAL_KYB_ENABLED=true. Use Didit KYB.',
+    summary: 'Confirm the authenticated owner started Didit business verification',
   })
   submit(@CurrentUser() u: any) {
     return this.svc.submit(u.id);
@@ -85,15 +84,4 @@ export class AdminBusinessController {
     return this.svc.adminGet(id);
   }
 
-  @Post(':id/review')
-  @ApiOperation({
-    summary: 'Manual KYB decision. Disabled unless MANUAL_KYB_ENABLED=true.',
-  })
-  review(
-    @CurrentUser() u: any,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: ReviewBusinessDto,
-  ) {
-    return this.svc.adminReview(u.id, id, dto);
-  }
 }

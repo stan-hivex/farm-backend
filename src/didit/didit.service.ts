@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
+  BadRequestException,
   BadGatewayException,
   ConflictException,
   Injectable,
@@ -12,6 +13,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { missingBusinessRequirements } from '../business/business-requirements';
 
 export const DEVICE_RECOVERY_VENDOR_PREFIX = 'devrec:';
 const WORKFLOW_ID = '9d75ebb3-2dbe-410e-9062-5c84c41af087';
@@ -265,22 +267,22 @@ export class DiditService {
 
   /**
    * Starts a Didit KYB (business verification) session for the caller's
-   * business. vendor_data is the business record id. An approved Didit
-   * decision approves the business. Manual review stays off unless
-   * MANUAL_KYB_ENABLED=true.
+   * business. vendor_data is the business record id. Creating the session
+   * submits the completed application; signed Didit webhooks decide its status.
    */
   async createKybSession(userId: string) {
     const workflowId = this.config.get<string>('DIDIT_KYB_WORKFLOW_ID')?.trim();
     const apiKey = this.config.get<string>('DIDIT_API_KEY')?.trim();
-    if (!workflowId || !apiKey) {
+    const webhookSecret = this.config.get<string>('DIDIT_WEBHOOK_SECRET')?.trim();
+    if (!workflowId || !apiKey || !webhookSecret) {
       throw new ServiceUnavailableException(
-        'Business verification is not available yet. DIDIT_KYB_WORKFLOW_ID and DIDIT_API_KEY must be configured.',
+        'Business verification is not available yet. DIDIT_KYB_WORKFLOW_ID, DIDIT_API_KEY, and DIDIT_WEBHOOK_SECRET must be configured.',
       );
     }
 
     const business = await this.prisma.businesses.findUnique({
       where: { owner_user_id: userId },
-      select: { id: true, status: true, didit_kyb_status: true },
+      include: { persons: true, documents: true },
     });
     if (!business) {
       throw new NotFoundException(
@@ -306,6 +308,14 @@ export class DiditService {
       );
     }
 
+    const missing = missingBusinessRequirements(business);
+    if (missing.length) {
+      throw new BadRequestException({
+        message: 'Business application is incomplete.',
+        missing,
+      });
+    }
+
     const session = await this.requestSession(
       apiKey,
       workflowId,
@@ -313,13 +323,50 @@ export class DiditService {
       'KYB',
     );
 
-    await this.prisma.businesses.update({
-      where: { id: business.id },
-      data: {
-        didit_kyb_session_id: session.session_id,
-        didit_kyb_status: 'not_started',
-        didit_kyb_updated_at: new Date(),
-      },
+    const submittedAt = new Date();
+    const isNewSubmission = business.status !== 'under_review';
+    await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.businesses.updateMany({
+        where: {
+          id: business.id,
+          status: business.status,
+          didit_kyb_session_id: business.didit_kyb_session_id,
+        },
+        data: {
+          didit_kyb_session_id: session.session_id,
+          didit_kyb_status: 'not_started',
+          didit_kyb_updated_at: submittedAt,
+          ...(isNewSubmission
+            ? {
+                status: 'under_review',
+                submitted_at: submittedAt,
+                reviewed_at: null,
+                reviewed_by: null,
+                approved_at: null,
+                review_notes: null,
+              }
+            : {}),
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException(
+          'Business application changed while verification was starting. Please try again.',
+        );
+      }
+
+      if (isNewSubmission) {
+        const snapshot = JSON.parse(
+          JSON.stringify(business),
+        ) as Prisma.InputJsonValue;
+        await transaction.business_verifications.create({
+          data: {
+            business_id: business.id,
+            status: 'under_review',
+            submitted_at: submittedAt,
+            snapshot,
+          },
+        });
+      }
     });
 
     return { url: session.url, session_id: session.session_id };
@@ -339,10 +386,14 @@ export class DiditService {
     if (!business) {
       throw new NotFoundException('No business application found.');
     }
-    const workflow = this.config.get<string>('DIDIT_KYB_WORKFLOW_ID')?.trim();
+    const configured = Boolean(
+      this.config.get<string>('DIDIT_KYB_WORKFLOW_ID')?.trim() &&
+        this.config.get<string>('DIDIT_API_KEY')?.trim() &&
+        this.config.get<string>('DIDIT_WEBHOOK_SECRET')?.trim(),
+    );
     return {
       data: {
-        configured: Boolean(workflow),
+        configured,
         status: business.didit_kyb_status ?? 'none',
         entity_status: business.didit_kyb_entity_status,
         session_id: business.didit_kyb_session_id,
@@ -569,9 +620,8 @@ export class DiditService {
   }
 
   /**
-   * Stores a signed Didit KYB event on the business record. Advisory only:
-   * businesses.status is never changed here; an admin approves manually.
-   * Idempotent on event_id via didit_webhook_events (unique).
+   * Applies signed Didit KYB decisions to the business and verification
+   * history. Event IDs are unique, making webhook retries idempotent.
    */
   private async processKybWebhook(
     eventId: string,
@@ -668,7 +718,9 @@ export class DiditService {
               data.didit_kyb_result = { ...prior, business_entity: result };
             }
           } else {
-            if (status) data.didit_kyb_status = status;
+            if (status && (business.status !== 'approved' || status === 'approved')) {
+              data.didit_kyb_status = status;
+            }
             if (flat.decision && typeof flat.decision === 'object') {
               data.didit_kyb_result = result;
             } else if (webhookType === 'data.updated') {
@@ -686,25 +738,73 @@ export class DiditService {
             }
           }
 
+          const nextBusinessStatus =
+            !isEntityEvent && typeof data.didit_kyb_status === 'string'
+              ? businessStatusForDiditKybStatus(data.didit_kyb_status)
+              : undefined;
           if (
-            process.env.MANUAL_KYB_ENABLED !== 'true' &&
-            typeof data.didit_kyb_status === 'string'
+            nextBusinessStatus &&
+            (business.status !== 'approved' ||
+              nextBusinessStatus === 'approved')
           ) {
-            const kyb = data.didit_kyb_status;
-            if (kyb === 'approved' && business.status !== 'approved') {
-              data.status = 'approved';
+            data.status = nextBusinessStatus;
+            if (nextBusinessStatus === 'approved') {
               data.approved_at = new Date();
-            } else if (
-              (kyb === 'declined' || kyb === 'rejected') &&
-              business.status !== 'approved'
-            ) {
-              data.status = 'rejected';
-            } else if (
-              kyb === 'in_review' &&
-              (business.status === 'draft' ||
-                business.status === 'more_information_required')
-            ) {
-              data.status = 'under_review';
+            }
+            if (nextBusinessStatus !== 'under_review') {
+              data.reviewed_at = new Date();
+            }
+
+            if (business.status !== nextBusinessStatus) {
+              const verification =
+                await transaction.business_verifications.findFirst({
+                  where: { business_id: business.id, reviewed_at: null },
+                  orderBy: { submitted_at: 'desc' },
+                });
+              if (verification) {
+                await transaction.business_verifications.update({
+                  where: { id: verification.id },
+                  data: {
+                    status: nextBusinessStatus,
+                    reviewed_at:
+                      nextBusinessStatus === 'under_review' ? null : new Date(),
+                  },
+                });
+              }
+
+              if (business.owner_user_id) {
+                const notification = {
+                  approved: {
+                    title: 'Business verified',
+                    body: 'Didit verified your business. Your business account is approved.',
+                  },
+                  rejected: {
+                    title: 'Business verification declined',
+                    body: 'Didit could not verify your business. Review your application and try again.',
+                  },
+                  more_information_required: {
+                    title: 'More business information needed',
+                    body: 'Didit needs more information to verify your business.',
+                  },
+                  under_review: {
+                    title: 'Business verification in progress',
+                    body: 'Didit is processing your business verification.',
+                  },
+                }[nextBusinessStatus];
+                await transaction.notifications.create({
+                  data: {
+                    user_id: business.owner_user_id,
+                    type: 'merchant',
+                    title: notification.title,
+                    body: notification.body,
+                    metadata: {
+                      kind: 'business_verification',
+                      business_id: business.id,
+                      status: nextBusinessStatus,
+                    },
+                  },
+                });
+              }
             }
           }
 
@@ -712,30 +812,39 @@ export class DiditService {
             where: { id: business.id },
             data,
           });
-          if (
-            data.status === 'approved' &&
-            business.owner_user_id &&
-            transaction.notifications?.create
-          ) {
-            await transaction.notifications.create({
-              data: {
-                user_id: business.owner_user_id,
-                type: 'merchant',
-                title: 'Business verified',
-                body: 'Your business passed Didit verification and is now approved.',
-                metadata: {
-                  kind: 'business_verification',
-                  business_id: business.id,
-                },
-              },
-            });
-          }
         },
         { maxWait: 1_000, timeout: 4_000 },
       );
     } catch (error) {
       if (isUniqueConstraintError(error)) return;
       throw error;
+    }
+  }
+
+  export function businessStatusForDiditKybStatus(
+    status: string,
+  ):
+    | 'approved'
+    | 'rejected'
+    | 'more_information_required'
+    | 'under_review'
+    | undefined {
+    switch (status) {
+      case 'approved':
+        return 'approved';
+      case 'declined':
+      case 'rejected':
+        return 'rejected';
+      case 'resubmitted':
+        return 'more_information_required';
+      case 'not_started':
+      case 'pending':
+      case 'in_progress':
+      case 'awaiting_user':
+      case 'in_review':
+        return 'under_review';
+      default:
+        return undefined;
     }
   }
 }

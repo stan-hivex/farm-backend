@@ -99,11 +99,3 @@ export class SaveBusinessDraftDto {
   @Type(() => BusinessDocumentDto)
   documents?: BusinessDocumentDto[];
 }
-
-export class ReviewBusinessDto {
-  @IsIn(['approve', 'request_info', 'reject']) decision!:
-    | 'approve'
-    | 'request_info'
-    | 'reject';
-  @IsOptional() @IsString() @MaxLength(2000) notes?: string;
-}

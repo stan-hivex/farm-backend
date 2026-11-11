@@ -11,6 +11,7 @@ describe('AuthController', () => {
     register: jest.Mock;
     login: jest.Mock;
     checkRegistrationAvailability: jest.Mock;
+    requestForgotPinOtp: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -19,6 +20,7 @@ describe('AuthController', () => {
       login: jest.fn(),
       supabaseLogin: jest.fn(),
       checkRegistrationAvailability: jest.fn(),
+      requestForgotPinOtp: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -95,5 +97,16 @@ describe('AuthController', () => {
 
     expect(authService.login).toHaveBeenCalledWith(body, '127.0.0.1', 'jest');
     expect(authService.supabaseLogin).not.toHaveBeenCalled();
+  });
+
+  it('requests a forgotten PIN recovery code for the authenticated user', async () => {
+    authService.requestForgotPinOtp.mockResolvedValue({
+      message: 'OTP sent to your phone',
+    });
+
+    await expect(
+      controller.requestForgotPinOtp({ id: 'user-1' } as any),
+    ).resolves.toEqual({ message: 'OTP sent to your phone' });
+    expect(authService.requestForgotPinOtp).toHaveBeenCalledWith('user-1');
   });
 });

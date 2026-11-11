@@ -1,6 +1,6 @@
 # Didit KYB (business verification)
-Flow: business owner submits onboarding → backend creates a Didit session using workflow `DIDIT_KYB_WORKFLOW_ID` → user completes verification in Didit → Didit calls back the app (`callback` URL) and sends a signed webhook.
-- Webhook: `POST /webhooks/didit` (version-neutral); session via `POST /verify/business/create-session`, HMAC-verified with `DIDIT_WEBHOOK_SECRET`. Events handled: session status updates (Approved → business KYB verified; Declined → rejected; In Review/Pending → pending). Unknown events are logged and ignored.
-- Env: `DIDIT_API_KEY`, `DIDIT_KYB_WORKFLOW_ID`, `DIDIT_WEBHOOK_SECRET` (all required to enable; without them KYB session creation returns a "not configured" error and admin manual approval still works).
+Flow: business owner completes all required onboarding fields and starts Didit → the backend creates a KYB session using workflow `DIDIT_KYB_WORKFLOW_ID` and submits the application → the user completes verification in Didit → the signed webhook updates the business status and verification history.
+- Webhook: `POST /webhooks/didit` (version-neutral); session via `POST /verify/business/create-session`, HMAC-verified with `DIDIT_WEBHOOK_SECRET`. Approved decisions approve the business; declined decisions reject it; resubmission requests move it to more-information-required; active sessions remain under review. The event ID is idempotent and session events must match the latest session created for that business.
+- Env: `DIDIT_API_KEY`, `DIDIT_KYB_WORKFLOW_ID`, `DIDIT_WEBHOOK_SECRET` (all required to enable; without them KYB session creation returns a service-unavailable error). Business decisions are Didit-only; the admin business page is read-only and there is no manual approval endpoint.
 - Migration: `20261113090000_business_didit_kyb` (additive).
-- Status: E2E-tested locally up to submission + admin approval; live Didit verification blocked by missing key.
+- Configure the Didit KYB workflow and webhook secret in the backend environment before enabling this flow in production. Live verification requires valid Didit credentials.
