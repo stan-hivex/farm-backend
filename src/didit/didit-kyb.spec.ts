@@ -120,11 +120,35 @@ describe('Didit KYB helpers', () => {
 describe('DiditService.createKybSession', () => {
   afterEach(() => jest.restoreAllMocks());
 
+  it('does not report KYB as configured without a webhook secret', async () => {
+    const service = new DiditService(
+      config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf-kyb' }),
+      {
+        businesses: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: BUSINESS_ID,
+            didit_kyb_session_id: null,
+            didit_kyb_status: null,
+            didit_kyb_entity_status: null,
+            didit_kyb_updated_at: null,
+          }),
+        },
+      } as unknown as PrismaService,
+    );
+
+    await expect(service.getKybStatus(USER_ID)).resolves.toMatchObject({
+      data: { configured: false },
+    });
+  });
+
   it('returns 503 and calls nothing when KYB webhook configuration is incomplete', async () => {
     const fetch = jest.spyOn(global, 'fetch');
     const findUnique = jest.fn();
     const service = new DiditService(
-      config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf-kyb' }),
+      config({
+        DIDIT_API_KEY: 'k',
+        DIDIT_KYB_WORKFLOW_ID: 'wf-kyb',
+      }),
       {
         businesses: { findUnique },
       } as unknown as PrismaService,
@@ -149,7 +173,11 @@ describe('DiditService.createKybSession', () => {
       business_verifications: { create: jest.fn().mockResolvedValue({}) },
     };
     const service = new DiditService(
-      config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf-kyb' }),
+      config({
+        DIDIT_API_KEY: 'k',
+        DIDIT_KYB_WORKFLOW_ID: 'wf-kyb',
+        DIDIT_WEBHOOK_SECRET: secret,
+      }),
       {
         businesses: {
           findUnique: jest.fn().mockResolvedValue(completeBusiness()),
@@ -192,12 +220,18 @@ describe('DiditService.createKybSession', () => {
   it('does not create a Didit session for an incomplete application', async () => {
     const fetch = jest.spyOn(global, 'fetch');
     const service = new DiditService(
-      config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf' }),
+      config({
+        DIDIT_API_KEY: 'k',
+        DIDIT_KYB_WORKFLOW_ID: 'wf',
+        DIDIT_WEBHOOK_SECRET: secret,
+      }),
       {
         businesses: {
-          findUnique: jest.fn().mockResolvedValue(
-            completeBusiness({ legal_name: '', documents: [] }),
-          ),
+          findUnique: jest
+            .fn()
+            .mockResolvedValue(
+              completeBusiness({ legal_name: '', documents: [] }),
+            ),
         },
       } as unknown as PrismaService,
     );
@@ -217,7 +251,11 @@ describe('DiditService.createKybSession', () => {
     async (kyb) => {
       const fetch = jest.spyOn(global, 'fetch');
       const service = new DiditService(
-        config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf' }),
+        config({
+          DIDIT_API_KEY: 'k',
+          DIDIT_KYB_WORKFLOW_ID: 'wf',
+          DIDIT_WEBHOOK_SECRET: secret,
+        }),
         {
           businesses: {
             findUnique: jest.fn().mockResolvedValue({
@@ -237,7 +275,11 @@ describe('DiditService.createKybSession', () => {
 
   it('refuses an already approved business', async () => {
     const service = new DiditService(
-      config({ DIDIT_API_KEY: 'k', DIDIT_KYB_WORKFLOW_ID: 'wf' }),
+      config({
+        DIDIT_API_KEY: 'k',
+        DIDIT_KYB_WORKFLOW_ID: 'wf',
+        DIDIT_WEBHOOK_SECRET: secret,
+      }),
       {
         businesses: {
           findUnique: jest.fn().mockResolvedValue({

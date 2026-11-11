@@ -273,7 +273,9 @@ export class DiditService {
   async createKybSession(userId: string) {
     const workflowId = this.config.get<string>('DIDIT_KYB_WORKFLOW_ID')?.trim();
     const apiKey = this.config.get<string>('DIDIT_API_KEY')?.trim();
-    const webhookSecret = this.config.get<string>('DIDIT_WEBHOOK_SECRET')?.trim();
+    const webhookSecret = this.config
+      .get<string>('DIDIT_WEBHOOK_SECRET')
+      ?.trim();
     if (!workflowId || !apiKey || !webhookSecret) {
       throw new ServiceUnavailableException(
         'Business verification is not available yet. DIDIT_KYB_WORKFLOW_ID, DIDIT_API_KEY, and DIDIT_WEBHOOK_SECRET must be configured.',
@@ -388,8 +390,8 @@ export class DiditService {
     }
     const configured = Boolean(
       this.config.get<string>('DIDIT_KYB_WORKFLOW_ID')?.trim() &&
-        this.config.get<string>('DIDIT_API_KEY')?.trim() &&
-        this.config.get<string>('DIDIT_WEBHOOK_SECRET')?.trim(),
+      this.config.get<string>('DIDIT_API_KEY')?.trim() &&
+      this.config.get<string>('DIDIT_WEBHOOK_SECRET')?.trim(),
     );
     return {
       data: {
@@ -718,7 +720,10 @@ export class DiditService {
               data.didit_kyb_result = { ...prior, business_entity: result };
             }
           } else {
-            if (status && (business.status !== 'approved' || status === 'approved')) {
+            if (
+              status &&
+              (business.status !== 'approved' || status === 'approved')
+            ) {
               data.didit_kyb_status = status;
             }
             if (flat.decision && typeof flat.decision === 'object') {
@@ -820,31 +825,31 @@ export class DiditService {
       throw error;
     }
   }
+}
 
-  export function businessStatusForDiditKybStatus(
-    status: string,
-  ):
-    | 'approved'
-    | 'rejected'
-    | 'more_information_required'
-    | 'under_review'
-    | undefined {
-    switch (status) {
-      case 'approved':
-        return 'approved';
-      case 'declined':
-      case 'rejected':
-        return 'rejected';
-      case 'resubmitted':
-        return 'more_information_required';
-      case 'not_started':
-      case 'pending':
-      case 'in_progress':
-      case 'awaiting_user':
-      case 'in_review':
-        return 'under_review';
-      default:
-        return undefined;
-    }
+export function businessStatusForDiditKybStatus(
+  status: string,
+):
+  | 'approved'
+  | 'rejected'
+  | 'more_information_required'
+  | 'under_review'
+  | undefined {
+  switch (status) {
+    case 'approved':
+      return 'approved';
+    case 'declined':
+    case 'rejected':
+      return 'rejected';
+    case 'resubmitted':
+      return 'more_information_required';
+    case 'not_started':
+    case 'pending':
+    case 'in_progress':
+    case 'awaiting_user':
+    case 'in_review':
+      return 'under_review';
+    default:
+      return undefined;
   }
 }
