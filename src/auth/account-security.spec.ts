@@ -24,6 +24,7 @@ function build(
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     user_sessions: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
+    device_tokens: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     activity_logs: { create: jest.fn() },
     email_verification_tokens: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),

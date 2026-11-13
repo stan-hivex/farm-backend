@@ -54,6 +54,13 @@ import {
   parseDurationMs,
 } from './session-policy';
 import { scheduleCustodialWallet } from '../chain-wallet/schedule-custodial-wallet';
+import {
+  claimPushDevice,
+  rebindPushSession,
+  rebindTrustedDevicePushes,
+  revokeOwnedPushToken,
+  revokePushDevices,
+} from '../notifications/push-device-registry';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -1137,6 +1144,10 @@ export class AuthService implements OnModuleInit {
         where: { user_id: user.id, is_revoked: false },
         data: { is_revoked: true },
       });
+      await tx.device_tokens.updateMany({
+        where: { user_id: user.id, is_active: true },
+        data: { is_active: false, revoked_at: new Date() },
+      });
     });
 
     return { message: 'Password reset successfully' };
@@ -1163,6 +1174,14 @@ export class AuthService implements OnModuleInit {
         where: { id: user.id },
         data: { password_hash: passwordHash, failed_login_attempts: 0 },
       });
+      await this.prisma.user_sessions.updateMany({
+        where: {
+          user_id: user.id,
+          OR: [{ is_revoked: false }, { is_revoked: null }],
+        },
+        data: { is_revoked: true },
+      });
+      await revokePushDevices(this.prisma, { userId: user.id, all: true });
       return { message: 'Password reset successfully' };
     }
 
@@ -1357,6 +1376,16 @@ export class AuthService implements OnModuleInit {
         },
         data: { is_revoked: true },
       });
+      await tx.device_tokens.updateMany({
+        where: {
+          user_id: userId,
+          is_active: true,
+          session: currentJti
+            ? { is_revoked: true, NOT: { jwt_id: currentJti } }
+            : { is_revoked: true },
+        },
+        data: { is_active: false, revoked_at: new Date() },
+      });
       await tx.activity_logs.create({
         data: { user_id: userId, activity: 'PASSWORD_CHANGED' },
       });
@@ -1476,39 +1505,18 @@ export class AuthService implements OnModuleInit {
     return { message: 'Account deleted successfully' };
   }
 
-  async registerDeviceToken(userId: string, token: string, platform?: string) {
-    const normalizedToken = token.trim();
-    if (!normalizedToken) {
-      throw new BadRequestException('Device token is required');
-    }
-
-    const existing = await this.prisma.device_tokens.findFirst({
-      where: { user_id: userId, token: normalizedToken },
+  async registerDeviceToken(
+    userId: string,
+    token: string,
+    platform?: string,
+    sessionJti?: string,
+  ) {
+    return claimPushDevice(this.prisma, {
+      userId,
+      token,
+      platform,
+      sessionJti,
     });
-
-    if (existing) {
-      await this.prisma.device_tokens.update({
-        where: { id: existing.id },
-        data: {
-          is_active: true,
-          platform: platform || existing.platform,
-          last_seen: new Date(),
-        },
-      });
-      return { message: 'Device token updated' };
-    }
-
-    await this.prisma.device_tokens.create({
-      data: {
-        user_id: userId,
-        token: normalizedToken,
-        platform: platform || 'unknown',
-        is_active: true,
-        last_seen: new Date(),
-      },
-    });
-
-    return { message: 'Device token registered' };
   }
 
   // ── Refresh ──────────────────────────────────────────────────────────────────
@@ -1669,8 +1677,9 @@ export class AuthService implements OnModuleInit {
     const tokens = await this.issueTokens(userId, userRole, walletId);
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
 
-    // Create new session with rotated refresh token
-    await this.prisma.user_sessions.create({
+    // Create new session with rotated refresh token and keep this device's
+    // push registration on the new session. The previous session is revoked.
+    const rotated = await this.prisma.user_sessions.create({
       data: {
         trusted_device_id: session.trusted_device_id ?? null,
         user_id: userId,
@@ -1683,6 +1692,7 @@ export class AuthService implements OnModuleInit {
         expires_at: tokens.refresh_expires_at,
       },
     });
+    await rebindPushSession(this.prisma, userId, session.id, rotated.id);
 
     await this.logSecurityEvent(
       userId,
@@ -1796,7 +1806,7 @@ export class AuthService implements OnModuleInit {
     const role = (user.role ?? 'user').toString().toLowerCase();
     const tokens = await this.issueTokens(user.id, role, user.wallets[0]?.id);
     const rounds = Number(this.cfg.get('BCRYPT_ROUNDS')) || 12;
-    await this.prisma.user_sessions.create({
+    const renewed = await this.prisma.user_sessions.create({
       data: {
         trusted_device_id: device.id,
         user_id: user.id,
@@ -1809,6 +1819,12 @@ export class AuthService implements OnModuleInit {
         expires_at: tokens.refresh_expires_at,
       },
     });
+    await rebindTrustedDevicePushes(
+      this.prisma,
+      user.id,
+      device.id,
+      renewed.id,
+    );
     await this.prisma.biometric_settings.update({
       where: { user_id: user.id },
       data: {
@@ -1895,26 +1911,42 @@ export class AuthService implements OnModuleInit {
   }
 
   // ── Logout ───────────────────────────────────────────────────────────────────
-  async logout(userId: string, currentJti?: string, revokeAll = false) {
-    if (revokeAll) {
+  async logout(
+    userId: string,
+    currentJti?: string,
+    revokeAll = false,
+    deviceToken?: string,
+  ) {
+    if (revokeAll || !currentJti) {
       await this.prisma.user_sessions.updateMany({
-        where: { user_id: userId, is_revoked: false },
+        where: {
+          user_id: userId,
+          OR: [{ is_revoked: false }, { is_revoked: null }],
+        },
         data: { is_revoked: true },
       });
-    } else if (currentJti) {
-      await this.prisma.user_sessions.updateMany({
+      await revokePushDevices(this.prisma, { userId, all: true });
+    } else {
+      const sessions = await this.prisma.user_sessions.findMany({
         where: {
           user_id: userId,
           jwt_id: currentJti,
           OR: [{ is_revoked: false }, { is_revoked: null }],
         },
-        data: { is_revoked: true },
+        select: { id: true },
       });
-    } else {
-      await this.prisma.user_sessions.updateMany({
-        where: { user_id: userId, is_revoked: false },
-        data: { is_revoked: true },
-      });
+      const ids = sessions.map((session) => session.id);
+      if (ids.length > 0) {
+        await this.prisma.user_sessions.updateMany({
+          where: { id: { in: ids } },
+          data: { is_revoked: true },
+        });
+        await revokePushDevices(this.prisma, { userId, sessionIds: ids });
+      }
+    }
+
+    if (deviceToken) {
+      await revokeOwnedPushToken(this.prisma, userId, deviceToken);
     }
 
     await this.prisma.activity_logs.create({
@@ -1928,14 +1960,22 @@ export class AuthService implements OnModuleInit {
       throw new BadRequestException('Current session identifier missing');
     }
 
-    await this.prisma.user_sessions.updateMany({
+    const others = await this.prisma.user_sessions.findMany({
       where: {
         user_id: userId,
-        jwt_id: { not: currentJti },
+        NOT: { jwt_id: currentJti },
         OR: [{ is_revoked: false }, { is_revoked: null }],
       },
-      data: { is_revoked: true },
+      select: { id: true },
     });
+    const ids = others.map((session) => session.id);
+    if (ids.length > 0) {
+      await this.prisma.user_sessions.updateMany({
+        where: { id: { in: ids } },
+        data: { is_revoked: true },
+      });
+      await revokePushDevices(this.prisma, { userId, sessionIds: ids });
+    }
 
     await this.prisma.activity_logs.create({
       data: {
@@ -1947,7 +1987,7 @@ export class AuthService implements OnModuleInit {
     return { message: 'Other sessions revoked successfully' };
   }
 
-  async getSessions(userId: string) {
+  async getSessions(userId: string, currentJti?: string) {
     const sessions = await this.prisma.user_sessions.findMany({
       where: { user_id: userId },
       orderBy: { created_at: 'desc' },
@@ -1961,10 +2001,102 @@ export class AuthService implements OnModuleInit {
         used_at: true,
         expires_at: true,
         created_at: true,
+        last_active_at: true,
+        jwt_id: true,
       },
     });
+    const pushes = await this.prisma.device_tokens.findMany({
+      where: {
+        user_id: userId,
+        is_active: true,
+        revoked_at: null,
+        session_id: { not: null },
+      },
+      select: { session_id: true },
+    });
+    const pushSessions = new Set(
+      pushes.map((row) => row.session_id).filter(Boolean),
+    );
+    const now = Date.now();
 
-    return { sessions };
+    return {
+      sessions: sessions.map((session) => ({
+        id: session.id,
+        device_name: session.device_name,
+        device_os: session.device_os,
+        ip_address: session.ip_address,
+        user_agent: session.user_agent,
+        is_revoked: session.is_revoked === true,
+        is_current: Boolean(currentJti && session.jwt_id === currentJti),
+        is_expired: Boolean(
+          session.expires_at && new Date(session.expires_at).getTime() <= now,
+        ),
+        created_at: session.created_at,
+        last_active_at:
+          session.last_active_at ?? session.used_at ?? session.created_at,
+        used_at: session.used_at,
+        expires_at: session.expires_at,
+        push_registered: pushSessions.has(session.id),
+      })),
+    };
+  }
+
+  async listPushDevices(userId: string, currentJti?: string) {
+    const rows = await this.prisma.device_tokens.findMany({
+      where: { user_id: userId },
+      orderBy: { last_seen: 'desc' },
+      include: {
+        session: {
+          select: {
+            id: true,
+            jwt_id: true,
+            device_name: true,
+            device_os: true,
+            ip_address: true,
+            user_agent: true,
+            is_revoked: true,
+            expires_at: true,
+            created_at: true,
+            last_active_at: true,
+            used_at: true,
+          },
+        },
+      },
+    });
+    const now = Date.now();
+    return {
+      devices: rows.map((row) => ({
+        id: row.id,
+        platform: row.platform,
+        is_active: row.is_active === true && !row.revoked_at,
+        revoked_at: row.revoked_at,
+        last_seen: row.last_seen,
+        created_at: row.created_at,
+        session: row.session
+          ? {
+              id: row.session.id,
+              device_name: row.session.device_name,
+              device_os: row.session.device_os,
+              ip_address: row.session.ip_address,
+              user_agent: row.session.user_agent,
+              is_revoked: row.session.is_revoked === true,
+              is_current: Boolean(
+                currentJti && row.session.jwt_id === currentJti,
+              ),
+              is_expired: Boolean(
+                row.session.expires_at &&
+                new Date(row.session.expires_at).getTime() <= now,
+              ),
+              created_at: row.session.created_at,
+              last_active_at:
+                row.session.last_active_at ??
+                row.session.used_at ??
+                row.session.created_at,
+              expires_at: row.session.expires_at,
+            }
+          : null,
+      })),
+    };
   }
 
   async revokeSession(userId: string, sessionId: string) {
@@ -1975,24 +2107,29 @@ export class AuthService implements OnModuleInit {
     if (!session || session.user_id !== userId) {
       throw new UnauthorizedException('Session not found');
     }
-    if (session.is_revoked) {
-      return { message: 'Session already revoked' };
+    if (!session.is_revoked) {
+      await this.prisma.user_sessions.update({
+        where: { id: sessionId },
+        data: { is_revoked: true },
+      });
+      await this.prisma.activity_logs.create({
+        data: {
+          user_id: userId,
+          activity: 'REVOKE_SESSION',
+          metadata: { session_id: sessionId },
+        },
+      });
     }
-
-    await this.prisma.user_sessions.update({
-      where: { id: sessionId },
-      data: { is_revoked: true },
+    await revokePushDevices(this.prisma, {
+      userId,
+      sessionIds: [sessionId],
     });
 
-    await this.prisma.activity_logs.create({
-      data: {
-        user_id: userId,
-        activity: 'REVOKE_SESSION',
-        metadata: { session_id: sessionId },
-      },
-    });
-
-    return { message: 'Session revoked successfully' };
+    return {
+      message: session.is_revoked
+        ? 'Session already revoked'
+        : 'Session revoked successfully',
+    };
   }
 
   async triggerHoneypot(path: string, ip?: string, userAgent?: string) {
@@ -2414,6 +2551,7 @@ export class AuthService implements OnModuleInit {
       where: { user_id: userId, is_revoked: false },
       data: { is_revoked: true },
     });
+    await revokePushDevices(this.prisma, { userId, all: true });
 
     // Log critical security event
     await this.logSecurityEvent(
@@ -2433,9 +2571,14 @@ export class AuthService implements OnModuleInit {
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async cleanupExpiredSessions() {
+    const now = new Date();
+    await this.prisma.device_tokens.updateMany({
+      where: { session: { expires_at: { lt: now } } },
+      data: { is_active: false, revoked_at: now },
+    });
     const deleted = await this.prisma.user_sessions.deleteMany({
       where: {
-        expires_at: { lt: new Date() },
+        expires_at: { lt: now },
       },
     });
 

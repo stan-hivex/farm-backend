@@ -14,7 +14,21 @@ describe('NotificationsService.sendNotification for support replies', () => {
         create: jest.fn().mockResolvedValue(notification),
       },
       device_tokens: {
-        findMany: jest.fn().mockResolvedValue([{ token: 'fcm-token' }]),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            token: 'fcm-token',
+            user_id: 'user-1',
+            is_active: true,
+            revoked_at: null,
+            session_id: 'sess-1',
+            session: {
+              id: 'sess-1',
+              user_id: 'user-1',
+              is_revoked: false,
+              expires_at: null,
+            },
+          },
+        ]),
         updateMany: jest.fn(),
       },
     };

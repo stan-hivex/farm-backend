@@ -23,6 +23,7 @@ import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 
 import { AuthService } from './auth.service';
+import { readPushToken } from '../notifications/push-device-registry';
 import {
   DeviceTokenDto,
   ResendEmailVerificationDto,
@@ -525,6 +526,7 @@ export class AuthController {
       user.id,
       body.token,
       body.platform,
+      user.jti,
     );
   }
 
@@ -542,8 +544,16 @@ export class AuthController {
   @ApiOperation({
     summary: 'Logout',
   })
-  logout(@CurrentUser() user: AuthUser) {
-    return this.authService.logout(user.id, user.jti);
+  logout(
+    @CurrentUser() user: AuthUser,
+    @Body() body?: Record<string, unknown>,
+  ) {
+    return this.authService.logout(
+      user.id,
+      user.jti,
+      false,
+      readPushToken(body),
+    );
   }
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -577,7 +587,19 @@ export class AuthController {
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'List active sessions for the current user' })
   getSessions(@CurrentUser() user: AuthUser) {
-    return this.authService.getSessions(user.id);
+    return this.authService.getSessions(user.id, user.jti);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Permissions('sessions:read')
+  @Get('devices')
+  @ApiBearerAuth('JWT')
+  @ApiOperation({
+    summary:
+      'List push devices registered to the current account. Tokens are not returned.',
+  })
+  getDevices(@CurrentUser() user: AuthUser) {
+    return this.authService.listPushDevices(user.id, user.jti);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
