@@ -13,6 +13,8 @@ import { creditPlatformInTx, feeFor, ruleFor } from '../fees/fee-defaults';
 import { chargeConsolidationInTx } from './consolidation';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend } from '../security/authorize-spend';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { paginate, paginationParams } from '../common/utils/pagination.util';
@@ -63,6 +65,7 @@ export class MarketplaceService {
     private readonly auth: AuthService,
     private readonly notifications: NotificationsService,
     @Optional() private readonly fees?: FeesService,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   sectors() {
@@ -275,7 +278,9 @@ export class MarketplaceService {
     projectId: string,
     dto: {
       amount: number;
-      pin: string;
+      pin?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
       accept_risk?: boolean;
       disclosure_version?: string;
     },
@@ -296,7 +301,7 @@ export class MarketplaceService {
       throw new BadRequestException(
         'Please read and accept the latest risk disclosure before investing (update the app if you do not see it).',
       );
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
 
     const project = await this.prisma.investment_projects.findUnique({
       where: { id: projectId },

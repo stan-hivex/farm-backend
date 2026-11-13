@@ -14,6 +14,8 @@ import { BusinessFinanceService } from './business-finance.service';
 import { BusinessWebhooksService } from './business-webhooks.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CustomerDto, InvoiceDto, PaymentLinkDto } from './business-ops.dto';
+import { SpendAuth } from '../security/authorize-spend';
+import { renderInvoicePdf } from './invoice-pdf';
 
 const INVOICE_STATUSES = [
   'draft',
@@ -483,7 +485,12 @@ export class BusinessCommerceService {
     };
   }
 
-  async payLink(payerId: string, code: string, pin: string, ip: string) {
+  async payLink(
+    payerId: string,
+    code: string,
+    pin: string | SpendAuth,
+    ip: string,
+  ) {
     const l = await this.prisma.business_payment_links.findUnique({
       where: { code },
     });
@@ -567,7 +574,7 @@ export class BusinessCommerceService {
   async payInvoice(
     payerId: string,
     invoiceNumber: string,
-    pin: string,
+    pin: string | SpendAuth,
     ip: string,
   ) {
     await this.markOverdue();
@@ -629,21 +636,52 @@ export class BusinessCommerceService {
   }
 
   /** Money moves only through the existing WalletsService.sendFunds (PIN, limits, fees, ledger). */
+  async invoicePdf(userId: string, id: string) {
+    const a = await this.access.resolve(userId, 'invoices:read');
+    const invoice = await this.getInvoice(userId, id);
+    const row = invoice.data;
+    const bytes = await renderInvoicePdf({
+      invoice_number: row.invoice_number,
+      business_name: a.business.trading_name || a.business.legal_name,
+      customer_name: row.customer?.name,
+      currency: row.currency,
+      total: Number(row.total),
+      subtotal: Number(row.subtotal),
+      status: row.status,
+      due_date: row.due_date,
+      notes: row.notes,
+      items: Array.isArray(row.items) ? row.items : [],
+      pay_url: row.pay_url,
+    });
+    return {
+      filename: `${row.invoice_number}.pdf`,
+      bytes,
+    };
+  }
+
   private async pay(
     payerId: string,
     businessId: string,
     ownerId: string,
     amount: number,
-    pin: string,
+    pin: string | SpendAuth,
     ip: string,
     description: string,
     source: string,
     sourceId: string,
   ) {
+    const spend = typeof pin === 'string' ? { pin } : pin;
     const w = await this.finance.walletFor(ownerId);
     const res = await this.wallets.sendFunds(
       payerId,
-      { recipient_identifier: w.wallet_address, amount, pin, description },
+      {
+        recipient_identifier: w.wallet_address,
+        amount,
+        pin: spend.pin,
+        biometric_auth: spend.biometric_auth,
+        device_fingerprint: spend.device_fingerprint,
+        description,
+      },
       ip,
       { merchantFee: true },
     );

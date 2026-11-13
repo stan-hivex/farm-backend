@@ -13,6 +13,8 @@ import {
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend, SpendAuth } from '../security/authorize-spend';
 import { WalletsService } from '../wallets/wallets.service';
 import { BusinessAccessService } from '../business-ops/business-access.service';
 import { BusinessFinanceService } from '../business-ops/business-finance.service';
@@ -73,6 +75,7 @@ export class AgentPaymentsService {
     private readonly finance: BusinessFinanceService,
     private readonly webhooks: BusinessWebhooksService,
     @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   private get env() {
@@ -294,12 +297,17 @@ export class AgentPaymentsService {
   async payIntent(
     payerId: string,
     id: string,
-    pin: string,
+    pin: string | SpendAuth,
     ip: string,
     channel = 'app',
   ) {
     this.ensure();
-    if (!pin) throw new BadRequestException('Transaction PIN is required');
+    await authorizeSpend(
+      this.auth,
+      this.security,
+      payerId,
+      typeof pin === 'string' ? { pin } : pin,
+    );
     await this.expireIntents({ id });
     const i = await this.prisma.payment_intents.findUnique({ where: { id } });
     if (!i || !i.live_mode) throw new NotFoundException('Payment not found');
@@ -320,12 +328,15 @@ export class AgentPaymentsService {
     let ref: string;
     try {
       const w = await this.finance.walletFor(b.owner_user_id);
+      const spend = typeof pin === 'string' ? { pin } : pin;
       const res = await this.wallets.sendFunds(
         payerId,
         {
           recipient_identifier: w.wallet_address,
           amount,
-          pin,
+          pin: spend.pin,
+          biometric_auth: spend.biometric_auth,
+          device_fingerprint: spend.device_fingerprint,
           description:
             `Payment to ${b.name}${i.description ? `: ${i.description}` : ''}`.slice(
               0,
@@ -399,11 +410,11 @@ export class AgentPaymentsService {
   async refundFromDashboard(
     userId: string,
     intentId: string,
-    dto: { amount?: number; reason?: string; pin: string },
+    dto: { amount?: number; reason?: string } & SpendAuth,
     idem?: string,
   ) {
     const a = await this.access.resolve(userId, 'payouts:create');
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     return this.refund(
       {
         businessId: a.business.id,
@@ -879,7 +890,12 @@ export class AgentPaymentsService {
   }
 
   /** The user approves an agent's request with their PIN. Caps are re-checked at this moment. */
-  async confirmRequest(userId: string, id: string, pin: string, ip: string) {
+  async confirmRequest(
+    userId: string,
+    id: string,
+    pin: string | SpendAuth,
+    ip: string,
+  ) {
     this.ensure();
     const r = await this.prisma.agent_payment_requests.findUnique({
       where: { id },

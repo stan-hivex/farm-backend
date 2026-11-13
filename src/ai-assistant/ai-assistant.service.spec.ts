@@ -381,7 +381,7 @@ describe('Mkulima pay_intent (Phase 9)', () => {
     expect(agent.payIntent).toHaveBeenCalledWith(
       U,
       IID,
-      '1234',
+      expect.objectContaining({ pin: '1234' }),
       'ip',
       'mkulima',
     );

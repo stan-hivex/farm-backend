@@ -23,4 +23,21 @@ describe('PrismaClientExceptionFilter', () => {
     expect(run('P2025')).toBe(404);
     expect(run('P2002')).toBe(500);
   });
+
+  it('turns an invalid UUID validation error into 400', () => {
+    const json = jest.fn();
+    const status = jest.fn(() => ({ json }));
+    const host: any = {
+      switchToHttp: () => ({ getResponse: () => ({ status }) }),
+    };
+    new PrismaClientExceptionFilter().catch(
+      new Prisma.PrismaClientValidationError(
+        'Inconsistent column data: Error creating UUID, found t at 1',
+        { clientVersion: 'test' },
+      ),
+      host,
+    );
+    expect(status.mock.calls[0][0]).toBe(400);
+    expect(json.mock.calls[0][0].message).toBe('Invalid id');
+  });
 });

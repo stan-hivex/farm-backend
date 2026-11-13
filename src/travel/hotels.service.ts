@@ -10,6 +10,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend } from '../security/authorize-spend';
+import { Optional } from '@nestjs/common';
 import type { HotelProvider } from './travel-provider';
 import {
   HOTEL_PROVIDER,
@@ -39,7 +42,9 @@ export interface HotelBookDto {
   prebook_id: string;
   expected_total_farm: number;
   idempotency_key: string;
-  pin: string;
+  pin?: string;
+  biometric_auth?: boolean;
+  device_fingerprint?: string;
   /** Set when the booking comes from a Mkulima proposal (links it in AI activity). */
   ai_action_id?: string;
   guest: {
@@ -66,6 +71,7 @@ export class HotelsService {
     private readonly auth: AuthService,
     private readonly travel: TravelService,
     @Inject(HOTEL_PROVIDER) private readonly hotels: HotelProvider,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   enabled() {
@@ -195,8 +201,7 @@ export class HotelsService {
       },
     });
     if (existing) return this.travel.view(existing);
-    if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     const g = dto.guest ?? ({} as HotelBookDto['guest']);
     const nm = (s: string) => String(s ?? '').trim();
     if (

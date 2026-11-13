@@ -11,6 +11,12 @@ import { computeFee, feeFor, ruleFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
+import { authorizeSpend, SpendAuth } from '../security/authorize-spend';
+import {
+  debitLocked,
+  lockWithFee,
+  unlockFunds,
+} from '../wallets/guarded-debit';
 import { PaystackService } from '../paystack/paystack.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -230,13 +236,10 @@ export class EscrowService {
           status: 'pending',
         },
       });
-      const updatedBuyerWallet = await tx.wallets.update({
-        where: { id: buyer.wallets[0].id },
-        data: {
-          balance: { decrement: fee },
-          locked_balance: { increment: dto.amount },
-        },
-      });
+      await lockWithFee(tx, buyer.wallets[0].id, fee, dto.amount);
+      const updatedBuyerWallet = {
+        balance: Number(buyer.wallets[0].balance ?? 0) - Number(fee),
+      };
       const activeContract = await tx.escrow_contracts.update({
         where: { id: c.id },
         data: { status: 'active', funded_at: new Date() },
@@ -705,7 +708,7 @@ export class EscrowService {
     escrowId: string,
     buyerId: string,
     amount: number,
-    pin: string,
+    pin: string | SpendAuth,
     label: string,
   ) {
     const part = Number(Number(amount).toFixed(2));
@@ -722,7 +725,12 @@ export class EscrowService {
       throw new BadRequestException(
         'Escrow is missing a buyer or seller wallet',
       );
-    await this.authService.verifyPin(buyerId, pin);
+    await authorizeSpend(
+      this.authService,
+      this.securityService,
+      buyerId,
+      typeof pin === 'string' ? { pin } : pin,
+    );
     const buyerWalletId = escrow.buyer_wallet_id;
     const sellerWalletId = escrow.seller_wallet_id;
     const sellerId = escrow.seller_id ?? '';
@@ -754,13 +762,13 @@ export class EscrowService {
       );
       const buyerWallet = projectFunded
         ? { balance: null }
-        : await tx.wallets.update({
-            where: { id: buyerWalletId },
-            data: {
-              locked_balance: { decrement: part },
-              balance: { decrement: part },
-            },
-          });
+        : await (async () => {
+            await debitLocked(tx, buyerWalletId, part);
+            const row = await tx.wallets.findUnique({
+              where: { id: buyerWalletId },
+            });
+            return { balance: row?.balance ?? null };
+          })();
       const sellerWallet = await tx.wallets.update({
         where: { id: sellerWalletId },
         data: { balance: { increment: toSeller } },
@@ -932,13 +940,13 @@ export class EscrowService {
       const projectFunded = Boolean(escrow.project_id);
       const updatedBuyerWallet = projectFunded
         ? { balance: null }
-        : await tx.wallets.update({
-            where: { id: escrow.buyer_wallet_id },
-            data: {
-              locked_balance: { decrement: amountLocked },
-              balance: { decrement: amountLocked },
-            },
-          });
+        : await (async () => {
+            await debitLocked(tx, escrow.buyer_wallet_id, amountLocked);
+            const row = await tx.wallets.findUnique({
+              where: { id: escrow.buyer_wallet_id! },
+            });
+            return { balance: row?.balance ?? null };
+          })();
       // Credit seller's wallet with amount minus release fee
       const updatedSellerWallet = await tx.wallets.update({
         where: { id: escrow.seller_wallet_id },
@@ -1118,10 +1126,13 @@ export class EscrowService {
       const updatedWallet =
         escrow.project_id || amount <= 0
           ? { balance: null }
-          : await tx.wallets.update({
-              where: { id: escrow.buyer_wallet_id },
-              data: { locked_balance: { decrement: amount } },
-            });
+          : await (async () => {
+              await unlockFunds(tx, escrow.buyer_wallet_id, amount);
+              const row = await tx.wallets.findUnique({
+                where: { id: escrow.buyer_wallet_id! },
+              });
+              return { balance: row?.balance ?? null };
+            })();
       const transaction = await tx.transactions.create({
         data: {
           transaction_reference: generateTxReference(),

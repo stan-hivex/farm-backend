@@ -191,7 +191,16 @@ export class NfcPayService {
   }
 
   /** Payer confirms with PIN. Single use and idempotent for the same payer. */
-  async pay(payerId: string, dto: { token: string; pin?: string }, ip: string) {
+  async pay(
+    payerId: string,
+    dto: {
+      token: string;
+      pin?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
+    },
+    ip: string,
+  ) {
     this.assertEnabled();
     const row = await this.load(dto.token).catch(async (e) => {
       // A replay after expiry by the payer who already paid gets the same receipt.
@@ -231,6 +240,8 @@ export class NfcPayService {
           recipient_identifier: w.wallet_address,
           amount: Number(row.amount),
           pin: dto.pin,
+          biometric_auth: dto.biometric_auth,
+          device_fingerprint: dto.device_fingerprint,
           description: row.description || 'Tap to pay',
         },
         ip,

@@ -14,6 +14,7 @@ import {
 import type { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsInt,
   IsNumber,
   IsObject,
@@ -22,8 +23,10 @@ import {
   IsUUID,
   Length,
   Max,
+  MaxLength,
   Min,
   Matches,
+  ValidateIf,
 } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { JwtGuard } from '../common/guards/jwt.guard';
@@ -33,7 +36,12 @@ import { BusinessAccessService } from '../business-ops/business-access.service';
 import { AgentPaymentsService } from './agent-payments.service';
 
 export class PinDto {
-  @IsString() @Length(4, 6) pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsString()
+  @Length(4, 6)
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
 }
 export class MandateBody {
   @IsUUID() business_id!: string;
@@ -64,7 +72,12 @@ export class RefundBody {
   idempotency_key?: string;
 }
 export class DashboardRefundBody extends RefundBody {
-  @IsString() @Length(4, 6) pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsString()
+  @Length(4, 6)
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
 }
 export class AgentRequestBody {
   @IsUUID() authorization_id!: string;
@@ -101,7 +114,7 @@ export class AgentPaymentsController {
     @Body() b: PinDto,
     @Req() req: Request,
   ) {
-    return this.svc.payIntent(u.id, id, b.pin, req.ip ?? '');
+    return this.svc.payIntent(u.id, id, b, req.ip ?? '');
   }
 
   @Get('authorizations') async mandates(@CurrentUser() u: any) {
@@ -138,7 +151,7 @@ export class AgentPaymentsController {
     @Body() b: PinDto,
     @Req() req: Request,
   ) {
-    return this.svc.confirmRequest(u.id, id, b.pin, req.ip ?? '');
+    return this.svc.confirmRequest(u.id, id, b, req.ip ?? '');
   }
 
   @Post('requests/:id/reject')

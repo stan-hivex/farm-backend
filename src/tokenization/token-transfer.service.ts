@@ -8,6 +8,8 @@ import {
 import { Interval } from '@nestjs/schedule';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend, SpendAuth } from '../security/authorize-spend';
 import { AlgorandWalletClient } from '../chain-wallet/algorand-wallet.client';
 import { FeeTopupService } from '../chain-wallet/fee-topup.service';
 import { walletSigner } from '../chain-wallet/key-vault';
@@ -45,20 +47,20 @@ export class TokenTransferService {
     private readonly chain: AlgorandWalletClient,
     private readonly asa: AlgorandAsaClient,
     @Optional() private readonly topup?: FeeTopupService,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   async send(
     userId: string,
     allocationId: string,
-    dto: { recipient_identifier: string; units: number; pin: string },
+    dto: { recipient_identifier: string; units: number } & SpendAuth,
   ) {
     if (!transfersEnabled())
       throw new BadRequestException('Token transfers are not switched on yet');
     const units = dto.units;
     if (!Number.isInteger(units) || units < 1)
       throw new BadRequestException('Units must be a whole number above 0');
-    if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     const a = await this.prisma.token_allocations.findUnique({
       where: { id: allocationId },
       include: { token: { include: { project: true } } },

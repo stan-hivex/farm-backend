@@ -9,6 +9,7 @@ import { BusinessAccessService } from '../business-ops/business-access.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { AlgorandWalletClient } from '../chain-wallet/algorand-wallet.client';
 import { creditPlatformInTx } from '../fees/fee-defaults';
+import { debitAvailable } from '../wallets/guarded-debit';
 
 export const distributionsEnabled = (env: NodeJS.ProcessEnv = process.env) =>
   env.TOKEN_DISTRIBUTIONS_ENABLED === 'true';
@@ -336,10 +337,7 @@ export class TokenDistributionService {
           });
           bw = admin?.wallets?.[0] ?? null;
           if (!bw) throw new BadRequestException('Platform wallet not found');
-          await tx.wallets.update({
-            where: { id: bw.id },
-            data: { balance: { decrement: debit } },
-          });
+          await debitAvailable(tx, bw.id, debit);
         } else {
           bw = await tx.wallets.findFirst({
             where: { user_id: owner, is_active: true },

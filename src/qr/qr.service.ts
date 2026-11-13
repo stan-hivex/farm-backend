@@ -17,6 +17,7 @@ import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
+import { debitAvailable } from '../wallets/guarded-debit';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import {
   MERCHANT_CHECKOUT_URL,
@@ -371,10 +372,10 @@ export class QrService {
           processed_at: new Date(),
         },
       });
-      const updatedCustomerWallet = await tx.wallets.update({
-        where: { id: customerWallet.id },
-        data: { balance: { decrement: totalOut } },
-      });
+      await debitAvailable(tx, customerWallet.id, totalOut);
+      const updatedCustomerWallet = {
+        balance: Number(customerWallet.balance) - totalOut,
+      };
       const updatedPersonal = await tx.wallets.update({
         where: { id: merchantPersonalWallet.id },
         data: { balance: { increment: merchantNet } },

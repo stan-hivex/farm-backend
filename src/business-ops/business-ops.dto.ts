@@ -16,6 +16,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { BUSINESS_ROLES } from './permissions';
@@ -24,12 +25,25 @@ export class PinDto {
   @IsString() @IsNotEmpty() @MaxLength(12) pin!: string;
 }
 
-export class AddMemberDto extends PinDto {
+/** PIN, or biometrics via SecurityService.verifyDevice. PIN stays required unless biometric_auth is true. */
+export class SpendAuthDto {
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(12)
+  pin?: string;
+
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
+}
+
+export class AddMemberDto extends SpendAuthDto {
   @IsString() @IsNotEmpty() @MaxLength(255) identifier!: string;
   @IsIn(BUSINESS_ROLES.filter((r) => r !== 'owner')) role!: string;
 }
 
-export class UpdateMemberDto extends PinDto {
+export class UpdateMemberDto extends SpendAuthDto {
   @IsIn(BUSINESS_ROLES.filter((r) => r !== 'owner')) role!: string;
 }
 
@@ -122,6 +136,8 @@ export class BusinessEscrowDto {
   @Type(() => MilestoneDto)
   milestones?: MilestoneDto[];
   @IsOptional() @IsDateString() expires_at?: string;
+  /** When true, keep the escrow as a draft. Otherwise the buyer is notified immediately. */
+  @IsOptional() @IsBoolean() save_as_draft?: boolean;
 }
 
 export class ProfileDto {

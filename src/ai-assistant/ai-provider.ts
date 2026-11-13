@@ -119,7 +119,9 @@ export class AiProvider {
       });
       if (!res.ok) {
         this.logger.warn(`AI provider HTTP ${res.status}`);
-        throw new ServiceUnavailableException('AI provider error');
+        throw new ServiceUnavailableException(
+          'Mkulima could not complete that request. Please try again shortly.',
+        );
       }
       const data = (await res.json()) as {
         choices?: { message?: ChatMessage }[];
@@ -129,7 +131,7 @@ export class AiProvider {
       const msg = data.choices?.[0]?.message;
       if (!msg)
         throw new ServiceUnavailableException(
-          'AI provider returned no message',
+          'Mkulima did not return a reply. Please try again shortly.',
         );
       return {
         role: 'assistant',
@@ -140,7 +142,9 @@ export class AiProvider {
     } catch (e) {
       if (e instanceof ServiceUnavailableException) throw e;
       this.logger.warn(`AI provider request failed: ${(e as Error).name}`);
-      throw new ServiceUnavailableException('AI provider unavailable');
+      throw new ServiceUnavailableException(
+        'Mkulima is temporarily unavailable. Please try again shortly.',
+      );
     } finally {
       clearTimeout(timer);
     }

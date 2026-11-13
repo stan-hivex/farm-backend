@@ -1,6 +1,7 @@
 import { NotificationsModule } from '../notifications/notifications.module';
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { SecurityModule } from '../security/security.module';
 import { WalletsModule } from '../wallets/wallets.module';
 import { BusinessOpsModule } from '../business-ops/business-ops.module';
 import { KycGuard } from '../common/guards/kyc.guard';
@@ -11,7 +12,13 @@ import {
 } from './agent-payments.controller';
 
 @Module({
-  imports: [AuthModule, WalletsModule, BusinessOpsModule, NotificationsModule],
+  imports: [
+    AuthModule,
+    WalletsModule,
+    BusinessOpsModule,
+    NotificationsModule,
+    SecurityModule,
+  ],
   controllers: [AgentPaymentsController, BusinessIntentsController],
   providers: [AgentPaymentsService, KycGuard],
   exports: [AgentPaymentsService],

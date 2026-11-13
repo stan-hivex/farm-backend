@@ -1,7 +1,30 @@
 ﻿import { Injectable, NestMiddleware, Logger, Optional } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
+import { createHash } from 'crypto';
 import { RedisService } from '../redis/redis.service';
 import { v4 as uuidv4 } from 'uuid';
+
+/** Scope the lock to the authenticated user so two users can reuse a key. */
+export function idempotencyScope(req: Request): string {
+  const header = req.headers.authorization;
+  const token =
+    typeof header === 'string' && header.startsWith('Bearer ')
+      ? header.slice(7).trim()
+      : '';
+  if (!token) return 'anon';
+  const part = token.split('.')[1];
+  if (part) {
+    try {
+      const json = JSON.parse(
+        Buffer.from(part, 'base64url').toString('utf8'),
+      ) as { sub?: unknown };
+      if (typeof json.sub === 'string' && json.sub.length > 0) return json.sub;
+    } catch {
+      // Fall through to a hash of the opaque token.
+    }
+  }
+  return createHash('sha256').update(token).digest('hex').slice(0, 16);
+}
 
 @Injectable()
 export class IdempotencyMiddleware implements NestMiddleware {
@@ -20,7 +43,7 @@ export class IdempotencyMiddleware implements NestMiddleware {
       req.headers['Idempotency-key'];
     if (!keyHeader) return next();
 
-    const key = `idempotency:${String(keyHeader)}`;
+    const key = `idempotency:${idempotencyScope(req)}:${String(keyHeader)}`;
     const ttl = Number(process.env.IDEMPOTENCY_KEY_TTL_MS || 60000);
     const client = this.redis?.getClient();
     if (!client) {

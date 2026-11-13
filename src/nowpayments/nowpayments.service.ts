@@ -13,6 +13,25 @@ import { createHmac } from 'crypto';
 
 type NowPaymentsRecord = Record<string, any>;
 
+/** Turn provider minimum and estimate failures into a message the app can show. */
+export function nowPaymentsUserMessage(
+  providerMessage: unknown,
+): string | null {
+  if (typeof providerMessage !== 'string') return null;
+  const text = providerMessage.trim();
+  if (!text) return null;
+  if (/less than minimal/i.test(text)) {
+    const amount = text.match(/([0-9]+(?:\.[0-9]+)?)/);
+    return amount
+      ? `This amount is below the NOWPayments minimum (they rejected ${amount[1]}). Increase the deposit and try again.`
+      : 'This amount is below the NOWPayments minimum. Increase the deposit and try again.';
+  }
+  if (/can\s*not get estimate|cannot get estimate|estimate from/i.test(text)) {
+    return 'This coin cannot be priced right now. Choose another network or try again shortly.';
+  }
+  return null;
+}
+
 @Injectable()
 export class NowpaymentsService {
   private readonly logger = new Logger(NowpaymentsService.name);
@@ -113,6 +132,8 @@ export class NowpaymentsService {
               : ''
           }`,
         );
+        const friendly = nowPaymentsUserMessage(providerMessage);
+        if (friendly) throw new BadRequestException(friendly);
         if (status && status >= 400 && status < 500) {
           throw new BadGatewayException(
             typeof providerMessage === 'string'

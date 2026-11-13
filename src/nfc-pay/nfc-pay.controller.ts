@@ -12,6 +12,7 @@ import {
 import type { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsNumber,
   IsOptional,
   IsString,
@@ -33,6 +34,8 @@ class CreateNfcRequestDto {
 class PayNfcDto {
   @IsString() @MaxLength(400) token!: string;
   @IsOptional() @IsString() @MaxLength(12) pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
 }
 
 @ApiTags('Tap to pay')

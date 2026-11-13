@@ -8,6 +8,7 @@ import { WithdrawModule } from '../withdraw/withdraw.module';
 import { ApiPayoutsService } from './api-payouts.service';
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { SecurityModule } from '../security/security.module';
 import { BusinessOpsModule } from '../business-ops/business-ops.module';
 import { ApiKeysService } from './api-keys.service';
 import { BusinessApiKeyGuard } from './api-key-auth.guard';
@@ -19,6 +20,7 @@ import { PublicApiController } from './public-api.controller';
 @Module({
   imports: [
     AuthModule,
+    SecurityModule,
     BusinessOpsModule,
     WithdrawModule,
     ProjectMarketplaceModule,

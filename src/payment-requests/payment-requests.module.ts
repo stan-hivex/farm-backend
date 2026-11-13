@@ -5,9 +5,16 @@ import { PrismaModule } from '../database/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { WebsocketModule } from '../websocket/websocket.module';
+import { SecurityModule } from '../security/security.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, NotificationsModule, WebsocketModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    NotificationsModule,
+    WebsocketModule,
+    SecurityModule,
+  ],
   providers: [PaymentRequestsService],
   controllers: [PaymentRequestsController],
   exports: [PaymentRequestsService],

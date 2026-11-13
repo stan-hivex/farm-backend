@@ -5,6 +5,7 @@ import { EscrowModule } from '../escrow/escrow.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { QrPaymentsModule } from '../qr-payments/qr-payments.module';
 import { CurrencyModule } from '../currency/currency.module';
+import { SecurityModule } from '../security/security.module';
 import { BusinessWebCheckoutService } from './business-web-checkout.service';
 import { BusinessWebCheckoutController } from './business-web-checkout.controller';
 import { BusinessAccessService } from './business-access.service';
@@ -26,6 +27,7 @@ import {
     NotificationsModule,
     QrPaymentsModule,
     CurrencyModule,
+    SecurityModule,
   ],
   controllers: [
     BusinessOpsController,

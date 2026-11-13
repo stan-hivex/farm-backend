@@ -13,6 +13,8 @@ import { feeFor } from '../fees/fee-defaults';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend } from '../security/authorize-spend';
 import { RateService } from '../chain-wallet/rate.service';
 import { generateTxReference } from '../common/utils/reference.util';
 import { Inject } from '@nestjs/common';
@@ -34,7 +36,9 @@ export interface BookDto {
   offer_id: string;
   passengers: Passenger[];
   expected_total_farm: number;
-  pin: string;
+  pin?: string;
+  biometric_auth?: boolean;
+  device_fingerprint?: string;
   idempotency_key: string;
   ai_action_id?: string;
 }
@@ -49,6 +53,7 @@ export class TravelService {
     @Inject(FLIGHT_PROVIDER) private readonly flights: FlightProvider,
     @Optional() private readonly notifications?: NotificationsService,
     @Optional() private readonly fees?: FeesService,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   /** Centralized in-app notification; never blocks or fails a booking. */
@@ -317,8 +322,7 @@ export class TravelService {
     });
     if (existing) return this.view(existing);
 
-    if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
 
     const offer = await this.offerFull(dto.offer_id);
     if (!offer.bookable || offer.price_farm == null)

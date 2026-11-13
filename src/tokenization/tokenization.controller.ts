@@ -20,6 +20,7 @@ import {
   Length,
   Matches,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -45,7 +46,12 @@ export class SellBackDto {
 export class TokenSendDto {
   @IsString() @Length(1, 100) recipient_identifier!: string;
   @IsInt() @Min(1) units!: number;
-  @IsString() @Length(4, 12) pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsString()
+  @Length(4, 12)
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
 }
 export class DistributionDto {
   @IsNumber({ maxDecimalPlaces: 2 }) @Min(1) amount!: number;

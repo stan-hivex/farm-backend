@@ -715,12 +715,7 @@ describe('Consolidation fund (once at round close, 15% of raised, refundable per
     expect(r.data.amount).toBe(120);
     expect(
       tx.wallets.update.mock.calls.map((c: any) => c[0].data.balance),
-    ).toEqual([
-      { increment: 90 },
-      { decrement: 90 },
-      { increment: 30 },
-      { decrement: 30 },
-    ]);
+    ).toEqual([{ increment: 90 }, { increment: 30 }]);
     await expect(
       refundCtx(
         { ...proj, consolidation_refunded: 120 },

@@ -34,6 +34,53 @@ export function configuredCoinLimits(
   return out;
 }
 
+const USDC_TICKERS = [
+  'usdc',
+  'usdcalgo',
+  'usdcsol',
+  'usdcarb',
+  'usdcbase',
+  'usdcmatic',
+  'usdcbsc',
+  'usdcerc20',
+];
+
+/**
+ * Map an app ticker onto the NOWPayments code. `usdc` prefers the exact code,
+ * then Algorand USDC (`usdcalgo`), then any other USDC network the provider lists.
+ * Returns null when an availability list is given and nothing matches.
+ */
+export function normalizeProviderCurrency(
+  input: string,
+  available?: string[],
+): string | null {
+  const compact = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  if (!/^[a-z0-9]{2,20}$/.test(compact)) return null;
+  const aliases: Record<string, string[]> = {
+    usdc: USDC_TICKERS,
+    usdcalgo: ['usdcalgo', 'usdc'],
+    usdcalgorand: ['usdcalgo', 'usdc'],
+    usdcsol: ['usdcsol', 'usdc'],
+    usdt: ['usdttrc20', 'usdterc20', 'usdtmatic', 'usdtsol', 'usdtbsc', 'usdt'],
+  };
+  let candidates = aliases[compact] ?? [compact];
+  if (compact.startsWith('usdc') && !aliases[compact]) {
+    candidates = [compact, ...USDC_TICKERS];
+  }
+  if (available) {
+    const hit = candidates.find((code) => available.includes(code));
+    if (hit) return hit;
+    if (compact === 'usdc' || compact.startsWith('usdc')) {
+      return available.find((code) => code.startsWith('usdc')) ?? null;
+    }
+    return null;
+  }
+  return candidates[0];
+}
+
 export function coinLimitFor(
   currency: string,
   env: Record<string, string | undefined> = process.env,

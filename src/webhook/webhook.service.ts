@@ -28,6 +28,7 @@ import type { Queue } from 'bull';
 import type { Redis } from 'ioredis';
 import { verifyPaystackSignature } from '../payments/utils/paystack-webhook.util';
 import { resolveDepositCreditAmount } from '../deposit/deposit.utils';
+import { settleWithdrawal, unlockFunds } from '../wallets/guarded-debit';
 import { QrPaymentsService } from '../qr-payments/qr-payments.service';
 import { NowpaymentsService } from '../nowpayments/nowpayments.service';
 import { BusinessWebCheckoutService } from '../business-ops/business-web-checkout.service';
@@ -2616,15 +2617,12 @@ export class WebhookService {
     const withdrawAmount = Number(transaction.amount);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.wallets.update({
-        where: { id: wallet.id },
-        data: {
-          balance: { decrement: withdrawAmount },
-          locked_balance: {
-            decrement: Math.min(previousLocked, withdrawAmount),
-          },
-        },
-      });
+      await settleWithdrawal(
+        tx,
+        wallet.id,
+        withdrawAmount,
+        Math.min(previousLocked, withdrawAmount),
+      );
 
       await tx.ledger_entries.create({
         data: {
@@ -2692,10 +2690,7 @@ export class WebhookService {
     );
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.wallets.update({
-        where: { id: wallet.id },
-        data: { locked_balance: { decrement: unlockAmount } },
-      });
+      if (unlockAmount > 0) await unlockFunds(tx, wallet.id, unlockAmount);
 
       await tx.transactions.updateMany({
         where: { id: transaction.id, status: { not: 'failed' } },

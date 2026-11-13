@@ -7,6 +7,10 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend, SpendAuth } from '../security/authorize-spend';
+import { debitAvailable } from '../wallets/guarded-debit';
+import { Optional } from '@nestjs/common';
 import { paginate, paginationParams } from '../common/utils/pagination.util';
 import { BusinessAccessService } from './business-access.service';
 import { BusinessWebhooksService } from './business-webhooks.service';
@@ -52,6 +56,7 @@ export class BusinessFinanceService {
     private readonly access: BusinessAccessService,
     private readonly auth: AuthService,
     private readonly webhooks: BusinessWebhooksService,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   /**
@@ -139,7 +144,7 @@ export class BusinessFinanceService {
    */
   async moveToPersonal(
     userId: string,
-    dto: { amount: number; pin?: string; note?: string },
+    dto: { amount: number; note?: string } & SpendAuth,
   ) {
     if (!businessWalletEnabled())
       throw new BadRequestException(
@@ -153,8 +158,7 @@ export class BusinessFinanceService {
     const amount = Number(dto.amount);
     if (!(amount > 0) || Math.round(amount * 100) / 100 !== amount)
       throw new BadRequestException('Amount must be positive (2 decimals)');
-    if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     const biz = await this.walletFor(a.business.owner_user_id);
     if (biz.wallet_type !== 'merchant')
       throw new BadRequestException('This business has no separate wallet yet');
@@ -164,15 +168,9 @@ export class BusinessFinanceService {
       const me = await personalWalletOf(tx, userId);
       if (!me || me.id === biz.id)
         throw new NotFoundException('Personal wallet not found');
-      const took = await tx.wallets.updateMany({
-        where: { id: biz.id, is_frozen: false },
-        data: { balance: { decrement: amount } },
-      });
+      await debitAvailable(tx, biz.id, amount);
       const after = await tx.wallets.findUnique({ where: { id: biz.id } });
-      if (
-        !took.count ||
-        Number(after!.balance) - Number(after!.locked_balance) < 0
-      )
+      if (!after)
         throw new BadRequestException('Not enough available business balance');
       const credited = await tx.wallets.update({
         where: { id: me.id },
@@ -205,8 +203,8 @@ export class BusinessFinanceService {
             wallet_id: biz.id,
             entry_type: 'debit',
             amount,
-            balance_before: Number(after!.balance) + amount,
-            balance_after: Number(after!.balance),
+            balance_before: Number(after.balance) + amount,
+            balance_after: Number(after.balance),
             description: 'Move to personal',
             category: 'business_to_personal',
           },
@@ -227,7 +225,7 @@ export class BusinessFinanceService {
           transaction_reference: ref,
           amount,
           fee: 0,
-          business_balance: Number(after!.balance),
+          business_balance: Number(after.balance),
           personal_balance: Number(credited.balance),
         },
       };

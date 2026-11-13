@@ -65,6 +65,7 @@ describe('EscrowService biometric authorization', () => {
           .mockResolvedValueOnce({ balance: 99.62 })
           .mockResolvedValueOnce({ balance: 0.38 }),
       },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       transactions: {
         create: jest.fn().mockResolvedValue({ transaction_reference: 'tx-1' }),
       },
@@ -154,7 +155,9 @@ describe('EscrowService dispute resolution', () => {
       },
       wallets: {
         update: jest.fn().mockResolvedValue({ balance: 100 }),
+        findUnique: jest.fn().mockResolvedValue({ balance: 100 }),
       },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       transactions: {
         create: jest.fn().mockResolvedValue({
           transaction_reference: 'refund-reference',
@@ -192,10 +195,7 @@ describe('EscrowService dispute resolution', () => {
       { adminId: 'admin-1', note: 'Refund for buyer' },
     );
 
-    expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
-      where: { id: 'buyer-wallet' },
-      data: { locked_balance: { decrement: 100 } },
-    });
+    expect(tx.$executeRaw).toHaveBeenCalled();
     expect(tx.transactions.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         amount: 100,
@@ -240,7 +240,9 @@ describe('EscrowService dispute resolution', () => {
           .mockResolvedValueOnce({ balance: 0 })
           .mockResolvedValueOnce({ balance: 99 })
           .mockResolvedValueOnce({ balance: 1 }),
+        findUnique: jest.fn().mockResolvedValue({ balance: 0 }),
       },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       transactions: {
         create: jest.fn().mockResolvedValue({
           transaction_reference: 'release-reference',
@@ -612,7 +614,9 @@ describe('EscrowService creation fee', () => {
           .fn()
           .mockResolvedValueOnce({ balance: 100 })
           .mockResolvedValueOnce({ balance: 1.5 }),
+        findUnique: jest.fn().mockResolvedValue({ balance: 100 }),
       },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       transactions: {
         create: jest.fn().mockResolvedValue({
           transaction_reference: 'escrow-reference',
@@ -677,14 +681,8 @@ describe('EscrowService creation fee', () => {
       },
       include: { wallets: { where: { is_active: true }, take: 1 } },
     });
+    expect(tx.$executeRaw).toHaveBeenCalled();
     expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
-      where: { id: 'buyer-wallet' },
-      data: {
-        balance: { decrement: 1.5 },
-        locked_balance: { increment: 100 },
-      },
-    });
-    expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
       where: { id: 'superadmin-wallet' },
       data: { balance: { increment: 1.5 } },
     });
@@ -779,7 +777,9 @@ describe('EscrowService release retries', () => {
           .mockResolvedValueOnce({ balance: 0 })
           .mockResolvedValueOnce({ balance: 98.5 })
           .mockResolvedValueOnce({ balance: 1.5 }),
+        findUnique: jest.fn().mockResolvedValue({ balance: 0 }),
       },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       transactions: {
         create: jest.fn().mockResolvedValue({
           id: 'release-transaction',
@@ -827,14 +827,8 @@ describe('EscrowService release retries', () => {
         data: expect.objectContaining({ status: 'completed' }),
       }),
     );
+    expect(tx.$executeRaw).toHaveBeenCalled();
     expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
-      where: { id: 'buyer-wallet' },
-      data: {
-        locked_balance: { decrement: 100 },
-        balance: { decrement: 100 },
-      },
-    });
-    expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
       where: { id: 'seller-wallet' },
       data: { balance: { increment: 98.5 } },
     });

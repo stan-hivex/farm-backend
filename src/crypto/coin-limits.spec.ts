@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import {
   assertCoinAmount,
   configuredCoinLimits,
+  normalizeProviderCurrency,
   resolveCoinBounds,
 } from './coin-limits';
 
@@ -32,6 +33,16 @@ describe('per-coin crypto limits', () => {
       if (prev === undefined) delete process.env.CRYPTO_COIN_LIMITS;
       else process.env.CRYPTO_COIN_LIMITS = prev;
     }
+  });
+
+  it('maps USDC onto the provider ticker, preferring Algorand when plain usdc is absent', () => {
+    expect(normalizeProviderCurrency('USDC')).toBe('usdc');
+    expect(
+      normalizeProviderCurrency('USDC', ['btc', 'usdcalgo', 'usdttrc20']),
+    ).toBe('usdcalgo');
+    expect(normalizeProviderCurrency('usdcalgorand', ['usdc'])).toBe('usdc');
+    expect(normalizeProviderCurrency('USDC', ['btc'])).toBeNull();
+    expect(normalizeProviderCurrency('n')).toBeNull();
   });
 
   it('rejects amounts outside the coin bounds', () => {

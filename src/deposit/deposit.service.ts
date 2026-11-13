@@ -3,6 +3,7 @@ import { cleanTransactionDescription } from '../common/utils/transaction-descrip
 import {
   Injectable,
   BadRequestException,
+  HttpException,
   Logger,
   Optional,
 } from '@nestjs/common';
@@ -26,8 +27,21 @@ import {
 import {
   assertCoinAmount,
   configuredCoinLimits,
+  normalizeProviderCurrency,
   resolveCoinBounds,
 } from '../crypto/coin-limits';
+
+function httpErrorText(error: HttpException): string {
+  const raw = error.getResponse();
+  if (typeof raw === 'string') return raw;
+  if (raw && typeof raw === 'object' && 'message' in raw) {
+    const message = (raw as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+    if (Array.isArray(message))
+      return message.filter((part) => typeof part === 'string').join(', ');
+  }
+  return error.message;
+}
 
 const MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD = 2;
 const STALE_NOWPAYMENTS_DEPOSIT_MS = 24 * 60 * 60 * 1000;
@@ -58,22 +72,93 @@ export class DepositService {
     return this.nowpayments.estimateCheckout(amountUsd, currency);
   }
 
-  async getNowpaymentsCryptoMinimum(currency: string) {
-    const normalizedCurrency = currency.trim().toLowerCase();
-    const currencies = await this.nowpayments.getAvailableCurrencies();
-    if (!currencies.includes(normalizedCurrency)) {
+  private unavailableLimits(currency: string, message: string) {
+    const bounds = resolveCoinBounds(currency);
+    return {
+      data: {
+        currency,
+        available: false,
+        message,
+        min_amount: bounds.min_amount,
+        max_amount: bounds.max_amount,
+        minimumDepositUsd: MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD,
+      },
+    };
+  }
+
+  private async resolveListedCurrency(currency: string) {
+    let currencies: string[];
+    try {
+      currencies = await this.nowpayments.getAvailableCurrencies();
+    } catch (error) {
+      if (error instanceof HttpException && error.getStatus() < 500)
+        throw error;
+      return {
+        currency: null as string | null,
+        unavailable: this.unavailableLimits(
+          currency.trim().toLowerCase(),
+          'Crypto limits are temporarily unavailable. The minimum deposit is USD 2.00.',
+        ),
+      };
+    }
+    const normalized = normalizeProviderCurrency(currency, currencies);
+    if (!normalized) {
       throw new BadRequestException(
         'The selected cryptocurrency is not currently available',
       );
     }
-    const minimum =
-      await this.nowpayments.getMinimumPaymentAmount(normalizedCurrency);
-    const bounds = resolveCoinBounds(normalizedCurrency, minimum.minimumAmount);
-    return { data: { ...minimum, ...bounds } };
+    return { currency: normalized, unavailable: null };
+  }
+
+  async getNowpaymentsCryptoMinimum(currency: string) {
+    const resolved = await this.resolveListedCurrency(currency);
+    if (!resolved.currency) return resolved.unavailable;
+    try {
+      const minimum = await this.nowpayments.getMinimumPaymentAmount(
+        resolved.currency,
+      );
+      const bounds = resolveCoinBounds(
+        resolved.currency,
+        minimum.minimumAmount,
+      );
+      return {
+        data: {
+          ...minimum,
+          ...bounds,
+          available: true,
+          minimumDepositUsd: Math.max(
+            MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD,
+            minimum.minimumUsd,
+          ),
+        },
+      };
+    } catch (error) {
+      return this.unavailableLimits(
+        resolved.currency,
+        error instanceof HttpException
+          ? httpErrorText(error)
+          : 'Limits for this coin are temporarily unavailable.',
+      );
+    }
   }
 
   async getCryptoLimits(currency?: string) {
-    if (!currency) return { data: { coins: configuredCoinLimits() } };
+    if (!currency) {
+      const coins = configuredCoinLimits();
+      return {
+        data: {
+          coins,
+          limits_configured: Object.keys(coins).length > 0,
+          minimum_deposit_usd: MIN_NOWPAYMENTS_CRYPTO_DEPOSIT_USD,
+          ...(Object.keys(coins).length
+            ? {}
+            : {
+                message:
+                  'Per-coin maximums are not configured. The minimum crypto deposit is USD 2.00.',
+              }),
+        },
+      };
+    }
     return this.getNowpaymentsCryptoMinimum(currency);
   }
 
@@ -91,25 +176,23 @@ export class DepositService {
       throw new BadRequestException('Enter a valid USD amount');
     }
 
-    const currencies = await this.nowpayments.getAvailableCurrencies();
-    if (!currencies.includes(normalizedCurrency)) {
+    const resolved = await this.resolveListedCurrency(normalizedCurrency);
+    if (!resolved.currency) {
       throw new BadRequestException(
-        'The selected cryptocurrency is not currently available',
+        resolved.unavailable?.data.message ||
+          'This coin cannot be priced right now.',
       );
     }
+    const listed = resolved.currency;
 
     const [estimatedAmount, minimum] = await Promise.all([
-      this.nowpayments.estimateAmount(
-        normalizedAmount,
-        'usd',
-        normalizedCurrency,
-      ),
-      this.nowpayments.getMinimumPaymentAmount(normalizedCurrency),
+      this.nowpayments.estimateAmount(normalizedAmount, 'usd', listed),
+      this.nowpayments.getMinimumPaymentAmount(listed),
     ]);
 
     return {
       data: {
-        currency: normalizedCurrency,
+        currency: listed,
         priceAmount: normalizedAmount,
         estimatedAmount,
         minimumAmount: minimum.minimumAmount,
@@ -145,19 +228,21 @@ export class DepositService {
     if (!/^[a-z0-9]{2,20}$/.test(payCurrency ?? '')) {
       throw new BadRequestException('Choose a valid NOWPayments currency');
     }
-    const currencies = await this.nowpayments.getAvailableCurrencies();
-    if (!currencies.includes(payCurrency)) {
+    const resolvedPay = await this.resolveListedCurrency(payCurrency);
+    if (!resolvedPay.currency) {
       throw new BadRequestException(
-        'The selected cryptocurrency is not currently available',
+        resolvedPay.unavailable?.data.message ||
+          'This coin cannot be priced right now. Choose another network or try again shortly.',
       );
     }
-    const minimum = await this.nowpayments.getMinimumPaymentAmount(payCurrency);
+    const listedPay = resolvedPay.currency;
+    const minimum = await this.nowpayments.getMinimumPaymentAmount(listedPay);
     const estimatedCryptoAmount = await this.nowpayments.estimateAmount(
       priceAmount,
       'usd',
-      payCurrency,
+      listedPay,
     );
-    assertCoinAmount(payCurrency, estimatedCryptoAmount, minimum.minimumAmount);
+    assertCoinAmount(listedPay, estimatedCryptoAmount, minimum.minimumAmount);
 
     const wallet = await this.prisma.wallets.findFirst({
       where: { user_id: userId, is_active: true, wallet_type: 'user' },
@@ -207,7 +292,7 @@ export class DepositService {
             amount_farm: amountFarm,
             amount_usd: priceAmount,
             currency_fiat: 'USD',
-            pay_currency: payCurrency,
+            pay_currency: listedPay,
             farm_usd_rate: rate.farm_usd_rate,
           },
         },
@@ -216,13 +301,26 @@ export class DepositService {
     });
 
     try {
-      const payment = await this.nowpayments.createPayment({
-        priceAmount,
-        priceCurrency,
-        payCurrency,
-        orderId: reference,
-        description: `FARM crypto deposit ${reference}`,
-      });
+      let payment;
+      try {
+        payment = await this.nowpayments.createPayment({
+          priceAmount,
+          priceCurrency,
+          payCurrency: listedPay,
+          orderId: reference,
+          description: `FARM crypto deposit ${reference}`,
+        });
+      } catch (error) {
+        if (
+          error instanceof BadRequestException &&
+          /minimum/i.test(error.message)
+        ) {
+          throw new BadRequestException(
+            `Minimum for ${listedPay.toUpperCase()} is ${minimum.minimumAmount} ${listedPay.toUpperCase()} (about USD ${minimum.minimumUsd.toFixed(2)}). ${error.message}`,
+          );
+        }
+        throw error;
+      }
       await this.prisma.$transaction([
         this.prisma.deposit.update({
           where: { id: deposit.id },
@@ -245,7 +343,7 @@ export class DepositService {
               amount_farm: amountFarm,
               amount_usd: priceAmount,
               currency_fiat: priceCurrency,
-              pay_currency: payCurrency,
+              pay_currency: listedPay,
               farm_usd_rate: rate.farm_usd_rate,
             },
           },
@@ -294,7 +392,7 @@ export class DepositService {
               order_id: reference,
               amount_farm: amountFarm,
               amount_usd: priceAmount,
-              pay_currency: payCurrency,
+              pay_currency: listedPay,
               nowpayments_initialization_error:
                 error instanceof Error ? error.message : 'Provider error',
             },

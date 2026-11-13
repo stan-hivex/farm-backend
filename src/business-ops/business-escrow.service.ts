@@ -10,6 +10,7 @@ import { paginate, paginationParams } from '../common/utils/pagination.util';
 import { BusinessAccessService } from './business-access.service';
 import { BusinessWebhooksService } from './business-webhooks.service';
 import { BusinessEscrowDto } from './business-ops.dto';
+import { SpendAuth } from '../security/authorize-spend';
 
 const OPEN = ['created', 'awaiting_payment'];
 
@@ -121,7 +122,11 @@ export class BusinessEscrowService {
     const ident = dto.buyer_identifier.trim();
     const buyer = await this.prisma.users.findFirst({
       where: {
-        OR: [{ username: ident }, { phone: ident }],
+        OR: [
+          { username: { equals: ident, mode: 'insensitive' } },
+          { phone: ident },
+          { email: { equals: ident, mode: 'insensitive' } },
+        ],
         is_deleted: false,
         is_active: true,
       },
@@ -142,6 +147,7 @@ export class BusinessEscrowService {
     const expires_at = dto.expires_at ? new Date(dto.expires_at) : null;
     if (expires_at && expires_at <= new Date())
       throw new BadRequestException('Expiry must be in the future');
+    const draft = dto.save_as_draft === true;
     const e = await this.prisma.business_escrows.create({
       data: {
         business_id: a.business.id,
@@ -157,13 +163,34 @@ export class BusinessEscrowService {
           })) ?? undefined,
         expires_at,
         created_by: userId,
+        status: draft ? 'created' : 'awaiting_payment',
       },
     });
-    return { data: this.shape(e), message: 'Escrow created' };
+    if (!draft) {
+      await this.notify(
+        buyer.id,
+        'Escrow payment requested',
+        `${a.business.trading_name || a.business.legal_name} requested ${Number(e.amount)} FARM in escrow for "${e.title}".`,
+      );
+    }
+    return {
+      data: this.shape(e),
+      message: draft ? 'Escrow saved as draft' : 'Escrow sent to buyer',
+    };
   }
 
   async send(userId: string, id: string) {
     const a = await this.access.resolve(userId, 'escrow:manage');
+    const existing = await this.prisma.business_escrows.findFirst({
+      where: { id, business_id: a.business.id },
+    });
+    if (!existing) throw new NotFoundException('Escrow not found');
+    if (existing.status === 'awaiting_payment') {
+      return {
+        ...(await this.get(userId, id)),
+        message: 'Already sent to the buyer',
+      };
+    }
     const r = await this.prisma.business_escrows.updateMany({
       where: { id, business_id: a.business.id, status: 'created' },
       data: { status: 'awaiting_payment' },
@@ -255,7 +282,7 @@ export class BusinessEscrowService {
     };
   }
 
-  async fund(buyerId: string, id: string, pin: string) {
+  async fund(buyerId: string, id: string, pin: string | SpendAuth) {
     await this.sync({ id });
     const e = await this.prisma.business_escrows.findUnique({
       where: { id },
@@ -284,12 +311,15 @@ export class BusinessEscrowService {
       const sellerWallet = businessWalletEnabled()
         ? await settlementWalletFor(this.prisma, { businessId: e.business_id })
         : null;
+      const spend = typeof pin === 'string' ? { pin } : pin;
       const dtoIn = {
         seller_identifier: seller,
         amount: Number(e.amount),
         title: e.title,
         description: e.description ?? undefined,
-        pin,
+        pin: spend.pin,
+        biometric_auth: spend.biometric_auth,
+        device_fingerprint: spend.device_fingerprint,
       };
       const res: any =
         sellerWallet?.wallet_type === 'merchant'
@@ -390,7 +420,7 @@ export class BusinessEscrowService {
     buyerId: string,
     id: string,
     index: number,
-    pin: string,
+    pin: string | SpendAuth,
   ) {
     await this.sync({ id });
     const e = await this.prisma.business_escrows.findUnique({ where: { id } });
