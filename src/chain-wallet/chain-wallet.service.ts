@@ -33,6 +33,7 @@ import {
   BackfillMode,
   evaluateBackfillSend,
   fundMicroAlgos,
+  redactOperatorMessage,
 } from '../ops/backfill-wallets-policy';
 import {
   evaluateReconcileSend,
@@ -1223,6 +1224,7 @@ export class ChainWalletService {
     mode: BackfillMode;
     limit: number;
     expectCount?: number;
+    actorId?: string | null;
   }) {
     const each = fundMicroAlgos();
     const enabled = chainConfig().wallets.enabled;
@@ -1232,9 +1234,25 @@ export class ChainWalletService {
       selected: first.ids.length,
       expectCount: input.expectCount,
     });
-    if (!decision.ok) throw new BadRequestException(decision.reason);
+    if (!decision.ok) {
+      return this.refuseBackfill(
+        input.actorId,
+        'bad_request',
+        decision.reason,
+        {
+          mode: input.mode,
+          limit: input.limit,
+          selected: decision.selected,
+        },
+      );
+    }
     if (input.mode === 'send' && !enabled) {
-      throw new BadRequestException('CHAIN_WALLETS are not enabled');
+      return this.refuseBackfill(
+        input.actorId,
+        'bad_request',
+        'CHAIN_WALLETS are not enabled',
+        { mode: input.mode, limit: input.limit, selected: first.ids.length },
+      );
     }
     const spendable = enabled ? await this.funderSpendable() : null;
     const snapshot = (
@@ -1258,7 +1276,14 @@ export class ChainWalletService {
       funder_enough:
         balance != null && balance >= backfillCost(snap.ids.length, each),
     });
-    if (input.mode === 'dry') return snapshot(first, spendable);
+    if (input.mode === 'dry') {
+      const report = snapshot(first, spendable);
+      await this.auditBackfill(input.actorId, {
+        ...report,
+        action: 'chain.wallet_backfill_dry',
+      });
+      return report;
+    }
 
     const again = await this.backfillCandidates(input.limit);
     const second = evaluateBackfillSend({
@@ -1266,17 +1291,34 @@ export class ChainWalletService {
       selected: again.ids.length,
       expectCount: input.expectCount,
     });
-    if (!second.ok) throw new BadRequestException(second.reason);
+    if (!second.ok) {
+      return this.refuseBackfill(input.actorId, 'bad_request', second.reason, {
+        mode: input.mode,
+        limit: input.limit,
+        selected: second.selected,
+      });
+    }
     const needed = backfillCost(again.ids.length, each);
     const available = await this.funderSpendable();
     if (available == null) {
-      throw new ServiceUnavailableException(
+      return this.refuseBackfill(
+        input.actorId,
+        'unavailable',
         'Could not read funder ALGO balance',
+        { mode: input.mode, limit: input.limit, selected: again.ids.length },
       );
     }
     if (available < needed) {
-      throw new BadRequestException(
+      return this.refuseBackfill(
+        input.actorId,
+        'bad_request',
         `Refusing send: funder spendable ALGO is too low for ${again.ids.length} wallet(s) at ${each} microALGO each`,
+        {
+          mode: input.mode,
+          limit: input.limit,
+          selected: again.ids.length,
+          funder_spendable_microalgos: Number(available),
+        },
       );
     }
     let provisioned = 0;
@@ -1302,13 +1344,13 @@ export class ChainWalletService {
       } catch (error) {
         failed += 1;
         this.log.warn(
-          `Backfill wallet for ${userId} failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Backfill wallet for ${userId} failed: ${redactOperatorMessage(
+            error instanceof Error ? error.message : 'error',
+          )}`,
         );
       }
     }
-    return {
+    const report = {
       ...snapshot(again, await this.funderSpendable()),
       provisioned,
       failed,
@@ -1316,6 +1358,42 @@ export class ChainWalletService {
       stop_reason,
       addresses,
     };
+    await this.auditBackfill(input.actorId, {
+      ...report,
+      action: 'chain.wallet_backfill_send',
+    });
+    return report;
+  }
+
+  private async refuseBackfill(
+    actorId: string | null | undefined,
+    kind: 'bad_request' | 'unavailable',
+    reason: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<never> {
+    await this.auditBackfill(actorId, {
+      ...extra,
+      action: 'chain.wallet_backfill_refused',
+      reason,
+    });
+    if (kind === 'unavailable') throw new ServiceUnavailableException(reason);
+    throw new BadRequestException(reason);
+  }
+
+  private async auditBackfill(
+    actorId: string | null | undefined,
+    values: Record<string, unknown>,
+  ) {
+    const safe: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(values)) {
+      if (typeof value === 'string') safe[key] = redactOperatorMessage(value);
+      else if (Array.isArray(value))
+        safe[key] = value.map((item) =>
+          typeof item === 'string' ? redactOperatorMessage(item) : item,
+        );
+      else safe[key] = value;
+    }
+    await this.auditChain(actorId ?? null, null, safe, 'user_chain_wallet');
   }
 
   /**
@@ -1395,6 +1473,7 @@ export class ChainWalletService {
     actorId: string | null,
     entityId: string | null,
     values: Record<string, unknown>,
+    entityType = 'chain_deposit',
   ) {
     const action =
       typeof values.action === 'string'
@@ -1407,7 +1486,7 @@ export class ChainWalletService {
         data: {
           user_id: actorId,
           action,
-          entity_type: 'chain_deposit',
+          entity_type: entityType,
           entity_id: entityId,
           new_values: values as never,
         },
