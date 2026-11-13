@@ -386,10 +386,11 @@ describe('TokenDistributionService', () => {
     await svc.approve('system', 'd1');
     expect(db.$executeRaw).toHaveBeenCalled();
     expect(db.wallets.updateMany).not.toHaveBeenCalled();
-    expect(db.wallets.update.mock.calls[0][0]).toMatchObject({
-      where: { id: 'pw' },
-      data: { balance: { decrement: 100 } },
-    });
+    expect(
+      db.wallets.update.mock.calls.some(
+        (c: any) => c[0]?.data?.balance?.decrement != null,
+      ),
+    ).toBe(false);
     const short = distMocks({ source: 'project_returns', returnsClaim: 0 });
     await expect(short.svc.approve('system', 'd1')).rejects.toThrow(
       /Not enough project returns/,

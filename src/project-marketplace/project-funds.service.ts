@@ -11,6 +11,8 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../database/prisma.service';
 import { BusinessAccessService } from '../business-ops/business-access.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend } from '../security/authorize-spend';
 import {
   generateEscrowReference,
   generateTxReference,
@@ -65,6 +67,7 @@ export class ProjectFundsService {
     private readonly auth: AuthService,
     private readonly dist: TokenDistributionService,
     @Optional() private readonly chain?: ProjectFundsChainService,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   private assertOn() {
@@ -202,7 +205,9 @@ export class ProjectFundsService {
     dto: {
       kind: string;
       ref: string;
-      pin: string;
+      pin?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
       tag?: string;
       note?: string;
       idempotency_key?: string;
@@ -218,8 +223,7 @@ export class ProjectFundsService {
       throw new BadRequestException(
         'Project funds can be spent once the round has closed',
       );
-    if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     const ownerId = p.business?.owner_user_id;
 
     // Resolve the target: only invoices / payment links of OTHER businesses.
@@ -678,7 +682,9 @@ export class ProjectFundsService {
       amount: number;
       transaction_id?: string;
       note?: string;
-      pin: string;
+      pin?: string;
+      biometric_auth?: boolean;
+      device_fingerprint?: string;
     },
   ) {
     this.assertOn();
@@ -692,8 +698,7 @@ export class ProjectFundsService {
       throw new BadRequestException(
         'Amount must be at least 1 FARM (2 decimals)',
       );
-    if (!dto.pin) throw new BadRequestException('Transaction PIN is required');
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     const owner = p.business?.owner_user_id;
     if (!owner) throw new BadRequestException('Business owner not found');
     let ret: any;

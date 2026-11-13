@@ -14,6 +14,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { PinDto } from '../business-ops/business-ops.dto';
 import { Type } from 'class-transformer';
@@ -87,7 +88,12 @@ export class ApiPayoutDto {
 
 /** Dashboard payout: the API payout fields plus the actor's PIN. */
 export class DashboardPayoutDto extends ApiPayoutDto {
+  @ValidateIf((o) => o.biometric_auth !== true)
   @IsString()
   @Matches(/^\d{4,6}$/, { message: 'pin must be 4-6 digits' })
-  pin!: string;
+  pin?: string;
+
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
 }

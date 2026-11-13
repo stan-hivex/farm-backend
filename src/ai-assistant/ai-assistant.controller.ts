@@ -29,6 +29,7 @@ import {
   Length,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { JwtGuard } from '../common/guards/jwt.guard';
@@ -61,7 +62,13 @@ class PermissionsDto {
   spend_categories?: string[];
 }
 class ConfirmDto {
-  @IsNotEmpty() @IsString() @Length(4, 6) pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsNotEmpty()
+  @IsString()
+  @Length(4, 6)
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
 }
 
 @ApiTags('AI Assistant')
@@ -157,7 +164,7 @@ export class AiAssistantController {
     @Body() dto: ConfirmDto,
     @Req() req: Request,
   ) {
-    return this.svc.confirmAction(u.id, id, dto.pin, req.ip || '');
+    return this.svc.confirmAction(u.id, id, dto.pin ?? '', req.ip || '', dto);
   }
   @Post('actions/:id/reject') reject(
     @CurrentUser() u: any,

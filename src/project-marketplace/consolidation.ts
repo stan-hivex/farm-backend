@@ -1,4 +1,5 @@
 import { generateTxReference } from '../common/utils/reference.util';
+import { debitAvailable } from '../wallets/guarded-debit';
 import { creditPlatformInTx, feeFor } from '../fees/fee-defaults';
 
 export const CONSOLIDATION_CATEGORY = 'consolidation_fund';
@@ -117,10 +118,7 @@ export async function payFromReserveInTx(
   const w = admin?.wallets?.[0];
   if (!w) throw new Error('Platform wallet not found');
   const before = Number(w.balance ?? 0);
-  await tx.wallets.update({
-    where: { id: w.id },
-    data: { balance: { decrement: amount } },
-  });
+  await debitAvailable(tx, w.id, amount);
   await tx.ledger_entries.create({
     data: {
       transaction_id: transactionId,
@@ -207,10 +205,7 @@ export async function payBuybackFromReserveInTx(
   const w = admin?.wallets?.[0];
   if (!w) throw new Error('Platform wallet not found');
   const before = Number(w.balance ?? 0);
-  await tx.wallets.update({
-    where: { id: w.id },
-    data: { balance: { decrement: amount } },
-  });
+  await debitAvailable(tx, w.id, amount);
   await tx.ledger_entries.create({
     data: {
       transaction_id: transactionId,

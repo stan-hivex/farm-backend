@@ -3,6 +3,7 @@ import {
   generateWalletAddress,
 } from '../common/utils/reference.util';
 import { chainConfig } from '../chain-wallet/chain-config';
+import { debitAvailable } from '../wallets/guarded-debit';
 import { createBusinessChainAccount } from '../chain-wallet/business-chain.service';
 
 /**
@@ -171,13 +172,12 @@ export function internalMove(
   },
 ) {
   return prisma.$transaction(async (tx: any) => {
-    await tx.wallets.update({
-      where: { id: p.fromId },
-      data: { balance: { decrement: p.amount } },
-    });
-    const from = await tx.wallets.findUnique({ where: { id: p.fromId } });
-    if (Number(from.balance) - Number(from.locked_balance) < 0)
+    try {
+      await debitAvailable(tx, p.fromId, p.amount);
+    } catch {
       throw new Error('INSUFFICIENT_BUSINESS_BALANCE');
+    }
+    const from = await tx.wallets.findUnique({ where: { id: p.fromId } });
     const to = await tx.wallets.update({
       where: { id: p.toId },
       data: { balance: { increment: p.amount } },

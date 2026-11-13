@@ -23,8 +23,12 @@ const escrowRow = {
 function makeEscrow(rows: any[]) {
   const tx: any = {
     $queryRaw: jest.fn().mockResolvedValue(rows),
+    $executeRaw: jest.fn().mockResolvedValue(1),
     escrow_contracts: { update: jest.fn() },
-    wallets: { update: jest.fn().mockResolvedValue({ balance: 10 }) },
+    wallets: {
+      update: jest.fn().mockResolvedValue({ balance: 10 }),
+      findUnique: jest.fn().mockResolvedValue({ balance: 10 }),
+    },
     transactions: {
       create: jest
         .fn()
@@ -59,10 +63,7 @@ describe('Phase 2b: partial escrow release', () => {
     ]);
     const r = await svc.releasePartial('e1', 'buyer', 40, '1234', 'Design');
     expect(auth.verifyPin).toHaveBeenCalledWith('buyer', '1234');
-    expect(tx.wallets.update).toHaveBeenCalledWith({
-      where: { id: 'bw' },
-      data: { locked_balance: { decrement: 40 }, balance: { decrement: 40 } },
-    });
+    expect(tx.$executeRaw).toHaveBeenCalled();
     expect(tx.wallets.update).toHaveBeenCalledWith({
       where: { id: 'sw' },
       data: { balance: { increment: 39.4 } },

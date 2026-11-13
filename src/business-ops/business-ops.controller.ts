@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Ip,
   Param,
   ParseIntPipe,
@@ -10,6 +11,7 @@ import {
   Post,
   Put,
   Query,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -27,8 +29,8 @@ import {
   CustomerDto,
   InvoiceDto,
   PaymentLinkDto,
-  PinDto,
   ProfileDto,
+  SpendAuthDto,
   ToggleLinkDto,
   UpdateMemberDto,
 } from './business-ops.dto';
@@ -142,9 +144,9 @@ export class BusinessOpsController {
   @Post('team/:id/remove') removeMember(
     @CurrentUser() u: any,
     @Param('id', UUID) id: string,
-    @Body() dto: PinDto,
+    @Body() dto: SpendAuthDto,
   ) {
-    return this.team.remove(u.id, id, dto.pin);
+    return this.team.remove(u.id, id, dto);
   }
 
   @Get('profile') profile(@CurrentUser() u: any) {
@@ -182,6 +184,15 @@ export class BusinessOpsController {
 
   @Get('invoices') invoices(@CurrentUser() u: any, @Query() q: any) {
     return this.commerce.listInvoices(u.id, q);
+  }
+  @Get('invoices/:id/pdf')
+  @Header('Content-Type', 'application/pdf')
+  async invoicePdf(@CurrentUser() u: any, @Param('id', UUID) id: string) {
+    const file = await this.commerce.invoicePdf(u.id, id);
+    return new StreamableFile(Buffer.from(file.bytes), {
+      type: 'application/pdf',
+      disposition: `inline; filename="${file.filename}"`,
+    });
   }
   @Get('invoices/:id') invoice(
     @CurrentUser() u: any,
@@ -311,10 +322,10 @@ export class BusinessPayController {
   payLink(
     @CurrentUser() u: any,
     @Param('code') code: string,
-    @Body() dto: PinDto,
+    @Body() dto: SpendAuthDto,
     @Ip() ip: string,
   ) {
-    return this.commerce.payLink(u.id, code, dto.pin, ip);
+    return this.commerce.payLink(u.id, code, dto, ip);
   }
 
   @Get('invoices/:number') invoice(
@@ -328,10 +339,10 @@ export class BusinessPayController {
   payInvoice(
     @CurrentUser() u: any,
     @Param('number') n: string,
-    @Body() dto: PinDto,
+    @Body() dto: SpendAuthDto,
     @Ip() ip: string,
   ) {
-    return this.commerce.payInvoice(u.id, n, dto.pin, ip);
+    return this.commerce.payInvoice(u.id, n, dto, ip);
   }
 
   @Get('escrows') incoming(@CurrentUser() u: any) {
@@ -342,9 +353,9 @@ export class BusinessPayController {
   fund(
     @CurrentUser() u: any,
     @Param('id', UUID) id: string,
-    @Body() dto: PinDto,
+    @Body() dto: SpendAuthDto,
   ) {
-    return this.escrow.fund(u.id, id, dto.pin);
+    return this.escrow.fund(u.id, id, dto);
   }
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -353,8 +364,8 @@ export class BusinessPayController {
     @CurrentUser() u: any,
     @Param('id', UUID) id: string,
     @Param('index', ParseIntPipe) index: number,
-    @Body() dto: PinDto,
+    @Body() dto: SpendAuthDto,
   ) {
-    return this.escrow.releaseMilestone(u.id, id, index, dto.pin);
+    return this.escrow.releaseMilestone(u.id, id, index, dto);
   }
 }

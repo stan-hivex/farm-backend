@@ -82,7 +82,13 @@ export class ProjectUpdateDto {
 
 export class MarketplaceInvestDto {
   @IsNumber() @IsPositive() amount!: number;
-  @IsNotEmpty() @IsString() @Length(4, 6) pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsNotEmpty()
+  @IsString()
+  @Length(4, 6)
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
   @IsBoolean() accept_risk!: boolean;
   @IsString() @Length(1, 20) disclosure_version!: string;
 }
@@ -150,13 +156,23 @@ export class ReturnDepositDto {
   @IsNumber({ maxDecimalPlaces: 2 }) @Min(1) amount!: number;
   @IsOptional() @IsUUID() transaction_id?: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
-  @IsString() @Length(4, 12) pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsString()
+  @Length(4, 12)
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
 }
 export class ProjectSpendDto {
   @IsIn(['invoice', 'payment_link', 'escrow']) kind!: string;
   /** Invoice number, payment link code, or business escrow id. */
   @IsString() @Length(1, 100) ref!: string;
-  @IsString() @Length(4, 12) pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsString()
+  @Length(4, 12)
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
   /** Optional deliverable tag, e.g. "Greenhouse kit". */
   @IsOptional() @IsString() @MaxLength(120) tag?: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;

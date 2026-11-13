@@ -126,6 +126,7 @@ describe('QrService merchant QR validation', () => {
           qr_payments: { create: jest.fn().mockResolvedValue({}) },
           business_payments: { create: jest.fn().mockResolvedValue({}) },
           ledger_entries: { createMany: jest.fn().mockResolvedValue({}) },
+          $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const prisma: any = {
           merchants: { findUnique: jest.fn().mockResolvedValue(merchant) },
@@ -179,7 +180,8 @@ describe('QrService merchant QR validation', () => {
           pin: '1234',
         });
 
-        expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
+        expect(tx.$executeRaw).toHaveBeenCalled();
+        expect(tx.wallets.update).toHaveBeenCalledWith({
           where: { id: personalWallet.id },
           data: { balance: { increment: 99 } },
         });
@@ -244,6 +246,7 @@ describe('QrService merchant QR validation', () => {
         ledger_entries: {
           createMany: jest.fn().mockResolvedValue({ count: 3 }),
         },
+        $executeRaw: jest.fn().mockResolvedValue(1),
       };
       const prisma: any = {
         merchants: { findUnique: jest.fn().mockResolvedValue(merchant) },
@@ -310,15 +313,12 @@ describe('QrService merchant QR validation', () => {
           }),
         }),
       );
+      expect(tx.$executeRaw).toHaveBeenCalled();
       expect(tx.wallets.update).toHaveBeenNthCalledWith(1, {
-        where: { id: 'customer-wallet' },
-        data: { balance: { decrement: 102 } },
-      });
-      expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
         where: { id: 'merchant-wallet' },
         data: { balance: { increment: 99 } },
       });
-      expect(tx.wallets.update).toHaveBeenNthCalledWith(3, {
+      expect(tx.wallets.update).toHaveBeenNthCalledWith(2, {
         where: { id: 'superadmin-wallet-1' },
         data: { balance: { increment: 1 } },
       });

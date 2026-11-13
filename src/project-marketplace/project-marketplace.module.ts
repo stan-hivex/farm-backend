@@ -9,6 +9,7 @@ import { ProjectReviewService } from './project-review.service';
 import { ProjectFundsService } from './project-funds.service';
 import { ProjectFundsChainService } from './project-funds-chain.service';
 import { ChainWalletModule } from '../chain-wallet/chain-wallet.module';
+import { SecurityModule } from '../security/security.module';
 import {
   AdminProjectsController,
   BusinessProjectsController,
@@ -22,6 +23,7 @@ import {
     BusinessOpsModule,
     TokenizationModule,
     ChainWalletModule,
+    SecurityModule,
   ],
   controllers: [
     MarketplaceController,

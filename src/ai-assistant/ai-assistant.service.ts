@@ -6,12 +6,14 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { WalletsService } from '../wallets/wallets.service';
+import { SpendAuth } from '../security/authorize-spend';
 import { AiProvider, ChatMessage, ProviderUsage } from './ai-provider';
 import { MkulimaBillingService } from './mkulima-billing.service';
 import { AiToolsService } from './ai-tools.service';
@@ -84,6 +86,7 @@ const argStr = (v: unknown): string =>
 
 @Injectable()
 export class AiAssistantService {
+  private readonly logger = new Logger(AiAssistantService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly provider: AiProvider,
@@ -339,6 +342,15 @@ export class AiAssistantService {
           });
         }
       }
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      this.logger.error(
+        `Mkulima chat failed: ${e instanceof Error ? e.name : 'error'}`,
+      );
+      throw new HttpException(
+        'Mkulima is temporarily unavailable. Please try again shortly.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
     } finally {
       // Charge for what the provider actually consumed, even if a later round failed.
       if (usages.length)
@@ -765,8 +777,20 @@ export class AiAssistantService {
     return { id, status: 'rejected' };
   }
 
-  async confirmAction(userId: string, id: string, pin: string, ip: string) {
-    if (!pin) throw new BadRequestException('Transaction PIN is required');
+  async confirmAction(
+    userId: string,
+    id: string,
+    pin: string,
+    ip: string,
+    auth?: SpendAuth,
+  ) {
+    const spend: SpendAuth = {
+      pin: pin || auth?.pin,
+      biometric_auth: auth?.biometric_auth,
+      device_fingerprint: auth?.device_fingerprint,
+    };
+    if (!spend.biometric_auth && !spend.pin)
+      throw new BadRequestException('Transaction PIN is required');
     const req = await this.prisma.ai_action_requests.findFirst({
       where: { id, user_id: userId },
     });
@@ -807,7 +831,9 @@ export class AiAssistantService {
             prebook_id: String(pl.prebook_id ?? ''),
             expected_total_farm: Number(req.amount),
             idempotency_key: `ai-${id}`,
-            pin,
+            pin: spend.pin,
+            biometric_auth: spend.biometric_auth,
+            device_fingerprint: spend.device_fingerprint,
             ai_action_id: id,
             guest: await this.guestFromProfile(userId),
           },
@@ -842,7 +868,7 @@ export class AiAssistantService {
         const paid = await this.agentPayments.payIntent(
           userId,
           intentId,
-          pin,
+          spend,
           ip,
           'mkulima',
         );
@@ -856,7 +882,9 @@ export class AiAssistantService {
           {
             recipient_identifier: req.recipient_identifier,
             amount: Number(req.amount),
-            pin,
+            pin: spend.pin,
+            biometric_auth: spend.biometric_auth,
+            device_fingerprint: spend.device_fingerprint,
             description: req.description ?? 'Mkulima AI payment',
           },
           ip,

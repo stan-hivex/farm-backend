@@ -13,6 +13,7 @@ import { AuthService } from '../auth/auth.service';
 import { SecurityService } from '../security/security.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { generateTxReference } from '../common/utils/reference.util';
+import { debitAvailable } from '../wallets/guarded-debit';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
@@ -383,10 +384,10 @@ export class TransferRequestsService {
       });
 
       // Update balances
-      const updatedSenderWallet = await tx.wallets.update({
-        where: { id: senderWallet.id },
-        data: { balance: { decrement: totalOut } },
-      });
+      await debitAvailable(tx, senderWallet.id, totalOut);
+      const updatedSenderWallet = {
+        balance: new Prisma.Decimal(senderWallet.balance ?? 0).minus(totalOut),
+      };
       const updatedRequesterWallet = await tx.wallets.update({
         where: { id: requesterWallet!.id },
         data: { balance: { increment: amount } },

@@ -3,18 +3,17 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
-  IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Length,
 } from 'class-validator';
 
 export class AcceptPaymentRequestsBatchDto {
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(50)
-  @IsString({ each: true })
-  @IsNotEmpty({ each: true })
+  @ArrayMaxSize(25)
+  @IsUUID('4', { each: true })
   request_ids!: string[];
 
   @IsOptional()

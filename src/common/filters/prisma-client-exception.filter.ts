@@ -19,12 +19,34 @@ export function prismaErrorStatus(code: string): number | null {
   return null;
 }
 
-@Catch(Prisma.PrismaClientKnownRequestError)
+export function invalidUuidMessage(message: string): boolean {
+  return /uuid|inconsistent column data/i.test(message);
+}
+
+@Catch(Prisma.PrismaClientKnownRequestError, Prisma.PrismaClientValidationError)
 export class PrismaClientExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(PrismaClientExceptionFilter.name);
 
-  catch(e: Prisma.PrismaClientKnownRequestError, host: ArgumentsHost) {
+  catch(
+    e:
+      | Prisma.PrismaClientKnownRequestError
+      | Prisma.PrismaClientValidationError,
+    host: ArgumentsHost,
+  ) {
     const res = host.switchToHttp().getResponse();
+    if (e instanceof Prisma.PrismaClientValidationError) {
+      if (invalidUuidMessage(e.message)) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          statusCode: 400,
+          message: 'Invalid id',
+          error: 'Bad Request',
+        });
+      }
+      this.logger.error('Prisma validation error', e.stack);
+      return res
+        .status(500)
+        .json({ statusCode: 500, message: 'Internal server error' });
+    }
     const status = prismaErrorStatus(e.code);
     if (status == null) {
       this.logger.error(`Prisma ${e.code}`, e.stack);

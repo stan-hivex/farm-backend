@@ -1,4 +1,7 @@
-import { NowpaymentsService } from './nowpayments.service';
+import {
+  NowpaymentsService,
+  nowPaymentsUserMessage,
+} from './nowpayments.service';
 
 describe('NowpaymentsService payment minimum', () => {
   it('uses the same-currency USD-equivalent minimum query as the status page', async () => {
@@ -13,6 +16,13 @@ describe('NowpaymentsService payment minimum', () => {
       minimumAmount: 0.0006299,
       minimumUsd: 0.05,
     });
+
+    expect(
+      nowPaymentsUserMessage('Can not get estimate from 1inch to usd'),
+    ).toMatch(/cannot be priced/i);
+    expect(
+      nowPaymentsUserMessage('Crypto amount 2.00167705 is less than minimal'),
+    ).toMatch(/2\.00167705/);
 
     expect(request).toHaveBeenCalledWith('get', '/min-amount', undefined, {
       currency_from: 'ltc',

@@ -16,6 +16,7 @@ import { JwtGuard } from '../common/guards/jwt.guard';
 import { KycGuard } from '../common/guards/kyc.guard';
 import { CreatePaymentRequestDto } from './dto/create-payment-request.dto';
 import { AcceptPaymentRequestDto } from './dto/accept-payment-request.dto';
+import { AcceptPaymentRequestsBatchDto } from './dto/accept-payment-requests-batch.dto';
 import { PaymentRequestsService } from './payment-requests.service';
 
 @ApiTags('Payment Requests')
@@ -56,6 +57,20 @@ export class PaymentRequestsController {
     @Req() req: Request,
   ) {
     return this.svc.acceptAndTransfer(u.id, dto as any, req.ip || '');
+  }
+
+  @Permissions('transfer:write')
+  @Post('accept-batch')
+  @UseGuards(JwtGuard, KycGuard)
+  @ApiOperation({
+    summary: 'Accept several payment requests with one PIN or biometric check',
+  })
+  acceptBatch(
+    @CurrentUser() u: any,
+    @Body() dto: AcceptPaymentRequestsBatchDto,
+    @Req() req: Request,
+  ) {
+    return this.svc.acceptBatch(u.id, dto, req.ip || '');
   }
 
   @Permissions('transfer:write')

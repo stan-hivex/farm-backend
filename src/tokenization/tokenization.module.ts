@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { BusinessOpsModule } from '../business-ops/business-ops.module';
 import { ChainWalletModule } from '../chain-wallet/chain-wallet.module';
+import { SecurityModule } from '../security/security.module';
 import { AlgorandAsaClient } from './algorand-asa.client';
 import { TokenizationService } from './tokenization.service';
 import { TokenDeliveryService } from './token-delivery.service';
@@ -24,6 +25,7 @@ import {
     NotificationsModule,
     BusinessOpsModule,
     ChainWalletModule,
+    SecurityModule,
   ],
   controllers: [
     TokenizationController,

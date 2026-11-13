@@ -7,6 +7,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend, SpendAuth } from '../security/authorize-spend';
+import { Optional } from '@nestjs/common';
 import { BusinessAccessService } from './business-access.service';
 import { assignableRoles, BusinessRole, permissionsFor } from './permissions';
 import { AddMemberDto, ProfileDto, UpdateMemberDto } from './business-ops.dto';
@@ -57,6 +60,7 @@ export class BusinessTeamService {
     private readonly prisma: PrismaService,
     private readonly access: BusinessAccessService,
     private readonly auth: AuthService,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   async list(userId: string) {
@@ -121,11 +125,11 @@ export class BusinessTeamService {
   /** Invite by phone. The person is not a member until they accept. */
   async invite(
     userId: string,
-    dto: { phone: string; role: string; pin: string },
+    dto: { phone: string; role: string } & SpendAuth,
   ) {
     const a = await this.access.resolve(userId, 'team:manage');
     this.assertAssignable(a.role, dto.role as BusinessRole);
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     const phone = normalizeTeamPhone(dto.phone);
     if (!/^\+\d{8,15}$/.test(phone)) {
       throw new BadRequestException('Enter a valid phone number');
@@ -362,11 +366,13 @@ export class BusinessTeamService {
         phone: raw,
         role: dto.role,
         pin: dto.pin,
+        biometric_auth: dto.biometric_auth,
+        device_fingerprint: dto.device_fingerprint,
       });
     }
     const a = await this.access.resolve(userId, 'team:manage');
     this.assertAssignable(a.role, dto.role as BusinessRole);
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     const ident = dto.identifier.trim();
     const target = await this.prisma.users.findFirst({
       where: {
@@ -424,7 +430,7 @@ export class BusinessTeamService {
     this.assertAssignable(a.role, dto.role as BusinessRole);
     if (m.user_id === userId)
       throw new ForbiddenException('You cannot change your own role');
-    await this.auth.verifyPin(userId, dto.pin);
+    await authorizeSpend(this.auth, this.security, userId, dto);
     const updated = await this.prisma.business_members.update({
       where: { id: m.id },
       data: { role: dto.role as any },
@@ -437,13 +443,18 @@ export class BusinessTeamService {
     return { data: updated, message: 'Role updated' };
   }
 
-  async remove(userId: string, memberId: string, pin: string) {
+  async remove(userId: string, memberId: string, pin: string | SpendAuth) {
     const a = await this.access.resolve(userId, 'team:manage');
     const m = await this.memberOf(a.business.id, memberId);
     if (m.user_id === userId)
       throw new ForbiddenException('You cannot remove yourself');
     this.assertAssignable(a.role, m.role);
-    await this.auth.verifyPin(userId, pin);
+    await authorizeSpend(
+      this.auth,
+      this.security,
+      userId,
+      typeof pin === 'string' ? { pin } : pin,
+    );
     await this.prisma.business_members.update({
       where: { id: m.id },
       data: { is_active: false },

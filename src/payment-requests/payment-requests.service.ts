@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Logger,
   Optional,
+  HttpException,
 } from '@nestjs/common';
 import { FeesService } from '../fees/fees.service';
 import { computeFee, ruleFor } from '../fees/fee-defaults';
@@ -15,6 +16,22 @@ import { generateTxReference } from '../common/utils/reference.util';
 import { paginationParams } from '../common/utils/pagination.util';
 import { Prisma } from '@prisma/client';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { SecurityService } from '../security/security.service';
+import { authorizeSpend, SpendAuth } from '../security/authorize-spend';
+import { debitAvailable } from '../wallets/guarded-debit';
+
+function exceptionMessage(error: unknown): string {
+  if (!(error instanceof HttpException)) return 'Payment failed';
+  const raw = error.getResponse();
+  if (typeof raw === 'string') return raw;
+  if (raw && typeof raw === 'object' && 'message' in raw) {
+    const message = (raw as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+    if (Array.isArray(message))
+      return message.filter((part) => typeof part === 'string').join(', ');
+  }
+  return error.message;
+}
 
 @Injectable()
 export class PaymentRequestsService {
@@ -26,6 +43,7 @@ export class PaymentRequestsService {
     private notificationsService: NotificationsService,
     private websocket: WebsocketGateway,
     @Optional() private readonly fees?: FeesService,
+    @Optional() private readonly security?: SecurityService,
   ) {}
 
   async createRequest(
@@ -155,17 +173,20 @@ export class PaymentRequestsService {
       const title = 'Payment Request';
       const body = `${req.users_requester.username ?? 'A user'} requested ${dto.amount} FARM from you.`;
       try {
-        await this.notificationsService.sendNotification(req.users_recipient.id, {
-          type: 'payment_request',
-          entityId: req.id,
-          title,
-          body,
-          metadata: {
-            request_id: req.id,
-            requester_username: req.users_requester.username,
-            amount: dto.amount,
+        await this.notificationsService.sendNotification(
+          req.users_recipient.id,
+          {
+            type: 'payment_request',
+            entityId: req.id,
+            title,
+            body,
+            metadata: {
+              request_id: req.id,
+              requester_username: req.users_requester.username,
+              amount: dto.amount,
+            },
           },
-        });
+        );
       } catch (error) {
         this.logger.error(
           `Payment request ${req.id} was created, but its notification could not be sent`,
@@ -201,7 +222,7 @@ export class PaymentRequestsService {
             ? this.notificationsService.sendNotification(
                 request.requester_user_id,
                 {
-                  type: 'payment_request_expired',
+                  type: 'request_expired',
                   entityId: request.id,
                   title: 'Payment Request Expired',
                   body: `Your payment request for ${amount} FARM has expired.`,
@@ -213,7 +234,7 @@ export class PaymentRequestsService {
             ? this.notificationsService.sendNotification(
                 request.recipient_user_id,
                 {
-                  type: 'payment_request_expired',
+                  type: 'request_expired',
                   entityId: request.id,
                   title: 'Payment Request Expired',
                   body: `A payment request for ${amount} FARM has expired.`,
@@ -290,14 +311,89 @@ export class PaymentRequestsService {
 
   async acceptAndTransfer(
     senderUserId: string,
-    dto: { request_id: string; pin: string },
+    dto: { request_id: string } & SpendAuth,
     ip: string,
   ) {
-    await this.authService.verifyPin(senderUserId, dto.pin);
+    await authorizeSpend(this.authService, this.security, senderUserId, dto);
+    return this.settleAccepted(senderUserId, dto.request_id, ip);
+  }
 
+  async acceptBatch(
+    senderUserId: string,
+    dto: { request_ids?: string[] } & SpendAuth,
+    ip: string,
+  ) {
+    const ids = [
+      ...new Set(
+        (dto.request_ids ?? [])
+          .map((id) => (typeof id === 'string' ? id.trim() : ''))
+          .filter(Boolean),
+      ),
+    ];
+    if (!ids.length)
+      throw new BadRequestException('request_ids must not be empty');
+    if (ids.length > 25)
+      throw new BadRequestException('Accept at most 25 requests at a time');
+    await authorizeSpend(this.authService, this.security, senderUserId, dto);
+    const results: {
+      request_id: string;
+      success: boolean;
+      message: string;
+      transaction_reference?: string;
+      amount?: unknown;
+      fee?: unknown;
+      request_reference?: string;
+    }[] = [];
+    for (const request_id of ids) {
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          request_id,
+        )
+      ) {
+        results.push({
+          request_id,
+          success: false,
+          message: 'Invalid id',
+        });
+        continue;
+      }
+      try {
+        const settled = await this.settleAccepted(senderUserId, request_id, ip);
+        results.push({
+          request_id,
+          success: true,
+          message: settled.message,
+          transaction_reference: settled.data.transaction_reference,
+          amount: settled.data.amount,
+          fee: settled.data.fee,
+          request_reference: settled.data.request_reference,
+        });
+      } catch (error) {
+        results.push({
+          request_id,
+          success: false,
+          message: exceptionMessage(error),
+        });
+      }
+    }
+    const paid = results.filter((row) => row.success).length;
+    return {
+      message:
+        paid === results.length
+          ? `Paid ${paid} request${paid === 1 ? '' : 's'}`
+          : `Paid ${paid} of ${results.length} requests`,
+      data: { results },
+    };
+  }
+
+  private async settleAccepted(
+    senderUserId: string,
+    requestId: string,
+    ip: string,
+  ) {
     const result = await this.prisma.$transaction(async (tx) => {
       const request = await tx.payment_requests.findUnique({
-        where: { id: dto.request_id },
+        where: { id: requestId },
         include: {
           wallets_recipient: true,
           wallets_requester: true,
@@ -313,6 +409,17 @@ export class PaymentRequestsService {
 
       if (request.status !== 'pending')
         throw new BadRequestException(`Request status is ${request.status}`);
+
+      const claimed = await tx.payment_requests.updateMany({
+        where: {
+          id: request.id,
+          recipient_user_id: senderUserId,
+          status: 'pending',
+        },
+        data: { status: 'accepted', accepted_at: new Date() },
+      });
+      if (!claimed.count)
+        throw new BadRequestException('Request is no longer pending');
 
       if (request.expires_at && request.expires_at < new Date()) {
         await tx.payment_requests.update({
@@ -366,10 +473,10 @@ export class PaymentRequestsService {
         },
       });
 
-      const updatedPayerWallet = await tx.wallets.update({
-        where: { id: payerWallet.id },
-        data: { balance: { decrement: totalOut } },
-      });
+      await debitAvailable(tx, payerWallet.id, totalOut);
+      const updatedPayerWallet = {
+        balance: payerBalance.minus(totalOut),
+      };
       const updatedRequesterWallet = await tx.wallets.update({
         where: { id: requesterWallet!.id },
         data: { balance: { increment: amount } },
@@ -461,7 +568,7 @@ export class PaymentRequestsService {
       ),
       this.notificationsService.sendNotification(result.requesterUserId!, {
         type: 'request_completed',
-        entityId: dto.request_id,
+        entityId: requestId,
         title: 'Request Completed',
         body: 'Your payment request has been paid.',
       }),

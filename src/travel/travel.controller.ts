@@ -19,6 +19,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -28,7 +29,9 @@ import {
   IsUUID,
   Length,
   Max,
+  MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
@@ -73,7 +76,12 @@ class BookDtoV {
   @Type(() => PassengerDto)
   passengers!: PassengerDto[];
   @IsNumber() @Min(0) expected_total_farm!: number;
-  @IsString() @Length(4, 6) pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsString()
+  @Length(4, 6)
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
   @IsString() @Length(8, 80) idempotency_key!: string;
   @IsOptional() @IsUUID() ai_action_id?: string;
 }
@@ -101,7 +109,12 @@ class HotelBookDtoV {
   @IsString() @Length(3, 200) prebook_id!: string;
   @Type(() => Number) @IsNumber() expected_total_farm!: number;
   @IsString() @Length(8, 80) idempotency_key!: string;
-  @IsString() @IsNotEmpty() pin!: string;
+  @ValidateIf((o) => o.biometric_auth !== true)
+  @IsString()
+  @IsNotEmpty()
+  pin?: string;
+  @IsOptional() @IsBoolean() biometric_auth?: boolean;
+  @IsOptional() @IsString() @MaxLength(512) device_fingerprint?: string;
   @ValidateNested() @Type(() => HotelGuestDto) guest!: HotelGuestDto;
 }
 
