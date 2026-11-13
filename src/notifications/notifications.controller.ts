@@ -43,11 +43,12 @@ export class NotificationsController {
   @Permissions('notifications:write')
   @Post(['device-token', 'register-device'])
   async registerDeviceToken(@Req() req, @Body() body: RegisterDeviceTokenDto) {
-    const token = body.deviceToken || body.token;
+    const token = body.deviceToken || body.token || '';
     return this.notificationsService.registerDeviceToken(
       req.user.id,
-      token || '',
+      token,
       body.platform,
+      req.user.jti,
     );
   }
 

@@ -11,6 +11,11 @@ import * as nodemailer from 'nodemailer';
 import axios from 'axios';
 import Twilio from 'twilio';
 import { FirebaseService } from './firebase.service';
+import {
+  claimPushDevice,
+  listEligiblePushTokens,
+  revokeOwnedPushToken,
+} from './push-device-registry';
 
 @Injectable()
 export class NotificationsService {
@@ -43,47 +48,26 @@ export class NotificationsService {
   }
 
   async getDeviceTokens(userId: string) {
-    const tokens = await (this.prisma as any).device_tokens.findMany({ where: { user_id: userId, is_active: true } });
-    return tokens.map((t) => t.token);
+    return listEligiblePushTokens(this.prisma, userId);
   }
 
-  async registerDeviceToken(userId: string, token: string, platform?: string) {
-    const normalizedToken = token.trim();
-    if (!normalizedToken) throw new Error('Device token is required');
-
-    const existing = await (this.prisma as any).device_tokens.findFirst({
-      where: { token: normalizedToken },
+  async registerDeviceToken(
+    userId: string,
+    token: string,
+    platform?: string,
+    sessionJti?: string,
+  ) {
+    const result = await claimPushDevice(this.prisma, {
+      userId,
+      token,
+      platform,
+      sessionJti,
     });
-
-    if (existing) {
-      await (this.prisma as any).device_tokens.update({
-        where: { id: existing.id },
-        data: {
-          user_id: userId,
-          platform: platform || existing.platform,
-          is_active: true,
-          last_seen: new Date(),
-        },
-      });
-    } else {
-      await (this.prisma as any).device_tokens.create({
-        data: {
-          user_id: userId,
-          token: normalizedToken,
-          platform: platform || 'unknown',
-          is_active: true,
-          last_seen: new Date(),
-        },
-      });
-    }
-    return { success: true };
+    return { success: true, ...result };
   }
 
   async removeDeviceToken(userId: string, token: string) {
-    await (this.prisma as any).device_tokens.updateMany({
-      where: { user_id: userId, token },
-      data: { is_active: false },
-    });
+    await revokeOwnedPushToken(this.prisma, userId, token);
     return { success: true };
   }
 
@@ -498,13 +482,19 @@ async updateSettings(userId: string, body: any) {
       if (invalidTokens.length > 0) {
         await (this.prisma as any).device_tokens.updateMany({
           where: { token: { in: invalidTokens } },
-          data: { is_active: false },
+          data: { is_active: false, revoked_at: new Date() },
         });
       }
-      this.logger.debug(`FCM sent: success=${resp.successCount} failure=${resp.failureCount}`);
+      this.logger.debug(
+        `FCM sent: success=${resp.successCount} failure=${resp.failureCount}`,
+      );
       return resp.successCount > 0;
     } catch (e) {
-      this.logger.error('FCM send failed: ' + e);
+      const code =
+        e && typeof e === 'object' && 'code' in e
+          ? String((e as { code?: unknown }).code)
+          : 'unknown';
+      this.logger.error(`FCM send failed (${code})`);
       return false;
     }
   }

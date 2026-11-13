@@ -74,6 +74,7 @@ function build(enabled = true, devices: Record<string, unknown>[] = []) {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     user_sessions: { findFirst: jest.fn(), updateMany: jest.fn() },
+    device_tokens: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     audit_logs: { create: jest.fn() },
     $transaction: jest.fn((ops: unknown[]) => Promise.all(ops)),
   };
@@ -254,6 +255,14 @@ describe('DeviceBindingService sessions and approvals', () => {
     expect(prisma.user_sessions.updateMany).toHaveBeenCalledWith({
       where: { user_id: 'u1', trusted_device_id: CH },
       data: { is_revoked: true },
+    });
+    expect(prisma.device_tokens.updateMany).toHaveBeenCalledWith({
+      where: {
+        user_id: 'u1',
+        is_active: true,
+        session: { trusted_device_id: CH },
+      },
+      data: expect.objectContaining({ is_active: false }),
     });
   });
 });

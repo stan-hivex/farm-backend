@@ -437,6 +437,14 @@ export class DeviceBindingService {
         where: { user_id: userId, trusted_device_id: deviceRowId },
         data: { is_revoked: true },
       }),
+      this.prisma.device_tokens.updateMany({
+        where: {
+          user_id: userId,
+          is_active: true,
+          session: { trusted_device_id: deviceRowId },
+        },
+        data: { is_active: false, revoked_at: now },
+      }),
     ]);
     if (updated.count !== 1) throw new NotFoundException('Device not found');
     await this.audit(
@@ -665,6 +673,10 @@ export class DeviceBindingService {
       await tx.user_sessions.updateMany({
         where: { user_id: userId },
         data: { is_revoked: true },
+      });
+      await tx.device_tokens.updateMany({
+        where: { user_id: userId, is_active: true },
+        data: { is_active: false, revoked_at: now },
       });
       await tx.trusted_devices.update({
         where: { id: trustedDeviceId },

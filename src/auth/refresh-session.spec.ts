@@ -27,7 +27,10 @@ describe('refresh on a bound device', () => {
         findUnique: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-        create: jest.fn().mockResolvedValue({}),
+        create: jest.fn().mockResolvedValue({ id: 's2' }),
+      },
+      device_tokens: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       security_events: { create: jest.fn().mockResolvedValue({}) },
     };
@@ -89,6 +92,15 @@ describe('refresh on a bound device', () => {
     expect(result.data.reauth).toBe('refresh');
     expect(result.data.refresh_token).toBe('refresh');
     expect(result.message).toMatch(/refreshed/i);
+    expect(prisma.device_tokens.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        user_id: 'user-1',
+        session_id: 's1',
+        is_active: true,
+        revoked_at: null,
+      }),
+      data: expect.objectContaining({ session_id: 's2' }),
+    });
   });
 
   it('asks for the device id without revoking the session', async () => {

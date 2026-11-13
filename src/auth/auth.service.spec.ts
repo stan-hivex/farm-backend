@@ -645,6 +645,9 @@ describe('AuthService', () => {
         callback({
           users: { update: updateUser },
           user_sessions: { updateMany: revokeSessions },
+          device_tokens: {
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          },
         }),
       );
 

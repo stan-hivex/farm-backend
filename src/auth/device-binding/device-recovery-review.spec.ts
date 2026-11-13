@@ -33,6 +33,7 @@ function build(
       update: jest.fn().mockResolvedValue({}),
     },
     user_sessions: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    device_tokens: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   };
   const prisma = {
     device_recoveries: {

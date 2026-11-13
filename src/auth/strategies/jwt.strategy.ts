@@ -13,6 +13,7 @@ export interface JwtPayload {
 }
 
 import { requireJwtAccessSecret } from '../jwt-secret';
+import { isSessionActive } from '../../notifications/push-device-registry';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -43,7 +44,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (!user || !user.is_active || user.is_suspended || user.is_deleted)
       throw new UnauthorizedException('Account unavailable');
 
-    // Check if the token's JTI is still valid (not revoked)
+    // A revoked or expired session is rejected immediately. The JTI is an
+    // identifier, not the bearer token, and is the only session detail logged.
     if (payload.jti) {
       const session = await this.prisma.user_sessions.findFirst({
         where: {
@@ -51,20 +53,37 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
           user_id: payload.sub,
           OR: [{ is_revoked: false }, { is_revoked: null }],
         },
-        select: { id: true },
+        select: {
+          id: true,
+          user_id: true,
+          is_revoked: true,
+          expires_at: true,
+          last_active_at: true,
+        },
       });
 
-      if (!session) {
-        // Token has been revoked - possible theft
+      if (!session || !isSessionActive(session, payload.sub)) {
         await this.prisma.security_events.create({
           data: {
             user_id: payload.sub,
             event_type: 'REVOKED_TOKEN_USED',
-            description: `Attempted use of revoked JWT token (JTI: ${payload.jti}) from IP ${req.ip || 'unknown'} UA: ${req.headers['user-agent'] || 'unknown'}`,
+            description: `Attempted use of a revoked or expired session from IP ${req.ip || 'unknown'}`,
             severity: 'high',
           },
         });
         throw new UnauthorizedException('Token has been revoked');
+      }
+
+      const lastActive = session.last_active_at
+        ? new Date(session.last_active_at).getTime()
+        : 0;
+      if (!lastActive || Date.now() - lastActive > 5 * 60 * 1000) {
+        await this.prisma.user_sessions
+          .update({
+            where: { id: session.id },
+            data: { last_active_at: new Date() },
+          })
+          .catch(() => undefined);
       }
     }
 
