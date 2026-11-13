@@ -52,7 +52,13 @@ Deposits/conversion (optional): `CHAIN_DEPOSITS_ENABLED`, `USDC_KES_RATE_URL`/`_
    (adds DB totals, users without addresses, outbox, funder balance).
 2. Set the wallet variables with sync and mirror still off; let custodial
    accounts provision; re-run readiness until no user lacks an address and
-   all are opted in.
+   all are opted in. Render Free has no Shell, so a SUPER_ADMIN can backfill
+   over HTTPS: `POST /api/v1/admin/chain/wallets/backfill` (`mode=dry` by
+   default, `limit` 1..100 default 25). Live provisioning is `mode=send` with
+   `expect_count` (or `expectCount`) equal to the dry-run `selected` count.
+   Use `send`, not `execute` — the input filter rejects that word. The call
+   also refuses when the funder cannot cover `CHAIN_WALLET_FUND_MICROALGOS`
+   for every selected user. It does not move FARM.
 3. Fund the funder to the budget above.
 4. `POST /api/v1/admin/chain/reconcile` with `mode=dry`; review deltas; then
    set `FARM_ONCHAIN_MIRROR_ENABLED=true` + `FARM_RESERVE_MNEMONIC` and run

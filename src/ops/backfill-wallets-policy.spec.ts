@@ -3,6 +3,8 @@ import {
   evaluateBackfillSend,
   fundMicroAlgos,
   parseBackfillArgs,
+  parseBackfillHttpInput,
+  redactOperatorMessage,
 } from './backfill-wallets-policy';
 
 describe('backfill wallet policy', () => {
@@ -45,5 +47,55 @@ describe('backfill wallet policy', () => {
     expect(
       evaluateBackfillSend({ mode: 'send', selected: 4, expectCount: 4 }).ok,
     ).toBe(true);
+  });
+
+  it('parses the HTTPS request with a dry default and a 1..100 cap', () => {
+    expect(parseBackfillHttpInput({})).toEqual({
+      mode: 'dry',
+      limit: 25,
+      expectCount: undefined,
+    });
+    expect(
+      parseBackfillHttpInput({
+        mode: ['send'],
+        limit: ['4'],
+        expectCount: ['4'],
+      }),
+    ).toEqual({ mode: 'send', limit: 4, expectCount: 4 });
+    expect(
+      parseBackfillHttpInput({
+        mode: ['SEND'],
+        limit: [4],
+        expectCount: [4, '4'],
+      }).mode,
+    ).toBe('send');
+    expect(parseBackfillHttpInput({ mode: ['execute'] }).mode).toBe('dry');
+    expect(parseBackfillHttpInput({ limit: [1000] }).limit).toBe(100);
+    expect(parseBackfillHttpInput({ limit: ['0'] }).refusal).toMatch(
+      /1 to 100/,
+    );
+    expect(parseBackfillHttpInput({ limit: ['nope'] }).refusal).toMatch(
+      /1 to 100/,
+    );
+    expect(parseBackfillHttpInput({ expectCount: [4, 5] }).refusal).toMatch(
+      /disagree/,
+    );
+    expect(parseBackfillHttpInput({ mode: ['dry', 'send'] }).refusal).toMatch(
+      /mode/,
+    );
+    expect(parseBackfillHttpInput({ limit: [4, '10'] }).refusal).toMatch(
+      /limit/,
+    );
+  });
+
+  it('redacts database URLs and credentials from operator errors', () => {
+    const message = redactOperatorMessage(
+      'connect postgres://farm:secret@db.internal/farm and redis://:pw@localhost:6379 password=hunter2 bearer abc.def',
+    );
+    expect(message).not.toMatch(/postgres:\/\/|redis:\/\/|hunter2|abc\.def/i);
+    expect(message).toContain('[redacted]');
+    expect(redactOperatorMessage('Refusing send: expect-count 4')).toBe(
+      'Refusing send: expect-count 4',
+    );
   });
 });

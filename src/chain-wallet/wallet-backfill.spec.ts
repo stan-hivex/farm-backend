@@ -30,6 +30,7 @@ function harness(spendable = 5_000_000n) {
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    audit_logs: { create: jest.fn().mockResolvedValue({ id: 'audit' }) },
     $queryRaw: jest.fn(async (query: { strings?: string[] }) => {
       const text = (query.strings ?? []).join(' ');
       if (text.includes('users_without_wallet')) {
@@ -71,7 +72,7 @@ describe('custodial wallet backfill and retry', () => {
   });
 
   it('dry mode counts users without a wallet and the ALGO the batch would cost', async () => {
-    const { svc, chain } = harness();
+    const { svc, chain, prisma } = harness();
     const report = await svc.operatorBackfillWallets({
       mode: 'dry',
       limit: 25,
@@ -89,10 +90,25 @@ describe('custodial wallet backfill and retry', () => {
       funder_enough: true,
     });
     expect(chain.newAccount).not.toHaveBeenCalled();
+    expect(prisma.audit_logs.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        user_id: null,
+        action: 'chain.wallet_backfill_dry',
+        entity_type: 'user_chain_wallet',
+        new_values: expect.objectContaining({
+          mode: 'dry',
+          selected: 2,
+          action: 'chain.wallet_backfill_dry',
+        }),
+      }),
+    });
+    expect(JSON.stringify(prisma.audit_logs.create.mock.calls)).not.toMatch(
+      /u-rich|postgres:\/\/|mnemonic/i,
+    );
   });
 
   it('refuses send without a matching expect-count or a solvent funder', async () => {
-    const { svc } = harness();
+    const { svc, prisma } = harness();
     await expect(
       svc.operatorBackfillWallets({ mode: 'send', limit: 25 }),
     ).rejects.toThrow(/expect-count/);
@@ -103,6 +119,13 @@ describe('custodial wallet backfill and retry', () => {
         expectCount: 9,
       }),
     ).rejects.toThrow(/does not match/);
+    expect(prisma.audit_logs.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'chain.wallet_backfill_refused',
+        entity_type: 'user_chain_wallet',
+        new_values: expect.objectContaining({ selected: 2 }),
+      }),
+    });
 
     const poor = harness(1000n);
     await expect(
@@ -116,7 +139,7 @@ describe('custodial wallet backfill and retry', () => {
   });
 
   it('send provisions the prioritized batch sequentially and stops if ALGO runs out', async () => {
-    const { svc } = harness();
+    const { svc, prisma } = harness();
     const mine = jest.spyOn(svc, 'mine').mockResolvedValue({
       enabled: true,
       data: {
@@ -129,10 +152,12 @@ describe('custodial wallet backfill and retry', () => {
         explorer_url: 'https://example/ADDR',
       },
     });
+    const actor = '11111111-1111-4111-8111-111111111111';
     const report = await svc.operatorBackfillWallets({
       mode: 'send',
       limit: 25,
       expectCount: 2,
+      actorId: actor,
     });
     expect(mine.mock.calls.map((call) => call[0])).toEqual([
       'u-rich',
@@ -145,6 +170,16 @@ describe('custodial wallet backfill and retry', () => {
       failed: 0,
       stopped: false,
       addresses: ['ADDR', 'ADDR'],
+    });
+    expect(prisma.audit_logs.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        user_id: actor,
+        action: 'chain.wallet_backfill_send',
+        new_values: expect.objectContaining({
+          provisioned: 2,
+          addresses: ['ADDR', 'ADDR'],
+        }),
+      }),
     });
 
     const dropping = harness();
